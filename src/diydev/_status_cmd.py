@@ -1,6 +1,7 @@
-"""dev work status - 当前分支详情（Git + Issue + PR + 分支拓扑）"""
+"""dev status - current branch / issue query"""
 
-from cyclopts import App
+from typing import Optional, Annotated
+from cyclopts import App, Parameter
 
 from ._log import VerboseFlag, set_verbosity
 from ._git_ops import (
@@ -12,44 +13,104 @@ from ._git_ops import (
 )
 from ._gh_ops import gh_issue_view, gh_pr_list
 
-status_app = App(name="status", help="当前分支详情")
+status_app = App(name="status", help="current branch / issue query")
+
+
+def _show_issue_info(issue_num: int, repo: str):
+    """display issue info"""
+    print("\n=== Issue ===")
+    try:
+        data = gh_issue_view(
+            issue_num, repo, "number,title,state,url,createdAt,author,body"
+        )
+        author = data.get("author", {})
+        author_login = author.get("login", "-") if isinstance(author, dict) else "-"
+        print(f"  #{data['number']}  {data['title']}")
+        print(f"  State:          {data['state']}")
+        print(f"  Author:         {author_login}")
+        print(f"  Created:        {data.get('createdAt', '-')}")
+        print(f"  URL:            {data.get('url', '-')}")
+        body = data.get("body", "") or ""
+        if body:
+            lines = [ln for ln in body.strip().split("\n") if ln.strip()]
+            summary = lines[:3]
+            if len(lines) > 3:
+                summary.append("...")
+            print("  Body:")
+            for s in summary:
+                print(f"    {s[:80]}")
+    except RuntimeError as e:
+        print(f"  cannot fetch issue #{issue_num}: {e}")
 
 
 @status_app.default
 def work_status(
     verbose: VerboseFlag = 0,
+    issue: Annotated[
+        Optional[int],
+        Parameter(
+            name=["--issue", "-i"],
+            help="query a specific issue (no worktree required)",
+        ),
+    ] = None,
 ):
-    """显示当前分支的 Git 状态、关联 Issue、PR 信息及分支拓扑图。"""
+    """Show current branch status, or query a specific issue with -i.
+
+    Examples:
+      dev status          # current worktree status
+      dev status -i 19    # query issue #19 status
+    """
     set_verbosity(verbose)
-    branch = get_current_branch()
-    main_branch = get_main_branch()
     repo = get_github_repo()
 
-    # === Git 信息 ===
-    print("=== Git 信息 ===")
-    print(f"  分支:             {branch}")
-    print(f"  基准分支:         {main_branch}")
-    print(f"  仓库:             {repo}")
+    # --issue mode: query any issue
+    if issue is not None:
+        _show_issue_info(issue, repo)
+        print("\n=== Related PRs ===")
+        try:
+            prs = gh_pr_list(repo, head=str(issue))
+            if not prs:
+                prs = gh_pr_list(repo, head=f"issue-{issue}")
+            if prs:
+                for pr in prs[:3]:
+                    state = pr["state"]
+                    if pr.get("isDraft"):
+                        state += " (draft)"
+                    print(f"  #{pr['number']} {state}  {pr['title'][:60]}")
+            else:
+                print("  no related PR found")
+        except RuntimeError:
+            print("  cannot fetch PR info")
+        print()
+        return
+
+    # default mode: current worktree
+    branch = get_current_branch()
+    main_branch = get_main_branch()
+
+    # === Git info ===
+    print("=== Git ===")
+    print(f"  Branch:          {branch}")
+    print(f"  Base:            {main_branch}")
+    print(f"  Repo:            {repo}")
 
     status_out = run("git status --porcelain")
     if status_out.strip():
         count = len([line for line in status_out.split("\n") if line.strip()])
-        print(f"  变更:             {count} 个文件未提交")
+        print(f"  Changes:         {count} files")
     else:
-        print("  变更:             干净")
+        print("  Changes:         clean")
 
     if branch != main_branch:
         try:
             ahead = int(run(f'git rev-list --count "{main_branch}..{branch}"'))
             behind = int(run(f'git rev-list --count "{branch}..{main_branch}"'))
             if ahead > 0 or behind > 0:
-                print(
-                    f"  追踪:             ↑{ahead} ahead, ↓{behind} behind {main_branch}"
-                )
+                print(f"  Ahead/Behind:    +{ahead} / -{behind}")
         except (RuntimeError, ValueError):
             pass
 
-    # === Issue 信息 ===
+    # === Issue info ===
     issue_num = None
     for pattern, parser in [
         (r"^(\d+)-", 1),
@@ -64,24 +125,13 @@ def work_status(
             break
 
     if not issue_num:
-        print(f'\n⚠ 分支 "{branch}" 无法解析 issue 编号')
+        print(f'\n  branch "{branch}" cannot resolve issue number')
         return
 
-    print("\n=== Issue 信息 ===")
-    try:
-        data = gh_issue_view(issue_num, repo, "number,title,state,url,createdAt,author")
-        author = data.get("author", {})
-        author_login = author.get("login", "-") if isinstance(author, dict) else "-"
-        print(f"  #{data['number']}  {data['title']}")
-        print(f"  状态:           {data['state']}")
-        print(f"  作者:           {author_login}")
-        print(f"  创建:           {data.get('createdAt', '-')}")
-        print(f"  URL:            {data.get('url', '-')}")
-    except RuntimeError as e:
-        print(f"  无法获取 issue #{issue_num}: {e}")
+    _show_issue_info(issue_num, repo)
 
-    # === PR 信息 ===
-    print("\n=== PR 信息 ===")
+    # === PR info ===
+    print("\n=== PR ===")
     try:
         prs = gh_pr_list(repo, head=branch)
         if prs:
@@ -89,19 +139,18 @@ def work_status(
             print(f"  #{pr['number']}  {pr['title']}")
             state = pr["state"]
             if pr.get("isDraft"):
-                state += " (草稿)"
-            print(f"  状态:           {state}")
+                state += " (draft)"
+            print(f"  State:          {state}")
 
             mergeable = pr.get("mergeable", "UNKNOWN")
             if pr.get("isDraft") and mergeable != "CONFLICTING":
-                mergeable = "BLOCKED(草稿)"
+                mergeable = "BLOCKED(draft)"
             elif mergeable == "MERGEABLE":
-                mergeable = "OK 可合并"
+                mergeable = "OK"
             elif mergeable == "CONFLICTING":
-                mergeable = "CONFLICT 有冲突"
-            print(f"  可合并:         {mergeable}")
+                mergeable = "CONFLICT"
+            print(f"  Mergeable:      {mergeable}")
 
-            # 审查状态
             try:
                 reviews_raw = run(
                     f"gh pr view {pr['number']} --repo {repo} --json reviews -q '.reviews'"
@@ -120,26 +169,26 @@ def work_status(
                     "CHANGES_REQUESTED": "changes requested",
                     "COMMENTED": "commented",
                 }.get(review_state, review_state)
-                print(f"  审查:           {reviewer}: {state_label}")
+                print(f"  Review:         {reviewer}: {state_label}")
             else:
-                print("  审查:           (无)")
+                print("  Review:         (none)")
 
             print(f"  URL:            {pr['url']}")
         else:
-            print("  未找到关联 PR")
-            print("  创建 PR:        dev pr")
+            print("  no related PR")
+            print("  create PR:      dev pr")
     except RuntimeError:
-        print("  无法获取 PR 信息")
+        print("  cannot fetch PR info")
 
-    # === 分支示意图 ===
-    print("\n=== 分支拓扑 ===")
+    # === Branch diagram ===
+    print("\n=== Branch Topology ===")
     diagram = _build_branch_diagram(branch, main_branch)
     print(diagram)
     print()
 
 
 def _build_branch_diagram(branch: str, main_branch: str) -> str:
-    """构建当前分支的 ASCII 拓扑图"""
+    """build ASCII topology for current branch"""
     try:
         merge_base = get_merge_base(branch, main_branch)[:7]
     except RuntimeError:
@@ -174,7 +223,7 @@ def _build_branch_diagram(branch: str, main_branch: str) -> str:
     lines.append("")
     lines.append(
         f"  merge-base: {merge_base}  "
-        f"· {branch} ahead {len(branch_commits)}  "
-        f"· {main_branch} ahead {len(main_commits)}"
+        f". {branch} +{len(branch_commits)}  "
+        f". {main_branch} +{len(main_commits)}"
     )
     return "\n".join(lines)
