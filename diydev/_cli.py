@@ -12,6 +12,7 @@ from ._status_cmd import status_app
 from ._pr_cmd import pr_app
 from ._merge_pr_cmd import merge_pr_app
 from ._prune_cmd import prune_app
+from ._commit_cmd import commit_app
 
 _GLOBAL_GROUP = Group("全局选项")
 
@@ -51,6 +52,9 @@ app.command(merge_pr_app, name="merge-pr")
 
 # dev prune
 app.command(prune_app, name="prune")
+
+# dev commit
+app.command(commit_app, name="commit")
 
 
 @app.default
