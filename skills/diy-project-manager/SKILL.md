@@ -24,33 +24,23 @@ Issues/PRs               ← 执行层（可完成的具体工作）
 Issue 天生是 ephemeral（短生命周期），Goal 是 persistent semantic object（长期语义对象）。
 把目标写成 issue 会导致：目标被污染、被关闭、出现在 sprint 里、和真实任务混杂。
 
-## 写操作前必须备份
+## 过程设计文档准则
 
-GitHub Projects 没有版本历史，字段删除和值覆盖不可逆。任何写操作前必须先快照。
+**任务的过程设计直接写到对应 issue body 里。**
 
-**备份目录**: `.diy/data/diy-project-manager/`
+理由：
+- GitHub Issue 天然有版本历史（edit history），类似 git blame
+- 设计具有时间性和任务绑定性，跟随任务而非跟随代码仓库更合理
+- Worktree 模式下一个 docs/ 更新不会自动同步到其他 worktree，issue 是唯一信源
+- 任务完成后，精华部分再沉淀到 docs/
 
-**备份规则**:
-- 批量修改字段值 → 导出整个 project 的 item 列表
-- 修改单个 issue → 只导出该 issue
-- 删除字段/选项 → 导出整个 project 含字段定义
-
-**备份命令**:
-
+**操作方式**:
 ```bash
-# 批量操作前：导出整个 project
-mkdir -p .diy/data/diy-project-manager
-gh project item-list 3 --owner diy-agent --limit 100 --format json \
-  > ".diy/data/diy-project-manager/project3-$(date +%Y%m%d-%H%M%S).json"
-
-# 单 issue 操作前：只导出该 issue
-gh issue view <number> --repo diy-agent/diy --json number,title,body,labels,state \
-  > ".diy/data/diy-project-manager/issue-<number>-$(date +%Y%m%d-%H%M%S).json"
+# 更新过程设计到 issue
+git -C /path/to/repo issue edit <N> --body "..."
 ```
 
-**备份文件命名**: `{project3|issue-N}-{YYYYMMDD-HHMMSS}.json`
-
-**恢复方式**: 读取备份 JSON，用 `gh project item-edit` 或 `gh issue edit` 逐条还原。
+**注意**: Project 字段（Status/Priority 等）没有版本历史，批量修改前仍需备份。
 
 ## 字段体系
 
