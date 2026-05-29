@@ -53,6 +53,9 @@ fix() {
   run uv run ruff format src/ tests/
 }
 sync()  {
+    command -v pipx || python -m pip install --user pipx
+    command -v uv || python -m pipx install uv
+
     uninstall
     run uv sync --all-packages
     # run npm i --workspaces
