@@ -73,6 +73,26 @@ tags: [标签1, 标签2]
 - org/repo#N  ← 外部 issue
 ```
 
+### 项目与 Module 命名
+
+| 命名 | 含义 | 示例 |
+|------|------|------|
+| `diy` | diy 主 mono 仓库 | - |
+| `diy/ref` | diy 仓库的参考源码同步 | diy.yaml sources |
+| `diy-cli` | diy CLI 工具（Python） | dev 命令 |
+| `diy-cli/ref` | diy-cli 的参考实现 | - |
+| `diyui.py` | Python TUI 库 | panel/pane 组件 |
+| `diyui.ts` | TypeScript TUI 库 | - |
+| `diyq` | 量化交易项目 | - |
+| `_diy` | 开发工具元项目 | skills/sha 等 |
+| `sha` | 脚本调度引擎（vendor/sha） | sha.bash |
+
+命名规则:
+- 项目名用 `-` 分隔，如 `diy-cli`、`diyui.py`
+- `xxx/ref` 表示引用的外部源码/参考实现
+- `_xxx` 前缀表示元/工具项目
+- Module 字段值应与项目命名一致
+
 ### 编码规范（适用于所有文本和代码）
 
 - **禁止中文标点符号**：用 ASCII 符号替代中文符号（如 `:` 不用 `：`、`,` 不用 `，`、`()` 不用 `（）`）
