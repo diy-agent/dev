@@ -1,88 +1,132 @@
 ---
 name: diy-project-manager
 description: >
-  针对 diy 及其生态项目（diy, diyq, sha, 及关联的 research 项目）的项目管理、流程规范及 Github Project V2 协作管理技能。
-  基于 dev 命令行工具，通过 worktree 隔离模式推动 AI-Native 开发流。
-  触发词：项目管理、新建任务、开始开发、提交 PR、流程指引、issue 归类、看板管理、dev 使用。
+  AI-Native 项目管理与开发流技能。
+  基于 GitHub Issues + Project V2 + Worktree 的任务工作记忆模型（Issue-Centric Working Memory）。
+  用于需求启动、研究探索、设计更新、AI Agent 开发、测试、PR、复盘、知识沉淀与任务循环。
+  核心思想：Issue 是任务工作空间（Workspace），Issue Body 是实时唯一事实源（SSOT），优先使用可执行知识（Tests/Tools）替代长文档。
+  触发词：项目管理、新建任务、开始开发、提交 PR、流程指引、工作记忆、复盘、开发流、diydev 使用。
 ---
 
 # diy-project-manager
 
-此技能专门指导开发者及 AI Agent 如何进行项目管理、使用 `dev` CLI 开发流工具以及基于 GitHub Project 进行团队协作。
+本技能定义了基于 **Issue-Centric Working Memory（以 Issue 为中心的任务工作记忆）** 的 AI-Native 工程体系。
+目标是：减少静态文档漂移，让 AI 与人类共享实时工作记忆，并通过**可执行知识**替代长篇大论的描述。
 
-## 项目生态全景视图
+TODO: 还未考虑工作流的责任安排, 谁能做什么等事项, 后续补充。
 
-当前工作区 `_diy` 独立于原业务项目，核心使命是：**建立并维护开发流工具 (`dev`)、开发规范、项目管理体系，推动 AI-Native 开发进程。**
+---
 
-主要纳管的项目矩阵包括：
-1. **主线产品项目**：
-   - `diy` / `diyq` / `sha` (核心业务与辅助工具)
-2. **探索/研究项目**：
-   - `diy-research` / `diyq-research` (用于前期探路、原型验证、AI 实验沉淀)
-3. **元项目 (当前项目)**：
-   - `_diy` (包含 `dev` CLI 开发、`dev-flow` 规范、Agent Skills)
+## 核心理念分层
 
-## 核心心智模型：短生命周期执行与多维聚合
+### 1. Execution Layer（实时执行层）
+GitHub Issue 是 **Task Workspace（任务工作空间）**，而不仅是任务卡片。
+Issue 聚合了：当前需求、最新设计、实验记录、AI 推理过程 (Reasoning)、Prompt、PR、测试结果和复盘。
+**Issue Body 是当前任务的唯一事实源 (SSOT)**。所有的设计变更和中间结论都直接在 Issue 中更新，而不是散落在代码库的各个文档中。
 
-1. **Issue 作为短生命周期执行单元 (Ephemeral)**
-   - Issue 必须有明确结束状态（可被 Done / Close）。
-   - 不要把 Issue 当作“长效目标”或“容器”。
-   - 包含具体的任务边界、复现步骤或详细设计（过程设计文档直接写在 Issue Body，具有时间性和版本历史）。
-   
-2. **Goal 与 Docs 作为长期知识库 (Persistent)**
-   - 长期愿景和规划写在 `docs/goals/*.md` 或项目内对应的活文档中。
-   - 任务完成后，有价值的架构变更、核心逻辑抽象应沉淀到 `docs/` 或各自仓库中。
-   
-3. **Project Fields 作为多维切片 (Slicing)**
-   - 使用 GitHub Project 自定义字段（`Status`, `Priority`, `Module`, `Size`）取代复杂的 Parent/Child 树形结构，通过 Query / View 进行聚合。
+### 2. Executable Knowledge（可执行知识层）
+原则：**Behavior > Description（行为胜于描述）**。
+优先通过以下形式表达系统行为，而不是写大量的 markdown 文档：
+`Tests > Doctor Tools > Generators > Skills/Scripts > Notebook > Static Docs`
+测试必须是人类和 AI 都易于观察的（Human Observable），并且是面向意图的（Intent Oriented）。
 
-## AI-Native 驱动的敏捷开发流 (基于 `dev`)
+### 3. Stable Principles（长期稳定层）
+只在代码库中沉淀长期稳定、低频变化的知识，必须脱离具体任务：
+- ADR (Architecture Decision Records)
+- 核心架构图
+- 稳定的设计原则
+- 最简化的复盘结论 (Minimal Postmortem Conclusions)
 
-在团队规范下，开发一律采用 **Git Worktree 隔离模式**，禁止直接在主分支（main）提交修改。所有执行动作依赖 `dev` CLI 工具和 GitHub CLI (`gh`) 自动化。
+---
 
-### 标准生命周期与指令表
+## 任务生命周期与 diydev CLI 工具链
 
-| 阶段 | 状态 (Status) | `dev` CLI | `gh` / `git` 底层操作 | 描述 |
-| --- | --- | --- | --- | --- |
-| **创建任务** | Backlog | `dev new "描述"` | `gh issue create` | 创建新 Issue，默认进入 Project Backlog。 |
-| **分配/排期** | Ready | (手动或看板操作) | `gh project item-edit` | 评审后确定优先级 (P0-P3) 与模块 (Module)。 |
-| **开始开发** | In progress | `dev start <issueNum> [分支名]` | 创建 `.worktree/`、切换分支并推送到远端，项目状态联动。 | 自动创建本地独立沙盒，不污染主线。 |
-| **开发中** | In progress | 进入 `.worktree/<num>` | 编辑代码，运行测试 | 设计变更与 AI 对话思路沉淀在 Issue comment 或同级 MD 中。 |
-| **提交审查** | In review | `dev pr` | `gh pr create` | 将当前 worktree 的代码发起 Pull Request。 |
-| **合并代码** | Done | `dev merge-pr` | `gh pr merge --squash` | 合并 PR (优先 Squash 保持主线提交历史干净)。 |
-| **清理环境** | - | `dev prune` | 删除 worktree 及分支 | 开发环境整洁无冗余(不删除本地分支预防误操作恢复TODO)。 |
+### 1. 新需求 / 想法孵化 (Backlog)
+无论是用户需求、研究灵感、Bug 还是上一次的复盘结论，一律作为新任务创建。
+```bash
+dev new "描述你的想法或需求"
+```
+*自动行为：创建 Issue，加入 GitHub Project，并初始化基本字段。*
 
-## Project 字段体系与分类标准
+### 2. 任务工作空间初始化 (Workspace Setup)
+在开始写代码前，必须初始化 Issue Body。它应该包含：
+- Problem (要解决什么问题)
+- Goal (目标是什么)
+- Constraints (约束条件)
+- Design / Plan (初步设计和计划)
+*注意：在后续的探索和开发中，**持续直接编辑更新 Issue Body**，保持它是唯一的最新状态，这让 Worktree 隔离开发时 AI 能随时获取最新上下文。*
 
-| 字段 | 用途 | 选项规范 |
-| --- | --- | --- |
-| **Status** | 生命周期流转 | Backlog → Ready → In progress → In review → Done |
-| **Priority** | 优先级判定 | P0 (紧急阻断), P1 (核心特性/重要Bug), P2 (普通增强), P3 (低优/体验) |
-| **Module** | 代码/功能域 | 依据对应项目架构划分（例如 dev, cli, core 等） |
-| **Size** | 工作量预估 | XS (<1d), S (1-2d), M (3-5d), L (1w+), XL |
+### 3. 开始开发 (Start Working)
+**禁止直接在 main 分支开发。**
+```bash
+dev start <issueNum> [分支后缀]
+```
+*自动行为：根据 Issue 编号创建独立的 Git Worktree 和分支，更新 Issue 状态为 In Progress。*
 
-## Issue 管理与操作规约
+### 4. 迭代与测试验证 (Development & Tests First)
+- **更新工作记忆**：将 Failed attempts、Benchmark、AI Reasoning 持续记录在 Issue 中。
+- **固化可执行知识**：优先编写 Tests、Notebook Demo 或更新 CLI 工具，而不是写说明文档。
 
-1. **信息完备性检查**
-   - 任何新创建的 Issue 必须经过整理（Triage），分配至 GitHub Project，并完善 `Priority` 和 `Module`和`Type`。
-   - 避免模糊和发散，如果没有对应的 `Goal` 属性则需补充上下文或文档记录。
+### 5. 提交审查 (Pull Request)
+当任务完成并通过测试后：
+```bash
+dev pr  [empty==current | issueNum]
+```
+*自动行为：推送代码，创建 PR 并关联当前 Issue，状态变更为 In review。*
+*要求：PR 必须小而聚焦，易于 Review 和 Rollback。*
 
-2. **Parent-Child 嵌套使用红线**
-   - **允许**：用于一个明确交付任务拆解（真正的 Work Breakdown,当前看板模式没有Sprint拆解）。
-   - **禁止**：用于跨领域的长期战略目标组织（如“2026年CLI体验优化”应采用 Goal 字段，而非一个永不关闭的父 Issue）。
+### 6. 合并代码 (Merge)
+```bash
+dev merge-pr  [empty==current | issueNum]
+```
+*自动行为：Squash Merge PR 保持主线干净，并清理本地 Worktree 和分支。*
 
-3. **依赖关系声明**
-   - 不滥用 sub-issue 表达依赖，推荐在 Body 描述区通过 `Depends on #<Num>`, `Blocks #<Num>`, `Related: #<Num>` 明确构建图结构依赖关系。
+### 7. 复盘与知识沉淀 (Retrospective)
+复盘是任务生命周期的闭环部分，而不是长期文档。
+复盘内容直接写在当前 Issue 的评论区或作为子 Issue（什么有效、什么失败、AI 为何受阻、如何避免）。
+如果有具备长期价值的架构决策，提炼为极短的 **ADR (仅记录：现在是什么 + 为什么这样 + 权衡)** 并入 `docs/`。
+如果复盘产生了新想法，则回到步骤 1。
 
-## 维护与清理清单（定期自检）
+```bash
+dev retro [empty==current | issueNum]
+```
 
-建议定期执行以下自查操作：
-- [ ] GitHub Project 中是否有 `Status=Backlog` 但长期未处理且无 `Priority` 标记的任务？
-- [ ] 是否存在长期活跃、不会被直接完成的“伪 Issue”（当做容器使用的 Parent Issue）？需转为文档/看板查询。
-- [ ] 本地 `.worktree/` 目录：是否存在已经合并不再维护的废弃分支？（需使用 `dev prune` 清理）
-- [ ] 针对 AI-Native 过程：在 `diy-research` 等仓库验证完毕的实验代码，是否已有效抽象并入主库？
+AI(TODO 还未实现):
+1. 分析事故...
+2. 吸取教训：
+   - 缺少熔断机制
+   - 超时配置未与下游 SLA 对齐
+3. 更新 xxx.md （加入熔断策略）
+4. 更新 xxx.md （新增“超时配置反模式” ADR 条目）
+5. 创建新 issue：
+   - 标题：实现熔断器
+   - 标签：improvement
+6. 任务跟随型复盘更新总结到主issue, 专项复盘更新到所属issue,需要有总结和输出项及引用
 
-## Agent 交互指引
+---
 
-- 当用户要求开发新特性或修复问题时，应优先引导其走规范工作流：先使用 `dev new` 生成 Issue -> `dev start` 开启环境。
-- 若问题属于前瞻性研究、技术选型验证或具有高度不确定性，建议推荐其在关联的 `-research` 项目中拉取沙盒环境验证，完成后再汇总方案合并到正式项目的 Issue 内。
+## 知识与视图管理原则
+
+### GitHub Project V2 切片 (Slicing)
+看板用于多维度的任务切片，而不是构建知识树。核心字段：
+- **Goal**: 长期战略方向（替代“父 Issue 容器”）
+- **Module**: 技术域（如 cli, core, tui）
+- **Priority**: 优先级 (P0-P3)
+- **Status**: 生命周期状态
+
+### Parent/Sub-Issue 树形陷阱与依赖图谱
+- **严禁**：用父 Issue 当作长期目标容器、知识分类或认知树。
+- **允许**：仅用于一个明确 Sprint 内的 **真实工作拆解 (Work Breakdown)**。
+- **依赖表达**：优先在 Issue Body 中使用文本关联形成网状图结构：
+  ```markdown
+  Depends on #N
+  Blocks #N
+  Related #N
+  ```
+
+### 核心反模式警告 (Anti-Patterns)
+❌ 不要用 Issue 当长期目标。
+❌ 不要用代码库里的 Markdown 存实时设计（会因为 Worktree 隔离导致版本漂移）。
+❌ 不要用大篇幅文本描述系统行为（去写测试或工具）。
+❌ 不要写繁重的 Agents.md 指令集。
+❌ 不要把 GitHub Discussion 当作日常高频执行流引擎。
