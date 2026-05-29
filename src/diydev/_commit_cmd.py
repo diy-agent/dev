@@ -96,9 +96,9 @@ def _run_sha_test(sha_path: Path) -> bool:
 
 def _run_git_cleanup(project_root: str) -> bool:
     """运行 git-cleanup 残留检查"""
-    # 先找 git-cleanup.sh 的位置（相对于 _diy 项目）
-    script_dir = Path(__file__).resolve().parent.parent  # diydev/ -> _diy/
-    cleanup_sh = script_dir / "skills" / "git-cleanup" / "scripts" / "git-cleanup.sh"
+    # 先找 git-cleanup.sh: 从 src/diydev/_commit_cmd.py 向上三次到项目根
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    cleanup_sh = repo_root / "skills" / "git-cleanup" / "scripts" / "git-cleanup.sh"
     if not cleanup_sh.exists():
         info("[SKIP] git-cleanup.sh not found")
         return True
