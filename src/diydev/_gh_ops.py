@@ -116,9 +116,12 @@ def gh_issue_comment(num: int, body: str, repo: str) -> None:
     run(f'gh issue comment {num} --repo {repo} --body "{body}"')
 
 
-def gh_issue_close(num: int, repo: str) -> None:
-    """关闭 issue"""
-    run(f"gh issue close {num} --repo {repo}")
+def gh_issue_close(num: int, repo: str, reason: str = "") -> None:
+    """关闭 issue，可选 reason: completed | not-planned"""
+    cmd = f"gh issue close {num} --repo {repo}"
+    if reason:
+        cmd += f' -r "{reason}"'
+    run(cmd)
 
 
 def gh_repo_merge_method(repo: str) -> str:
