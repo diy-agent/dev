@@ -9,20 +9,32 @@ from typing import Optional, Annotated
 
 from cyclopts import App, Parameter
 
-from ._log import VerboseFlag, set_verbosity, info, debug
+from ._log import VerboseFlag, set_verbosity, info
 from ._git_ops import run, get_current_branch, get_main_branch
 
 
-COMMIT_TYPES = ["feat", "fix", "refactor", "test", "docs", "style", "perf", "build", "ci", "chore", "revert"]
+COMMIT_TYPES = [
+    "feat",
+    "fix",
+    "refactor",
+    "test",
+    "docs",
+    "style",
+    "perf",
+    "build",
+    "ci",
+    "chore",
+    "revert",
+]
 
 # 从 diff 文件名推断 scope 的规则
 SCOPE_PATTERNS = [
-    (r"^diydev/", "dev"),                 # diydev/... -> dev
-    (r"^skills/([^/]+)/", None),           # skills/git-cleanup/... -> git-cleanup
-    (r"^packages/([^/]+)/", None),         # packages/diyui.py/... -> diyui.py
-    (r"^docs/", "docs"),                   # docs/... -> docs
-    (r"^vendor/([^/]+)/", None),           # vendor/sha/... -> sha
-    (r"^scripts/([^/]+)/?", None),         # scripts/xxx -> xxx
+    (r"^diydev/", "dev"),  # diydev/... -> dev
+    (r"^skills/([^/]+)/", None),  # skills/git-cleanup/... -> git-cleanup
+    (r"^packages/([^/]+)/", None),  # packages/diyui.py/... -> diyui.py
+    (r"^docs/", "docs"),  # docs/... -> docs
+    (r"^vendor/([^/]+)/", None),  # vendor/sha/... -> sha
+    (r"^scripts/", "scripts"),  # scripts/... -> scripts
 ]
 
 commit_app = App(name="commit", help="check + test + cleanup + message + git commit")
@@ -46,6 +58,7 @@ def _sha_has_cmd(sha_path: Path, cmd: str) -> bool:
         content = sha_path.read_text()
         # 匹配 `cmd() {` 形式的函数定义（不是子函数）
         import re
+
         return bool(re.search(rf"^{cmd}\(\)\s*\{{", content, re.MULTILINE))
     except Exception:
         return False
@@ -106,10 +119,6 @@ def _run_git_cleanup(project_root: str) -> bool:
 def _analyze_diff(project_root: str) -> dict:
     """分析 git diff --staged，返回推荐的 type / scope / files"""
     try:
-        stat = run("git diff --staged --stat", cwd=project_root)
-    except Exception:
-        stat = ""
-    try:
         name_only = run("git diff --staged --name-only", cwd=project_root)
     except Exception:
         name_only = ""
@@ -147,7 +156,9 @@ def _analyze_diff(project_root: str) -> dict:
     else:
         # 检查是否有重命名/移动
         try:
-            diff_raw = run("git diff --staged --diff-filter=R --name-only", cwd=project_root)
+            diff_raw = run(
+                "git diff --staged --diff-filter=R --name-only", cwd=project_root
+            )
             if diff_raw.strip():
                 commit_type = "refactor"
         except Exception:
@@ -156,6 +167,7 @@ def _analyze_diff(project_root: str) -> dict:
     # 推断 scope
     scope = ""
     import re
+
     for pattern, fallback in SCOPE_PATTERNS:
         for f in files:
             m = re.match(pattern, f)
@@ -203,17 +215,11 @@ def _generate_message(diff_info: dict) -> str:
 @commit_app.default
 def work_commit(
     verbose: VerboseFlag = 0,
-    skip_check: Annotated[
-        bool,
-        Parameter(name=["--skip-check"], help="skip sha.sh check"),
-    ] = False,
-    skip_test: Annotated[
-        bool,
-        Parameter(name=["--skip-test"], help="skip sha.sh test"),
-    ] = False,
     commit_type: Annotated[
         Optional[str],
-        Parameter(name=["--type", "-t"], help="commit type: feat/fix/refactor/test/..."),
+        Parameter(
+            name=["--type", "-t"], help="commit type: feat/fix/refactor/test/..."
+        ),
     ] = None,
     scope: Annotated[
         Optional[str],
@@ -221,7 +227,9 @@ def work_commit(
     ] = None,
     message: Annotated[
         Optional[str],
-        Parameter(name=["--message", "-m"], help="manual commit message (skip auto-generate)"),
+        Parameter(
+            name=["--message", "-m"], help="manual commit message (skip auto-generate)"
+        ),
     ] = None,
     dry_run: Annotated[
         bool,
@@ -241,11 +249,10 @@ def work_commit(
       6. git add -A && git commit
 
     Examples:
-      dev commit                    # auto: check -> test -> message -> commit
-      dev commit -n                 # dry-run: only checks
-      dev commit -m "fix: typo"     # skip auto message
-      dev commit -t fix -s cli       # force type and scope
-      dev commit --skip-test         # skip tests
+      dev commit                    # check -> test -> message -> commit
+      dev commit -n                 # dry-run: only checks, no commit
+      dev commit -m "fix: typo"     # manual message
+      dev commit -t fix -s cli      # force type and scope
     """
     set_verbosity(verbose)
 
@@ -269,18 +276,14 @@ def work_commit(
         print("Use worktree branches for development")
         return
 
-    # 2. check
-    if not skip_check and sha_path:
+    # 2. check (mandatory, no skip)
+    if sha_path:
         if not _run_sha_check(sha_path):
-            print("\n[FAIL] pre-commit checks failed. Fix issues and retry.")
-            print("  Use --skip-check to bypass (not recommended)")
             return
 
-    # 3. test
-    if not skip_test and sha_path:
+    # 3. test (mandatory, no skip)
+    if sha_path:
         if not _run_sha_test(sha_path):
-            print("\n[FAIL] tests failed. Fix issues and retry.")
-            print("  Use --skip-test to bypass (not recommended)")
             return
 
     # 4. git-cleanup
@@ -318,7 +321,7 @@ def work_commit(
     # 7. 展示确认
     print(f"\nBranch:   {branch}")
     print(f"Message:  {final_message}")
-    print(f"Files:")
+    print("Files:")
     for f in staged.strip().split("\n"):
         print(f"  {f}")
 
@@ -338,10 +341,16 @@ def work_commit(
         if answer == "" or answer == "y":
             pass
         elif answer == "e" or answer == "edit":
-            import tempfile, subprocess as sp
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            import tempfile
+            import subprocess as sp
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False
+            ) as f:
                 f.write(final_message)
-                f.write("\n\n# Edit the message above. Lines starting with # are ignored.\n")
+                f.write(
+                    "\n\n# Edit the message above. Lines starting with # are ignored.\n"
+                )
                 f.write("# Save and exit to commit, delete all to cancel.\n")
                 tmp_path = f.name
             editor = os.environ.get("EDITOR", "vi")
@@ -350,7 +359,7 @@ def work_commit(
                 edited = f.read()
             os.unlink(tmp_path)
             # 过滤注释行
-            lines = [l for l in edited.split("\n") if not l.strip().startswith("#")]
+            lines = [x for x in edited.split("\n") if not x.strip().startswith("#")]
             edited_message = "\n".join(lines).strip()
             if not edited_message:
                 print("Empty message, cancelled")

@@ -87,16 +87,47 @@ def work_status(
         if prs:
             pr = prs[0]
             print(f"  #{pr['number']}  {pr['title']}")
-            print(
-                f"  状态:           {pr['state']}{' (草稿)' if pr.get('isDraft') else ''}"
-            )
+            state = pr["state"]
+            if pr.get("isDraft"):
+                state += " (草稿)"
+            print(f"  状态:           {state}")
+
             mergeable = pr.get("mergeable", "UNKNOWN")
             if pr.get("isDraft") and mergeable != "CONFLICTING":
                 mergeable = "BLOCKED(草稿)"
+            elif mergeable == "MERGEABLE":
+                mergeable = "OK 可合并"
+            elif mergeable == "CONFLICTING":
+                mergeable = "CONFLICT 有冲突"
             print(f"  可合并:         {mergeable}")
+
+            # 审查状态
+            try:
+                reviews_raw = run(
+                    f"gh pr view {pr['number']} --repo {repo} --json reviews -q '.reviews'"
+                )
+            except RuntimeError:
+                reviews_raw = "[]"
+            import json
+
+            reviews = json.loads(reviews_raw)
+            if reviews:
+                latest = reviews[-1]
+                reviewer = latest.get("author", {}).get("login", "?")
+                review_state = latest.get("state", "?")
+                state_label = {
+                    "APPROVED": "approved",
+                    "CHANGES_REQUESTED": "changes requested",
+                    "COMMENTED": "commented",
+                }.get(review_state, review_state)
+                print(f"  审查:           {reviewer}: {state_label}")
+            else:
+                print("  审查:           (无)")
+
             print(f"  URL:            {pr['url']}")
         else:
             print("  未找到关联 PR")
+            print("  创建 PR:        dev pr")
     except RuntimeError:
         print("  无法获取 PR 信息")
 

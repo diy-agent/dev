@@ -1,8 +1,6 @@
-"""dev work prune - 清理所有已完成合并的工作项
+"""dev prune - 清理已完成合并的工作项
 
-扫描所有 worktree，找出其分支对应 PR 已 MERGED 的项，
-关闭关联的仍处于 open 状态的 issue，
-删除本地/远程分支和 worktree，完成清理。
+删除远程分支 + worktree，保留本地分支供人类 review。
 """
 
 import re
@@ -19,7 +17,6 @@ from ._git_ops import (
     get_github_repo,
     parse_issue_number,
     git_worktree_remove,
-    git_branch_delete_force,
     git_branch_delete_remote,
 )
 from ._gh_ops import (
@@ -136,10 +133,9 @@ def work_prune(
         ),
     ] = False,
 ):
-    """清理所有 PR 已合并的工作项（删除本地/远程分支及 worktree）。
+    """清理 PR 已合并的 worktree（删远程分支 + worktree，保留本地分支）。
 
-    扫描所有 worktree，找出对应 PR 状态为 MERGED 的项并统一清理。
-    默认会列出待清理项并请求确认。
+    本地分支留给人类 review 后手动清理。
 
     示例:
       dev prune            # 列出并确认后清理
@@ -215,13 +211,8 @@ def work_prune(
             print(f"  ✗ 删除 worktree 失败: {e}")
             errors += 1
 
-        # 删除本地分支
-        try:
-            git_branch_delete_force(t.branch)
-            print(f"  ✓ 删除本地分支 {t.branch}")
-        except RuntimeError as e:
-            print(f"  ✗ 删除本地分支失败: {e}")
-            errors += 1
+        # 保留本地分支（人类 review 后自行清理）
+        print(f"  → 本地分支 {t.branch} 已保留，请 review 后手动清理")
 
         cleaned += 1
 
