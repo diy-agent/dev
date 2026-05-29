@@ -54,7 +54,10 @@ fix() {
 }
 sync()  {
     command -v pipx || python -m pip install --user pipx
-    command -v uv || python -m pipx install uv
+    command -v uv || {
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+      source $HOME/.local/bin/env
+    }
 
     uninstall
     run uv sync --all-packages
