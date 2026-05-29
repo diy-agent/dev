@@ -55,8 +55,8 @@ fix() {
 sync()  {
     command -v pipx || python -m pip install --user pipx
     command -v uv || {
-      curl -LsSf https://astral.sh/uv/install.sh | sh
-      source $HOME/.local/bin/env
+      run curl -LsSf https://astral.sh/uv/install.sh | sh
+      run source $HOME/.local/bin/env
     }
 
     uninstall
@@ -65,6 +65,8 @@ sync()  {
     run git submodule update --init --recursive
     # ln dev version
     run uv tool install -e ./
+
+    run mkdir -p ~/.agents/skills/
     run ln -sf packages/diydev/skills/find-context ~/.agents/skills/find-context
     run ln -sf packages/diydev/skills/win-file-unlock ~/.agents/skills/win-file-unlock
 }
