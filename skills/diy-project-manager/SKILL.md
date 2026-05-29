@@ -267,7 +267,7 @@ Agent 应打印建议操作和原因，让人类自行执行。例如：
   gh issue close 8  --repo diy-agent/_diy -r "not planned" -c "Covered by #17"
 ```
 
-未来通过 `dev close` 命令实现类似 opencode 的交互式确认模式。
+TODO(#19): dev close 命令（opencode 式交互确认）
 
 ---
 
