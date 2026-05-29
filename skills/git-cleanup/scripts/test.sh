@@ -125,30 +125,15 @@ assert_contains "$out" "⚠️" "标记被 .gitignore 忽略的残留"
 echo ""
 
 # ═══════════════════════════════════════════════════════════
-# 4: 空目录检测
+# 4: --rm 实际删除
 # ═══════════════════════════════════════════════════════════
-echo "── 4: 空目录残留 ──"
+echo "── 4: --rm 删除 ──"
 echo ""
 
-mkdir -p empty_dir
-
-out=$(bash "$GIT_CLEANUP")
-assert_contains "$out" "👻" "检测到空目录"
-assert_contains "$out" "empty_dir" "精确指向空目录"
-
-echo ""
-
-# ═══════════════════════════════════════════════════════════
-# 5: --rm 实际删除
-# ═══════════════════════════════════════════════════════════
-echo "── 5: --rm 删除 ──"
-echo ""
-
-# 利用测试 1 产生的 lib/util.py 残留 + 测试 3 的 debug.log + 测试 4 的 empty_dir
+# 利用测试 1 产生的 lib/util.py 残留 + 测试 3 的 debug.log
 # 先确认当前有残留
 out=$(bash "$GIT_CLEANUP")
-# 残留可能是 ❌ 或 ⚠️，不限定具体类型
-if echo "$out" | grep -qE '[❌⚠️👻]'; then
+if echo "$out" | grep -qE '[❌⚠️]'; then
   pass "--rm 前检测到残留"
 else
   fail "--rm 前检测到残留 — 无任何残留标记"

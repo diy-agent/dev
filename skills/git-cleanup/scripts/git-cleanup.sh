@@ -5,7 +5,7 @@
 # 异常状态:
 #   ⚠️ 忽略残留   已被 git rm 提交删除，但 .gitignore 忽略导致磁盘仍有
 #   ❌ 未跟踪残留   已被 git rm 提交删除，磁盘仍有（未被 .gitignore 忽略）
-#   👻 空目录      git 不跟踪目录，但磁盘存在空目录
+
 #
 # 默认仅列出，加 --rm 才真正删除。
 
@@ -41,19 +41,6 @@ find_deleted_on_disk() {
       done
 }
 
-# ── 找出空目录 ──────────────────────────────────────────────
-find_empty_dirs() {
-  find "$TARGET" -type d -empty 2>/dev/null \
-    | while read -r d; do
-        # 跳过 git 跟踪的目录、.git
-        [[ "$d" == */.git/* || "$d" == */.git ]] && continue
-        if git ls-files --error-unmatch "$d" &>/dev/null 2>&1; then
-          continue
-        fi
-        echo "👻 $d"
-      done
-}
-
 # ── 主流程 ──────────────────────────────────────────────────
 
 found=false
@@ -61,7 +48,6 @@ found=false
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   found=true
-  icon="${line:0:1}"   # ⚠️ ❌ 👻 等多字节字符取首字节不准确，改用前缀判断
   path="${line#* }"
 
   if $DO_RM; then
@@ -72,7 +58,6 @@ while IFS= read -r line; do
   fi
 done < <(
   find_deleted_on_disk
-  find_empty_dirs
 )
 
 if ! $found; then
