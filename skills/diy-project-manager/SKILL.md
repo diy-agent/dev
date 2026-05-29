@@ -146,6 +146,10 @@ dev commit
 
 执行链：`check` → `test` → git-cleanup 残留检查 → 生成 Conventional Commit message → git commit
 
+**重要**：agent 必须使用 `uv run dev commit` 而非全局 `dev` 命令。全局 dev 可能在开发中切换版本导致行为不确定。
+
+参数：`--skip-check` / `--skip-test` / `--type/-t` / `--scope/-s` / `--message/-m` / `--dry-run/-n`
+
 ### 创建 PR
 
 ```bash
