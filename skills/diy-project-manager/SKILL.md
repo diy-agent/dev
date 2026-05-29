@@ -232,6 +232,45 @@ Goal 不是 issue，是 Project 字段选项——永远不关闭、不污染 sp
 
 ---
 
+## Agent-Human 职责边界
+
+Issue 是人类和 Agent 沟通的核心桥梁。人类不可能阅读 Agent 所有消息，因此**对 Issue 的修改（尤其是状态变更）必须有明确的权限边界**。
+
+### Agent 可以直接做
+
+| 操作 | 条件 |
+|---|---|
+| 创建 issue | body 按模板初始化 |
+| 更新 issue body（设计/过程/复盘） | 有版本历史，可恢复 |
+| `git add` + `git commit` + `git push` | 通过 `dev commit` |
+| 创建 PR | 通过 `dev pr` |
+| 更新 Project 字段（Status 除外） | 通过 `dev` 参数 |
+| 运行 check / test | 日志可见 |
+
+### Agent 必须请求人类确认
+
+| 操作 | 原因 |
+|---|---|
+| Issue 状态变更（关闭/重开） | 不可逆、有语义差别（completed/not planned/duplicate） |
+| 批量关闭 issue | 风险高 |
+| 删除 issue / PR / 分支 | 不可逆 |
+| 修改 main 分支 | 禁止 |
+| 合并 PR | 通过 `dev merge-pr`（人类执行合并策略选择） |
+
+### 确认方式
+
+Agent 应打印建议操作和原因，让人类自行执行。例如：
+
+```
+建议关闭以下 issue（已被 #17 覆盖）：
+  gh issue close 5  --repo diy-agent/_diy -r "not planned" -c "Covered by #17"
+  gh issue close 8  --repo diy-agent/_diy -r "not planned" -c "Covered by #17"
+```
+
+未来通过 `dev close` 命令实现类似 opencode 的交互式确认模式。
+
+---
+
 ## 反模式
 
 | 不要 | 应该 |
