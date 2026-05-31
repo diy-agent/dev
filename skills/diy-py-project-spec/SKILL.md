@@ -19,10 +19,13 @@ diy 生态所有 Python 项目遵循统一的 uv + pyproject.toml 约定。
 
 | 规则 | 示例 |
 |------|------|
-| 项目名用 `diy-` 前缀 | `diy-cli`、`diyui.py`、`diy-research` |
+| 应用层/CLI/基础设施用 `diy-` 前缀 | `diy`、`diy-cli`、`diy-ui`、`diy-research` |
+| 量化交易用 `diy` 前缀 | `diyq` |
 | 元/工具项目用 `_` 前缀 | `_diy` |
-| 包名用 `-` 分隔 | `diy-cli.py`、`diyui.py` |
+| 包名用 `-` 分隔 | `diy-cli`、`diy-ui` |
 | GitHub repo 名与项目名一致 | `diy-agent/diy`、`diy-agent/_diy` |
+
+> `diy-ui` 原名为 `diyui.py`，改用 `-` 保持命名一致。三层架构：用户界面 `diy` → UI 基础设施 `diy-ui` → CLI 基础设施 `diy-cli`。
 
 ---
 
