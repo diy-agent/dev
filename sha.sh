@@ -71,6 +71,8 @@ sync()  {
     run ln -sf packages/diydev/skills/win-file-unlock ~/.agents/skills/win-file-unlock
 }
 test() { :; }
+# CI: check + test, 供 CI 流水线使用
+ci() { check; test; }
 #  ./sha.sh test-headless
 test-headless() { :;}
 # 有头模式 + slowmo 500ms，可以看着浏览器执行

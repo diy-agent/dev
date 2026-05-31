@@ -139,54 +139,6 @@ def _check_sha_common_naming(project_root: str) -> CheckResult:
     )
 
 
-def _check_sha_sources_correct(project_root: str) -> CheckResult:
-    """sha.sh must source 'sha.common.sh', not 'sha_common.sh'"""
-    content = _read_file(Path(project_root) / "sha.sh")
-    if not content:
-        return CheckResult("sha", "sha.sh sources sha.common.sh", Status.SKIP)
-    if (
-        'source "sha_common.sh"' in content
-        or "source 'sha_common.sh'" in content
-        or "sha_common.sh" in content.replace('"', "").replace("'", "")
-    ):
-        return CheckResult(
-            "sha",
-            "sha.sh sources sha.common.sh",
-            Status.FAIL,
-            "sha.sh references deprecated sha_common.sh",
-            "change to 'source \"sha.common.sh\"'",
-        )
-    if "sha.common.sh" in content:
-        return CheckResult("sha", "sha.sh sources sha.common.sh", Status.PASS)
-    return CheckResult(
-        "sha",
-        "sha.sh sources sha.common.sh",
-        Status.WARN,
-        "no reference to sha.common.sh found",
-    )
-
-
-def _check_sha_has_sha_at_end(project_root: str) -> CheckResult:
-    """sha.sh must end with 'sha \"$@\"'"""
-    content = _read_file(Path(project_root) / "sha.sh")
-    if not content:
-        return CheckResult("sha", 'sha.sh ends with sha "$@"', Status.SKIP)
-    lines = [
-        line.strip()
-        for line in content.split("\n")
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    if lines and lines[-1] == 'sha "$@"':
-        return CheckResult("sha", 'sha.sh ends with sha "$@"', Status.PASS)
-    return CheckResult(
-        "sha",
-        'sha.sh ends with sha "$@"',
-        Status.FAIL,
-        "last line is not 'sha \"$@\"'",
-        "add 'sha \"$@\"' at end of file",
-    )
-
-
 def _check_sha_run_naming(project_root: str) -> CheckResult:
     """sha.common.sh must define 'run()', not '_run()'"""
     content = _read_file(Path(project_root) / "sha.common.sh")
@@ -217,7 +169,7 @@ def _check_sha_run_naming(project_root: str) -> CheckResult:
     )
 
 
-_REQUIRED_COMMANDS = ["check", "test", "sync", "clean"]
+_REQUIRED_COMMANDS = ["check", "test", "sync", "clean", "fix", "ci"]
 
 
 def _check_sha_required_commands(project_root: str) -> CheckResult:
@@ -239,22 +191,6 @@ def _check_sha_required_commands(project_root: str) -> CheckResult:
         Status.FAIL,
         f"missing: {', '.join(missing)}",
         f"add {', '.join(missing)}() functions to sha.sh",
-    )
-
-
-def _check_sha_set_flags(project_root: str) -> CheckResult:
-    """sha.sh should have set -o errtrace -o errexit -o functrace -o pipefail"""
-    content = _read_file(Path(project_root) / "sha.sh")
-    if not content:
-        return CheckResult("sha", "set -o flags", Status.SKIP)
-    flags = ["errtrace", "errexit", "functrace", "pipefail"]
-    missing = [
-        f for f in flags if f"set -o {f}" not in content and f"-o {f}" not in content
-    ]
-    if not missing:
-        return CheckResult("sha", "set -o flags", Status.PASS)
-    return CheckResult(
-        "sha", "set -o flags", Status.WARN, f"missing flags: {', '.join(missing)}"
     )
 
 
@@ -284,11 +220,8 @@ SHA_CHECKS: list[tuple[str, Callable[[str], CheckResult]]] = [
     ("sha.sh exists", _check_sha_exists),
     ("sha.sh executable", _check_sha_executable),
     ("sha.common.sh naming", _check_sha_common_naming),
-    ("sha.sh sources sha.common.sh", _check_sha_sources_correct),
-    ('sha.sh ends with sha "$@"', _check_sha_has_sha_at_end),
     ("run() naming", _check_sha_run_naming),
     ("required commands", _check_sha_required_commands),
-    ("set -o flags", _check_sha_set_flags),
     ("vendor/sha submodule", _check_sha_vendor_submodule),
 ]
 

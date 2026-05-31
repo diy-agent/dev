@@ -121,6 +121,8 @@ fix() {
   run uv run ruff format src/ tests/
 }
 
+ci() { check; test; }
+
 # === 项目特有命令在此之下 ===
 
 sha "$@"
@@ -147,6 +149,7 @@ _ws_run() {
 check() { _ws_run command ./sha.sh check; }
 test()  { _ws_run command ./sha.sh test; }
 fix()   { _ws_run command ./sha.sh fix; }
+ci()    { check; test; }
 
 sync() {
   run uv sync --all-packages
@@ -172,7 +175,8 @@ clean() {
 | `test` | 单元测试（pytest） | ✅ |
 | `sync` | 环境同步（uv sync + submodule + 全局工具安装） | ✅ |
 | `clean` | 清理构建产物和缓存 | ✅ |
-| `fix` | 自动修复（ruff fix + format） | 推荐 |
+| `fix` | 自动修复（ruff fix + format） | ✅ |
+| `ci` | CI 入口（check + test） | ✅ |
 
 ### check 实现建议
 
@@ -264,6 +268,8 @@ fix() {
   run uv run ruff check --fix src/ tests/
   run uv run ruff format src/ tests/
 }
+
+ci() { check; test; }
 
 sha "$@"
 ```
