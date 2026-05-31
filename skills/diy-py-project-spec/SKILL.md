@@ -10,6 +10,9 @@ description: >
 
 diy 生态所有 Python 项目遵循统一的 uv + pyproject.toml 约定。
 
+> **代码即规范**：提交前运行 `dev doctor --py` 自动检查所有规范项，不需记忆本文。
+> 本文保留模板和约定参考，具体检查项以 `dev doctor` 输出为准。
+
 ---
 
 ## 项目命名

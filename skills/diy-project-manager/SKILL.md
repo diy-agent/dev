@@ -161,6 +161,7 @@ dev start <issue>
 ### 提交
 
 ```bash
+dev doctor     # 先运行规范检查（推荐）
 dev commit
 ```
 
@@ -168,7 +169,9 @@ dev commit
 
 **重要**：agent 必须使用 `uv run dev commit` 而非全局 `dev` 命令。全局 dev 可能在开发中切换版本导致行为不确定。
 
-参数：`--skip-check` / `--skip-test` / `--type/-t` / `--scope/-s` / `--message/-m` / `--dry-run/-n`
+参数：`--type/-t` / `--scope/-s` / `--message/-m` / `--dry-run/-n`
+
+> 规范检查：`dev doctor` 可单独运行，检查 sha.sh/pyproject 是否符合规范。
 
 ### 创建 PR
 
