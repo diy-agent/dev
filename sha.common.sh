@@ -112,12 +112,12 @@ _test_colors() {
 
 # 清晰的函数调用日志，替代 `set -x` 功能
 #
-# Usage:   _run <some cmd>
-# Example: _run docker compose up
+# Usage:   run <some cmd>
+# Example: run docker compose up
 #
 # 假设你的./sake 脚本里有个函数：
 # up() {
-#   _run docker compose up;  # ./sake 的 22行
+#   run docker compose up;  # ./sake 的 22行
 # }
 # 运行`./sake up`后打印日志：
 # 🔵 ./sake:22 up() ▶︎【/home/ubuntu/current_work_dir$ docker compose up】
@@ -128,7 +128,7 @@ _test_colors() {
 #   - 执行了什么: docker compose up
 # 在vscode中，按住macbook的cmd键,点终端上输出的‘./sake:106’, 可以让编辑器跳转到对应的脚本行，很方便
 # 获取调用栈的原理：
-#   `caller 0`输出为`22 foo ./sake`，即调用_run函数的调用栈信息：行号、函数,脚本
+#   `caller 0`输出为`22 foo ./sake`，即调用run函数的调用栈信息：行号、函数,脚本
 run() {
   local caller_script=$(caller 0 | awk '{print $3}')
     # shellcheck disable=SC2001
