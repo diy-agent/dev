@@ -120,7 +120,6 @@ def _show_tree(repo: str, main_branch: str, verbose: int):
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
         _print_one_tree(row, verbose)
-        _console.print()
 
     _print_summary(counts)
 
@@ -190,13 +189,14 @@ def _format_pr(row: dict) -> str:
 
 
 def _print_errors(errors: list[tuple[str, list[str]]]):
-    """打印红色 ERRORS 区块"""
+    """打印 ERRORS 区块，文件路径红色"""
     _console.print(Text("  🟥 ERRORS:", style="red"))
     for title, lines in errors:
         if title:
-            _console.print(Text(f"    {title}", style="red"))
+            _console.print(f"    {title}")
         for line in lines:
-            _console.print(f"      {line}")
+            # 行如 " M src/file.py" — 只让路径变红，状态标记不标红
+            _console.print(Text(f"      {line}", style="red"))
 
 
 def _print_guidance(guidance: list[str]):
@@ -216,17 +216,14 @@ def _append_colored_state(text: Text, state: str):
 
 def _print_summary(counts: dict[str, int]):
     """底部汇总行"""
-    LABELS = {
-        "completed": ("✅", "已完成"),
-        "wip": ("🔳", "开发中"),
-        "error": ("🟥", "需注意"),
-    }
+    total = sum(counts.values())
+    completed = counts.get("completed", 0)
+    errors = counts.get("error", 0)
     parts = []
-    for key in ("completed", "wip", "error"):
-        n = counts.get(key, 0)
-        if n:
-            sym, label = LABELS[key]
-            parts.append(f"{sym} {label} {n}")
+    if completed:
+        parts.append(f"完成{completed}/{total}")
+    if errors:
+        parts.append(f"问题:{errors}/{total}")
     if parts:
         _console.print(Text("  " + "  |  ".join(parts), style="dim"))
 
