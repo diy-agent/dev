@@ -138,39 +138,37 @@ def _print_one_tree(row: dict, verbose: int):
     }
     icon, color = L1_ICON.get(status, ("🔳", "dim"))
 
-    # ---- Level 1: [icon] 路径  (branch) — 仅 icon 上色 ----
+    # ---- Level 1: - [icon] 路径  (branch) ----
     l1 = Text()
-    l1.append(f"{icon} ", style=color)
+    l1.append(f"- {icon} ", style=color)
     l1.append(f"{_short_path(wt.path)}  ({row['branch']})")
     _console.print(l1)
 
-    # ---- Level 2: Issue（🔳 未完成 / ✅ 已完成） ----
+    # ---- Level 2: Issue ----
     if row["issue_num"]:
         i_icon, i_color = (
             ("✅", "green") if row["issue_state"] == "CLOSED" else ("🔳", "dim")
         )
         _console.print(
             Text(
-                f"  {i_icon} #{row['issue_num']} {row['issue_state']}  {row['issue_title']}",
+                f"  - {i_icon} #{row['issue_num']} {row['issue_state']}  {row['issue_title']}",
                 style=i_color,
             )
         )
 
-    # ---- Level 2: PR（🔳 未完成 / ✅ 已完成，main 不显示） ----
+    # ---- Level 2: PR（main 不显示） ----
     if not is_main:
         pr_done = row["pr_state"] == "MERGED"
         p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
-        _console.print(Text(f"  {p_icon} {_format_pr(row)}", style=p_color))
+        _console.print(Text(f"  - {p_icon} {_format_pr(row)}", style=p_color))
 
-    # ---- Level 2: 🟥 发现问题:（仅在有错误时出现） ----
+    # ---- Level 2: 🟥 发现问题: ----
     if row.get("error_categories"):
-        _console.print(Text("  \U0001f7e5 发现问题:", style="red"))
+        _console.print(Text("  - \U0001f7e5 发现问题:", style="red"))
         for ecat in row["error_categories"]:
-            # Level 3: 具体错误类型
-            _console.print(Text(f"    {ecat['category']}:", style="red"))
-            # Level 4: 错误详情
+            _console.print(Text(f"    - {ecat['category']}:", style="red"))
             for detail in ecat["details"]:
-                _console.print(Text(f"      {detail}", style="red"))
+                _console.print(Text(f"      - {detail}", style="red"))
 
     # ---- 拓扑（仅 -v） ----
     if verbose and not is_main and row["issue_num"]:
@@ -203,10 +201,10 @@ def _format_pr(row: dict) -> str:
 
 
 def _print_guidance(guidance: list[str]):
-    """打印 😝指导: 区块"""
-    _console.print(Text("  😝指导:", style="bold"))
+    """打印 指导: 区块"""
+    _console.print(Text("  - 指导:"))
     for g in guidance:
-        _console.print(f"    {g}")
+        _console.print(f"    - {g}")
 
 
 def _append_colored_state(text: Text, state: str):
@@ -279,9 +277,9 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
             pass
     if row.get("error_categories"):
         for ecat in row["error_categories"]:
-            _console.print(Text(f"    \U0001f7e5 {ecat['category']}:", style="red"))
+            _console.print(Text(f"    - \U0001f7e5 {ecat['category']}:", style="red"))
             for detail in ecat["details"]:
-                _console.print(Text(f"      {detail}", style="red"))
+                _console.print(Text(f"      - {detail}", style="red"))
     else:
         _console.print("    Changes:   clean")
 
