@@ -61,17 +61,17 @@ def work_status(
         ),
     ] = None,
     verbose: VerboseFlag = 0,
-    detail: Annotated[
+    all: Annotated[
         bool,
         Parameter(
-            name=["--detail", "-d"],
-            help="show more details (URL, timeline etc)",
+            name=["--all", "-a"],
+            help="show all details (URL, timeline etc)",
         ),
     ] = False,
     issue: Annotated[
         Optional[int],
         Parameter(
-            name=["--issue", "-i"],
+            name=["--issue"],
             help="query a specific issue (no worktree required)",
         ),
     ] = None,
@@ -96,10 +96,10 @@ def work_status(
         return
 
     if worktree_path is not None:
-        _show_detailed(worktree_path, repo, main_branch, detail)
+        _show_detailed(worktree_path, repo, main_branch, all)
         return
 
-    _show_tree(repo, main_branch, detail)
+    _show_tree(repo, main_branch, all)
 
 
 # ===========================================================================
@@ -107,7 +107,7 @@ def work_status(
 # ===========================================================================
 
 
-def _show_tree(repo: str, main_branch: str, detail: bool):
+def _show_tree(repo: str, main_branch: str, all: bool):
     """渲染所有 worktree 的树状状态概览"""
     worktrees = git_worktree_list()
     rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
@@ -126,12 +126,12 @@ def _show_tree(repo: str, main_branch: str, detail: bool):
     for row in rows:
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
-        _print_one_tree(row, detail, repo)
+        _print_one_tree(row, all, repo)
 
-    _print_summary(counts, detail)
+    _print_summary(counts, all)
 
 
-def _print_one_tree(row: dict, detail: bool, repo: str):
+def _print_one_tree(row: dict, all: bool, repo: str):
     """打印一棵 worktree 的状态树"""
     wt: WorktreeInfo = row["wt"]
     status = row["status"]
@@ -162,7 +162,7 @@ def _print_one_tree(row: dict, detail: bool, repo: str):
                 style=i_color,
             )
         )
-        if detail and row.get("issue_url"):
+        if all and row.get("issue_url"):
             _console.print(f"    URL: {row['issue_url']}")
 
     # ---- Level 2: PR（main 不显示） ----
@@ -170,7 +170,7 @@ def _print_one_tree(row: dict, detail: bool, repo: str):
         pr_done = row["pr_state"] == "MERGED"
         p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
         _console.print(Text(f"  - {p_icon} {_format_pr(row)}", style=p_color))
-        if detail and row.get("pr_url"):
+        if all and row.get("pr_url"):
             _console.print(f"    URL: {row['pr_url']}")
 
     # ---- Level 2: 🟥 发现问题: ----
@@ -182,7 +182,7 @@ def _print_one_tree(row: dict, detail: bool, repo: str):
                 _console.print(Text(f"      - {d}", style="red"))
 
     # ---- 拓扑（仅 -d） ----
-    if detail and not is_main and row["issue_num"]:
+    if all and not is_main and row["issue_num"]:
         diagram = _build_branch_diagram(row["branch"], main_branch)
         for line in diagram.split("\n"):
             _console.print(Text(f"    {line}", style="dim"))
@@ -226,7 +226,7 @@ def _append_colored_state(text: Text, state: str):
         text.append(f" {state}")
 
 
-def _print_summary(counts: dict[str, int], detail: bool):
+def _print_summary(counts: dict[str, int], all: bool):
     """底部汇总行"""
     total = sum(counts.values())
     completed = counts.get("completed", 0)
@@ -238,8 +238,8 @@ def _print_summary(counts: dict[str, int], detail: bool):
         f"问题:{errors}/{total}",
     ]
     _console.print(Text("  " + "  |  ".join(parts), style="dim"))
-    if not detail:
-        _console.print(Text("  dev status -d  展开详情", style="dim"))
+    if not all:
+        _console.print(Text("  dev status -a  展开详情", style="dim"))
 
 
 # ===========================================================================
