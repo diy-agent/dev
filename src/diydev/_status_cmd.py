@@ -17,7 +17,7 @@ from cyclopts import App, Parameter
 from rich.console import Console
 from rich.text import Text
 
-from ._log import VerboseFlag, set_verbosity
+from ._log import VerboseFlag, set_verbosity, verbosity as _verbosity_level
 from ._git_ops import (
     run,
     get_github_repo,
@@ -119,17 +119,18 @@ def _show_tree(repo: str, main_branch: str, verbose: int):
     for row in rows:
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
-        _print_one_tree(row, verbose)
+        _print_one_tree(row, verbose, repo)
 
-    _print_summary(counts)
+    _print_summary(counts, verbose)
 
 
-def _print_one_tree(row: dict, verbose: int):
+def _print_one_tree(row: dict, verbose: int, repo: str):
     """打印一棵 worktree 的状态树"""
     wt: WorktreeInfo = row["wt"]
     status = row["status"]
     main_branch = get_main_branch()
     is_main = row["branch"] == main_branch
+    _verbose = verbose or _verbosity_level()  # 兼容显式传参和全局 -v
 
     L1_ICON = {
         "completed": ("✅", "green"),
@@ -155,12 +156,16 @@ def _print_one_tree(row: dict, verbose: int):
                 style=i_color,
             )
         )
+        if _verbose and row.get("issue_url"):
+            _console.print(f"    URL: {row['issue_url']}")
 
     # ---- Level 2: PR（main 不显示） ----
     if not is_main:
         pr_done = row["pr_state"] == "MERGED"
         p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
         _console.print(Text(f"  - {p_icon} {_format_pr(row)}", style=p_color))
+        if _verbose and row.get("pr_url"):
+            _console.print(f"    URL: {row['pr_url']}")
 
     # ---- Level 2: 🟥 发现问题: ----
     if row.get("error_categories"):
@@ -171,7 +176,7 @@ def _print_one_tree(row: dict, verbose: int):
                 _console.print(Text(f"      - {detail}", style="red"))
 
     # ---- 拓扑（仅 -v） ----
-    if verbose and not is_main and row["issue_num"]:
+    if _verbose and not is_main and row["issue_num"]:
         diagram = _build_branch_diagram(row["branch"], main_branch)
         for line in diagram.split("\n"):
             _console.print(Text(f"    {line}", style="dim"))
@@ -215,18 +220,21 @@ def _append_colored_state(text: Text, state: str):
         text.append(f" {state}")
 
 
-def _print_summary(counts: dict[str, int]):
+def _print_summary(counts: dict[str, int], verbose: int):
     """底部汇总行"""
     total = sum(counts.values())
     completed = counts.get("completed", 0)
     errors = counts.get("error", 0)
     wip = counts.get("wip", 0)
+    _verbose = verbose or _verbosity_level()
     parts = [
         f"已完成 {completed}/{total}",
         f"开发中 {wip}/{total}",
         f"问题:{errors}/{total}",
     ]
     _console.print(Text("  " + "  |  ".join(parts), style="dim"))
+    if not _verbose:
+        _console.print(Text("  dev status -v  获得更详细信息", style="dim"))
 
 
 # ===========================================================================
@@ -391,11 +399,15 @@ def _build_worktree_row(
     issue_num = parse_issue_number(branch) if branch else None
     issue_title = ""
     issue_state = ""
+    issue_url = ""
     if issue_num:
         try:
-            issue = gh_issue_view(issue_num, repo, "number,title,state")
-            issue_title = issue.get("title", "")
-            issue_state = issue.get("state", "")
+            iss = gh_issue_view(
+                issue_num, repo, "number,title,state,url,createdAt,author"
+            )
+            issue_title = iss.get("title", "")
+            issue_state = iss.get("state", "")
+            issue_url = iss.get("url", "")
         except RuntimeError:
             pass
 
@@ -496,6 +508,7 @@ def _build_worktree_row(
         "pr_title": pr_title,
         "pr_url": pr_url,
         "pr_review_label": pr_review_label,
+        "issue_url": issue_url,
         "git_status_lines": git_status_lines,
         "error_categories": error_categories,
         "status": status,
