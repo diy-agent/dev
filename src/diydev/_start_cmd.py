@@ -10,10 +10,10 @@ from ._git_ops import (
     get_github_repo,
     get_main_branch,
     git_worktree_add,
+    get_worktree_path,
     git_push_upstream,
 )
 from ._gh_ops import gh_issue_view
-from ._config import WORKTREE_DIR
 
 start_app = App(name="start", help="开始开发：pull main, 创建 worktree, 初始化并推送")
 
@@ -115,7 +115,7 @@ def work_start(
         return
 
     # 2. 创建 worktree
-    worktree_path = f"{WORKTREE_DIR}/{branch}"
+    worktree_path = get_worktree_path(branch)
     try:
         git_worktree_add(branch, main_branch)
         print(f"成功: 创建 worktree {worktree_path}")
