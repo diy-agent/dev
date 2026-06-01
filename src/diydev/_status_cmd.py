@@ -128,41 +128,46 @@ def _print_one_tree(row: dict, verbose: int):
     """打印一棵 worktree 的状态树"""
     wt: WorktreeInfo = row["wt"]
     status = row["status"]
-    is_main = row["branch"] == get_main_branch()
+    main_branch = get_main_branch()
+    is_main = row["branch"] == main_branch
 
-    # ---- Level 1: [✅🟥🔳] 路径 (分支) #issue title ----
     ICON = {
         "completed": ("✅", "green"),
         "error": ("🟥", "red"),
         "wip": ("🔳", "dim"),
     }
     icon, color = ICON.get(status, ("🔳", "dim"))
-    l1 = Text()
-    l1.append(f"{icon} ", style=color)
-    l1.append(_short_path(wt.path))
-    l1.append(f"  ({row['branch']})")
+
+    # ---- Level 1: [icon] 路径  (branch) ----
+    _console.print(
+        Text(f"{icon} {_short_path(wt.path)}  ({row['branch']})", style=color)
+    )
+
+    # ---- Level 2: Issue ----
     if row["issue_num"]:
-        l1.append(f"  #{row['issue_num']}")
-        _append_colored_state(l1, row["issue_state"])
-        l1.append(f"  {row['issue_title']}")
-    _console.print(l1)
+        l_issue = Text("  ")
+        l_issue.append(f"\U0001f4cc #{row['issue_num']} ")
+        _append_colored_state(l_issue, row["issue_state"])
+        l_issue.append(f"  {row['issue_title']}")
+        _console.print(l_issue)
 
-    if is_main:
-        # Main 分支：只显示错误和指导
-        if row["errors"]:
-            _print_errors(row["errors"])
-        if row["guidance"]:
-            _print_guidance(row["guidance"])
-        return
+    # ---- Level 2: PR（main 不显示 PR）----
+    if not is_main:
+        pr_line = _format_pr(row)
+        if pr_line:
+            _console.print(Text(f"  {pr_line}"))
 
-    # ---- Level 2: PR ----
-    pr_line = _format_pr(row)
-    if pr_line:
-        _console.print(Text(f"  {pr_line}"))
+    # ---- Level 2: 错误分类 ----
+    for ecat in row.get("error_categories", []):
+        _console.print(Text(f"  \U0001f7e5 {ecat['category']}:", style="red"))
+        for detail in ecat["details"]:
+            _console.print(Text(f"      {detail}", style="red"))
 
-    # ---- ERRORS ----
-    if row["errors"]:
-        _print_errors(row["errors"])
+    # ---- 拓扑（仅 -v） ----
+    if verbose and not is_main and row["issue_num"]:
+        diagram = _build_branch_diagram(row["branch"], main_branch)
+        for line in diagram.split("\n"):
+            _console.print(Text(f"    {line}", style="dim"))
 
     # ---- 指导 ----
     if row["guidance"]:
@@ -170,7 +175,7 @@ def _print_one_tree(row: dict, verbose: int):
 
 
 def _format_pr(row: dict) -> str:
-    """格式化 PR 行（无 emoji，纯文本）"""
+    """格式化 PR 行"""
     if row["pr_state"] == "MERGED":
         return f"PR  #{row['pr_number']} 已合并"
     if row["pr_number"]:
@@ -186,17 +191,6 @@ def _format_pr(row: dict) -> str:
             parts.append("待审核")
         return "  ".join(parts)
     return "PR  ⏳ 未提交"
-
-
-def _print_errors(errors: list[tuple[str, list[str]]]):
-    """打印 ERRORS 区块，文件路径红色"""
-    _console.print(Text("  🟥 ERRORS:", style="red"))
-    for title, lines in errors:
-        if title:
-            _console.print(f"    {title}")
-        for line in lines:
-            # 行如 " M src/file.py" — 只让路径变红，状态标记不标红
-            _console.print(Text(f"      {line}", style="red"))
 
 
 def _print_guidance(guidance: list[str]):
@@ -250,10 +244,6 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
     l1.append(f"{icon} ", style=color)
     l1.append(_short_path(row["wt"].path))
     l1.append(f"  ({row['branch']})")
-    if row["issue_num"]:
-        l1.append(f"  #{row['issue_num']}")
-        _append_colored_state(l1, row["issue_state"])
-        l1.append(f"  {row['issue_title']}")
     _console.print(l1)
 
     # Git 详情
@@ -278,8 +268,11 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
                 _console.print(f"    Ahead/Behind: +{ahead} / -{behind}")
         except (RuntimeError, ValueError):
             pass
-    if row["errors"]:
-        _print_errors(row["errors"])
+    if row.get("error_categories"):
+        for ecat in row["error_categories"]:
+            _console.print(Text(f"    \U0001f7e5 {ecat['category']}:", style="red"))
+            for detail in ecat["details"]:
+                _console.print(Text(f"      {detail}", style="red"))
     else:
         _console.print("    Changes:   clean")
 
@@ -448,7 +441,16 @@ def _build_worktree_row(
             pass
 
     # --- 错误分类 ---
-    errors = _categorize_git_errors(git_status_lines)
+    error_categories = _detect_error_categories(
+        branch=branch,
+        main_branch=main_branch,
+        issue_num=issue_num,
+        issue_state=issue_state,
+        pr_number=pr_number,
+        pr_state=pr_state,
+        git_status_lines=git_status_lines,
+        wt=wt,
+    )
 
     # --- 状态判定 ---
     status = _determine_status(
@@ -457,7 +459,7 @@ def _build_worktree_row(
         issue_state=issue_state,
         pr_state=pr_state,
         has_uncommitted=wt.has_uncommitted,
-        errors=errors,
+        error_categories=error_categories,
     )
 
     # --- 指导 ---
@@ -471,7 +473,7 @@ def _build_worktree_row(
         pr_is_draft=pr_is_draft,
         pr_mergeable=pr_mergeable,
         issue_state=issue_state,
-        errors=errors,
+        error_categories=error_categories,
     )
 
     return {
@@ -488,44 +490,56 @@ def _build_worktree_row(
         "pr_url": pr_url,
         "pr_review_label": pr_review_label,
         "git_status_lines": git_status_lines,
-        "errors": errors,
+        "error_categories": error_categories,
         "status": status,
         "guidance": guidance,
     }
 
 
-def _categorize_git_errors(
-    lines: list[str],
-) -> list[tuple[str, list[str]]]:
-    """将 git status --short 输出分类为多个错误段落
+def _detect_error_categories(
+    branch: str,
+    main_branch: str,
+    issue_num: Optional[int],
+    issue_state: str,
+    pr_number: Optional[int],
+    pr_state: str,
+    git_status_lines: list[str],
+    wt: WorktreeInfo,
+) -> list[dict]:
+    """检测 worktree 的错误分类
 
-    返回: [(section_title, lines), ...]
+    返回: [{"category": str, "details": [str, ...]}, ...]
     """
-    if not lines:
-        return []
+    categories: list[dict] = []
 
-    sections: list[tuple[str, list[str]]] = []
+    # Git 脏文件
+    if git_status_lines:
+        categories.append(
+            {
+                "category": "Git 脏文件",
+                "details": list(git_status_lines),
+            }
+        )
 
-    # 未暂存的变更
-    unstaged = [ln for ln in lines if ln.startswith(" M") or ln.startswith(" D")]
-    if unstaged:
-        sections.append(("Changes not staged for commit:", unstaged))
+    # PR 已合并但 Issue 未关闭
+    if pr_state == "MERGED" and issue_state and issue_state != "CLOSED":
+        categories.append(
+            {
+                "category": "PR 已合并但 Issue 未关闭",
+                "details": [f"issue #{issue_num} 仍为 {issue_state}"],
+            }
+        )
 
-    # 已暂存的变更
-    staged = [
-        ln
-        for ln in lines
-        if ln.startswith("M ") or ln.startswith("A ") or ln.startswith("D ")
-    ]
-    if staged:
-        sections.append(("Changes to be committed:", staged))
+    # PR 合并后有新提交
+    if pr_state == "MERGED" and wt.ahead > 0:
+        categories.append(
+            {
+                "category": "PR 合并后有新提交",
+                "details": [f"分支领先 main {wt.ahead} 个 commit"],
+            }
+        )
 
-    # 未追踪的文件
-    untracked = [ln for ln in lines if ln.startswith("??")]
-    if untracked:
-        sections.append(("Untracked files:", untracked))
-
-    return sections
+    return categories
 
 
 def _determine_status(
@@ -534,7 +548,7 @@ def _determine_status(
     issue_state: str,
     pr_state: str,
     has_uncommitted: bool,
-    errors: list,
+    error_categories: list,
 ) -> str:
     """判定 worktree 完成状态
 
@@ -543,13 +557,13 @@ def _determine_status(
     is_main = branch == main_branch
 
     if is_main:
-        return "error" if (has_uncommitted or errors) else "completed"
+        return "error" if error_categories else "completed"
 
     is_pr_merged = pr_state == "MERGED"
     is_issue_closed = issue_state == "CLOSED"
 
     # 异常
-    if errors:
+    if error_categories:
         return "error"
     if is_pr_merged and not is_issue_closed:
         return "error"
@@ -574,13 +588,13 @@ def _get_guidance(
     pr_is_draft: bool,
     pr_mergeable: str,
     issue_state: str,
-    errors: list,
+    error_categories: list,
 ) -> list[str]:
     """根据状态返回多行动作指导"""
     result: list[str] = []
 
     if branch == main_branch:
-        if has_uncommitted or errors:
+        if has_uncommitted or error_categories:
             result.append("在 worktree 分支处理未提交变更")
         else:
             # 检查是否需要推送/拉取
@@ -616,8 +630,7 @@ def _get_guidance(
                 result.append("dev pr  提交 PR")
             elif pr_state == "OPEN":
                 result.append("git push  推送新 commit")
-        else:
-            result.append("手动检查状态")
+            # no else needed — git dirty is the only error category
         return result
 
     # 正常流程
