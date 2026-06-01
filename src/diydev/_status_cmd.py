@@ -132,7 +132,9 @@ def _print_one_tree(row: dict, verbose: int):
     # ---- Level 1: [icon] path (branch) #issue title ----
     l1 = Text()
     l1.append(f"{icon} ", style=color or None)
-    l1.append(wt.short_path)
+    # main 分支始终显示 .，worktree 分支尽量短路径
+    display_path = "." if is_main else wt.short_path
+    l1.append(display_path)
     l1.append(f"  ({row['branch']})")
     if row["issue_num"]:
         l1.append(f"  #{row['issue_num']}")
