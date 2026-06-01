@@ -17,6 +17,21 @@ description: >
 
 ---
 
+## Agent 须知：交互命令与绕过方式
+
+以下命令在**未提供必要 option 时会进入 stdin 交互模式**，可能导致 Agent 卡死。执行前务必先查 `dev <cmd> -h`。
+
+| 命令 | 交互点 | 绕过方式 |
+|------|--------|----------|
+| `dev merge-pr` | 策略选择器 | `--method squash/merge/rebase` |
+| `dev prune` | 确认清理 | `-y` |
+| `dev commit` | 编辑器编辑 message | `-m "msg"` 或 `-t TYPE -s SCOPE` |
+| `dev close` | 确认关闭 | `-y` |
+
+**通用原则**：所有交互式 prompt 都有对应的 option 跳过。执行前先用 `-h` 查看，找不到再查 skill。
+
+---
+
 ## 命令速查
 
 ### `dev new <描述>`

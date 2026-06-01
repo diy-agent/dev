@@ -29,7 +29,7 @@ def work_close(
         Optional[str],
         Parameter(
             name=["--reason", "-r"],
-            help="close reason: completed | not-planned | duplicate",
+            help="关闭原因: completed | not-planned（GitHub state_reason；Agent: 默认 completed）",
         ),
     ] = None,
     comment: Annotated[
@@ -43,7 +43,7 @@ def work_close(
         bool,
         Parameter(
             name=["--yes", "-y"],
-            help="skip confirmation (use with caution)",
+            help="跳过确认（Agent: 使用 -y 跳过交互确认）",
         ),
     ] = False,
     verbose: VerboseFlag = 0,

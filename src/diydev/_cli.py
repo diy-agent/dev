@@ -30,7 +30,7 @@ VerboseRoot = Annotated[
 
 app = App(
     name="dev",
-    help="diy 开发流程管理",
+    help="diy 开发流程管理 | Agent: 交互命令(merge-pr/prune/commit/close)需先 dev <cmd> -h 确认参数，用 option 绕过 stdin",
     version_flags=[],
 )
 

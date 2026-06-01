@@ -228,7 +228,8 @@ def work_commit(
     message: Annotated[
         Optional[str],
         Parameter(
-            name=["--message", "-m"], help="manual commit message (skip auto-generate)"
+            name=["--message", "-m"],
+            help="manual commit message (skip auto-generate; Agent: 用 -m 或 -t/-s 组合跳过编辑器交互)",
         ),
     ] = None,
     dry_run: Annotated[
@@ -239,6 +240,8 @@ def work_commit(
     """check + test + cleanup + message + git commit.
 
     Agent one-shot commit, never forget steps again.
+
+    Agent: 提供 -t/-s/-m 任一参数则自动确认提交，不进入编辑器交互。
 
     Execution chain:
       1. ./sha.sh check   (skip if not defined)
