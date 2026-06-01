@@ -73,7 +73,7 @@ def work_merge_pr(
         Optional[str],
         Parameter(
             name=["--method", "-m"],
-            help="合并策略: merge | squash | rebase（未指定则交互选择）",
+            help="合并策略: merge | squash | rebase（未指定则交互选择；Agent: 必须通过 --method 指定）",
         ),
     ] = None,
     ready: Annotated[

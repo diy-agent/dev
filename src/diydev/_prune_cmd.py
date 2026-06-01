@@ -129,7 +129,7 @@ def work_prune(
         bool,
         Parameter(
             name=["--yes", "-y"],
-            help="跳过确认，直接清理",
+            help="跳过确认，直接清理（Agent: 建议使用 -y 跳过交互）",
         ),
     ] = False,
 ):
