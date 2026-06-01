@@ -543,15 +543,6 @@ def _detect_error_categories(
             }
         )
 
-    # PR 合并后有新提交
-    if pr_state == "MERGED" and wt.ahead > 0:
-        categories.append(
-            {
-                "category": "PR 合并后有新提交",
-                "details": [f"分支领先 main {wt.ahead} 个 commit"],
-            }
-        )
-
     return categories
 
 
