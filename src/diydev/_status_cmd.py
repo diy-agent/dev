@@ -10,6 +10,7 @@ Commands:
 """
 
 import json
+import os
 from typing import Optional, Annotated
 
 from cyclopts import App, Parameter
@@ -27,9 +28,23 @@ from ._git_ops import (
 from ._gh_ops import gh_issue_view, gh_pr_list
 from ._list_cmd import git_worktree_list, WorktreeInfo
 
-
 status_app = App(name="status", help="worktree tree overview")
 _console = Console()
+
+# ===========================================================================
+# 路径工具
+# ===========================================================================
+
+_HOME = os.path.expanduser("~")
+
+
+def _short_path(path: str) -> str:
+    """将绝对路径转为 ~/... 的短路径"""
+    if path == _HOME:
+        return "~"
+    if path.startswith(_HOME + "/"):
+        return "~" + path[len(_HOME) :]
+    return path
 
 
 # ===========================================================================
@@ -69,17 +84,14 @@ def work_status(
     repo = get_github_repo()
     main_branch = get_main_branch()
 
-    # --issue mode: query any issue
     if issue is not None:
         _show_issue_view(issue, repo)
         return
 
-    # --path mode: detailed view for a specific worktree
     if worktree_path is not None:
         _show_detailed(worktree_path, repo, main_branch, verbose)
         return
 
-    # Default: tree overview of all worktrees
     _show_tree(repo, main_branch, verbose)
 
 
@@ -91,10 +103,10 @@ def work_status(
 def _show_tree(repo: str, main_branch: str, verbose: int):
     """渲染所有 worktree 的树状状态概览"""
     worktrees = git_worktree_list()
-    rows = [_build_worktree_row(wt, repo, main_branch, verbose) for wt in worktrees]
+    rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
 
-    # 排序: warning → wip → completed → clean（main 在最后）
-    _ORDER = {"warning": 0, "wip": 1, "completed": 2, "clean": 3}
+    # 排序: error → wip → completed（main 在最后）
+    _ORDER = {"error": 0, "wip": 1, "completed": 2}
     rows.sort(
         key=lambda r: (
             _ORDER.get(r["status"], 9),
@@ -108,9 +120,8 @@ def _show_tree(repo: str, main_branch: str, verbose: int):
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
         _print_one_tree(row, verbose)
-        _console.print()  # 空行分隔
+        _console.print()
 
-    # 汇总
     _print_summary(counts)
 
 
@@ -120,21 +131,16 @@ def _print_one_tree(row: dict, verbose: int):
     status = row["status"]
     is_main = row["branch"] == get_main_branch()
 
-    # --- 状态标记 → 颜色 ---
-    SYM = {
-        "completed": ("☑", "green"),
-        "warning": ("⚠", "yellow"),
-        "wip": ("☐", ""),
-        "clean": ("·", "dim"),
+    # ---- Level 1: [✅🟥🔳] 路径 (分支) #issue title ----
+    ICON = {
+        "completed": ("✅", "green"),
+        "error": ("🟥", "red"),
+        "wip": ("🔳", "dim"),
     }
-    icon, color = SYM.get(status, ("☐", ""))
-
-    # ---- Level 1: [icon] path (branch) #issue title ----
+    icon, color = ICON.get(status, ("🔳", "dim"))
     l1 = Text()
-    l1.append(f"{icon} ", style=color or None)
-    # main 分支始终显示 .，worktree 分支尽量短路径
-    display_path = "." if is_main else wt.short_path
-    l1.append(display_path)
+    l1.append(f"{icon} ", style=color)
+    l1.append(_short_path(wt.path))
     l1.append(f"  ({row['branch']})")
     if row["issue_num"]:
         l1.append(f"  #{row['issue_num']}")
@@ -143,76 +149,67 @@ def _print_one_tree(row: dict, verbose: int):
     _console.print(l1)
 
     if is_main:
-        # Main 分支：仅在有变更时显示 Git
-        if row["git_status_lines"]:
-            l2_git = Text("  ⚠ ", style="yellow")
-            l2_git.append(f"Git  {len(row['git_status_lines'])} 个文件未提交")
-            _console.print(l2_git)
-            for line in row["git_status_lines"][:10]:
-                _console.print(Text(f"    {line}"))
-        if row["next_step"]:
-            _console.print(Text(f"  → {row['next_step']}"))
+        # Main 分支：只显示错误和指导
+        if row["errors"]:
+            _print_errors(row["errors"])
+        if row["guidance"]:
+            _print_guidance(row["guidance"])
         return
 
     # ---- Level 2: PR ----
-    l2_pr = Text("  ")
+    pr_line = _format_pr(row)
+    if pr_line:
+        _console.print(Text(f"  {pr_line}"))
+
+    # ---- ERRORS ----
+    if row["errors"]:
+        _print_errors(row["errors"])
+
+    # ---- 指导 ----
+    if row["guidance"]:
+        _print_guidance(row["guidance"])
+
+
+def _format_pr(row: dict) -> str:
+    """格式化 PR 行（无 emoji，纯文本）"""
     if row["pr_state"] == "MERGED":
-        l2_pr.append("☑ ", style="green")
-        l2_pr.append(f"PR  #{row['pr_number']} 已合并")
-    elif row["pr_number"]:
-        l2_pr.append("☐ ")
-        l2_pr.append(f"PR  #{row['pr_number']} {row['pr_state']}")
+        return f"PR  #{row['pr_number']} 已合并"
+    if row["pr_number"]:
+        parts = [f"PR  #{row['pr_number']} {row['pr_state']}"]
         if row["pr_is_draft"]:
-            l2_pr.append(" (草稿)", style="yellow")
-        mergeable = row["pr_mergeable"]
-        if mergeable == "MERGEABLE":
-            l2_pr.append("  ✅ 可合并", style="green")
-        elif mergeable == "CONFLICTING":
-            l2_pr.append("  ⚠ 冲突", style="yellow")
-        elif mergeable == "UNKNOWN":
-            l2_pr.append("  待审核")
-        if verbose:
-            l2_pr.append(f"  {row.get('pr_review_label', '')}")
-    else:
-        l2_pr.append("☐ ")
-        l2_pr.append("PR  ⏳ 未提交")
-    _console.print(l2_pr)
+            parts.append("(草稿)")
+        m = row["pr_mergeable"]
+        if m == "MERGEABLE":
+            parts.append("可合并")
+        elif m == "CONFLICTING":
+            parts.append("冲突")
+        elif m == "UNKNOWN":
+            parts.append("待审核")
+        return "  ".join(parts)
+    return "PR  ⏳ 未提交"
 
-    # ---- Level 2: Git（仅异常时出现）----
-    if row["git_status_lines"]:
-        l2_git = Text("  ⚠ ", style="yellow")
-        l2_git.append(f"Git  {len(row['git_status_lines'])} 个文件未提交")
-        _console.print(l2_git)
 
-        # Level 3: git 精简详情
-        max_lines = 100 if verbose else 10
-        for line in row["git_status_lines"][:max_lines]:
-            _console.print(Text(f"    {line}"))
-        if len(row["git_status_lines"]) > max_lines:
-            _console.print(
-                Text(
-                    f"    ... 还有 {len(row['git_status_lines']) - max_lines} 个文件",
-                    style="dim",
-                )
-            )
+def _print_errors(errors: list[tuple[str, list[str]]]):
+    """打印红色 ERRORS 区块"""
+    _console.print(Text("  🟥 ERRORS:", style="red"))
+    for title, lines in errors:
+        if title:
+            _console.print(Text(f"    {title}", style="red"))
+        for line in lines:
+            _console.print(f"      {line}")
 
-    # ---- 拓扑（仅 -v） ----
-    if verbose and row["issue_num"]:
-        diagram = _build_branch_diagram(row["branch"], get_main_branch())
-        for line in diagram.split("\n"):
-            _console.print(Text(f"    {line}", style="dim"))
 
-    # ---- 动作提示 ----
-    if row["next_step"]:
-        _console.print(Text(f"  → {row['next_step']}"))
+def _print_guidance(guidance: list[str]):
+    """打印 😝指导: 区块"""
+    _console.print(Text("  😝指导:", style="bold"))
+    for g in guidance:
+        _console.print(f"    {g}")
 
 
 def _append_colored_state(text: Text, state: str):
     """追加带颜色的状态标记"""
     if state == "CLOSED":
         text.append(f" {state}", style="green")
-    elif state == "OPEN":
-        text.append(f" {state}")
     else:
         text.append(f" {state}")
 
@@ -220,13 +217,12 @@ def _append_colored_state(text: Text, state: str):
 def _print_summary(counts: dict[str, int]):
     """底部汇总行"""
     LABELS = {
-        "completed": ("☑", "已完成"),
-        "wip": ("☐", "开发中"),
-        "warning": ("⚠", "需注意"),
-        "clean": ("·", "最新"),
+        "completed": ("✅", "已完成"),
+        "wip": ("🔳", "开发中"),
+        "error": ("🟥", "需注意"),
     }
     parts = []
-    for key in ("completed", "wip", "warning", "clean"):
+    for key in ("completed", "wip", "error"):
         n = counts.get(key, 0)
         if n:
             sym, label = LABELS[key]
@@ -241,27 +237,21 @@ def _print_summary(counts: dict[str, int]):
 
 
 def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
-    """展示指定 worktree 的详细状态（原 dev status 行为）"""
-    # 将 path 解析为绝对路径并找到对应的 worktree
+    """展示指定 worktree 的详细状态"""
     resolved = _resolve_worktree_path(path)
     if resolved is None:
-        _console.print(f"[yellow]⚠ 找不到 worktree: {path}[/]")
+        _console.print(f"[red]🟥 找不到 worktree: {path}[/]")
         return
 
-    row = _build_worktree_row(resolved, repo, main_branch, verbose)
+    row = _build_worktree_row(resolved, repo, main_branch)
     st = row["status"]
-    SYM = {
-        "completed": ("☑", "green"),
-        "warning": ("⚠", "yellow"),
-        "wip": ("☐", ""),
-        "clean": ("·", "dim"),
-    }
-    icon, color = SYM.get(st, ("☐", ""))
+    ICON = {"completed": ("✅", "green"), "error": ("🟥", "red"), "wip": ("🔳", "dim")}
+    icon, color = ICON.get(st, ("🔳", "dim"))
 
     # Level 1
     l1 = Text()
-    l1.append(f"{icon} ", style=color or None)
-    l1.append(f"{row['wt'].short_path}")
+    l1.append(f"{icon} ", style=color)
+    l1.append(_short_path(row["wt"].path))
     l1.append(f"  ({row['branch']})")
     if row["issue_num"]:
         l1.append(f"  #{row['issue_num']}")
@@ -271,25 +261,28 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
 
     # Git 详情
     _console.print(Text("\n  Git:", style="bold"))
-    wt = row["wt"]
     _console.print(f"    Branch:    {row['branch']}")
     _console.print(f"    Base:      {main_branch}")
     if row["branch"] != main_branch:
         try:
             ahead = int(
-                run(f'git rev-list --count "{main_branch}..{row["branch"]}"', wt.path)
+                run(
+                    f'git rev-list --count "{main_branch}..{row["branch"]}"',
+                    row["wt"].path,
+                )
             )
             behind = int(
-                run(f'git rev-list --count "{row["branch"]}..{main_branch}"', wt.path)
+                run(
+                    f'git rev-list --count "{row["branch"]}..{main_branch}"',
+                    row["wt"].path,
+                )
             )
             if ahead > 0 or behind > 0:
                 _console.print(f"    Ahead/Behind: +{ahead} / -{behind}")
         except (RuntimeError, ValueError):
             pass
-    if row["git_status_lines"]:
-        _console.print(f"    [yellow]⚠ {len(row['git_status_lines'])} 个文件未提交[/]")
-        for line in row["git_status_lines"]:
-            _console.print(f"      {line}")
+    if row["errors"]:
+        _print_errors(row["errors"])
     else:
         _console.print("    Changes:   clean")
 
@@ -304,7 +297,6 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
         _console.print(f"    State:     {row['pr_state']}")
         if row["pr_is_draft"]:
             _console.print("    State:     [yellow]DRAFT[/]")
-
         mergeable = row["pr_mergeable"]
         if row["pr_is_draft"] and mergeable != "CONFLICTING":
             mergeable_display = "BLOCKED(draft)"
@@ -315,7 +307,6 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
         else:
             mergeable_display = mergeable
         _console.print(f"    Mergeable: {mergeable_display}")
-
         if row.get("pr_review_label"):
             _console.print(f"    Review:    {row['pr_review_label']}")
         _console.print(f"    URL:       {row['pr_url']}")
@@ -327,9 +318,9 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
         for line in diagram.split("\n"):
             _console.print(f"    {line}")
 
-    # Next step
-    if row["next_step"]:
-        _console.print(Text(f"\n  → {row['next_step']}"))
+    # 指导
+    if row["guidance"]:
+        _print_guidance(row["guidance"])
 
 
 def _show_issue_detail(issue_num: int, repo: str):
@@ -392,7 +383,9 @@ def _show_issue_view(issue_num: int, repo: str):
 
 
 def _build_worktree_row(
-    wt: WorktreeInfo, repo: str, main_branch: str, verbose: int
+    wt: WorktreeInfo,
+    repo: str,
+    main_branch: str,
 ) -> dict:
     """为单个 worktree 构建所有状态字段"""
     branch = wt.branch
@@ -428,7 +421,6 @@ def _build_worktree_row(
                 pr_mergeable = pr.get("mergeable", "")
                 pr_title = pr.get("title", "")
                 pr_url = pr.get("url", "")
-                # review
                 try:
                     reviews_raw = run(
                         f"gh pr view {pr_number} --repo {repo} --json reviews -q '.reviews'"
@@ -458,13 +450,21 @@ def _build_worktree_row(
         except RuntimeError:
             pass
 
+    # --- 错误分类 ---
+    errors = _categorize_git_errors(git_status_lines)
+
     # --- 状态判定 ---
     status = _determine_status(
-        branch, main_branch, issue_state, pr_state, wt.has_uncommitted
+        branch=branch,
+        main_branch=main_branch,
+        issue_state=issue_state,
+        pr_state=pr_state,
+        has_uncommitted=wt.has_uncommitted,
+        errors=errors,
     )
 
-    # --- 下一步 ---
-    next_step = _get_next_step(
+    # --- 指导 ---
+    guidance = _get_guidance(
         status=status,
         branch=branch,
         main_branch=main_branch,
@@ -474,6 +474,7 @@ def _build_worktree_row(
         pr_is_draft=pr_is_draft,
         pr_mergeable=pr_mergeable,
         issue_state=issue_state,
+        errors=errors,
     )
 
     return {
@@ -490,9 +491,44 @@ def _build_worktree_row(
         "pr_url": pr_url,
         "pr_review_label": pr_review_label,
         "git_status_lines": git_status_lines,
+        "errors": errors,
         "status": status,
-        "next_step": next_step,
+        "guidance": guidance,
     }
+
+
+def _categorize_git_errors(
+    lines: list[str],
+) -> list[tuple[str, list[str]]]:
+    """将 git status --short 输出分类为多个错误段落
+
+    返回: [(section_title, lines), ...]
+    """
+    if not lines:
+        return []
+
+    sections: list[tuple[str, list[str]]] = []
+
+    # 未暂存的变更
+    unstaged = [ln for ln in lines if ln.startswith(" M") or ln.startswith(" D")]
+    if unstaged:
+        sections.append(("Changes not staged for commit:", unstaged))
+
+    # 已暂存的变更
+    staged = [
+        ln
+        for ln in lines
+        if ln.startswith("M ") or ln.startswith("A ") or ln.startswith("D ")
+    ]
+    if staged:
+        sections.append(("Changes to be committed:", staged))
+
+    # 未追踪的文件
+    untracked = [ln for ln in lines if ln.startswith("??")]
+    if untracked:
+        sections.append(("Untracked files:", untracked))
+
+    return sections
 
 
 def _determine_status(
@@ -501,22 +537,27 @@ def _determine_status(
     issue_state: str,
     pr_state: str,
     has_uncommitted: bool,
+    errors: list,
 ) -> str:
     """判定 worktree 完成状态
 
-    返回: 'warning' | 'completed' | 'wip' | 'clean'
+    返回: 'completed' | 'wip' | 'error'
     """
-    if branch == main_branch:
-        return "clean"
+    is_main = branch == main_branch
+
+    if is_main:
+        return "error" if (has_uncommitted or errors) else "completed"
 
     is_pr_merged = pr_state == "MERGED"
     is_issue_closed = issue_state == "CLOSED"
 
-    # 异常：已合并但 git 脏 / issue 未关
-    if is_pr_merged and has_uncommitted:
-        return "warning"
+    # 异常
+    if errors:
+        return "error"
     if is_pr_merged and not is_issue_closed:
-        return "warning"
+        return "error"
+    if is_pr_merged and has_uncommitted:
+        return "error"
 
     # 全部完成
     if is_pr_merged and not has_uncommitted and is_issue_closed:
@@ -526,7 +567,7 @@ def _determine_status(
     return "wip"
 
 
-def _get_next_step(
+def _get_guidance(
     status: str,
     branch: str,
     main_branch: str,
@@ -536,72 +577,95 @@ def _get_next_step(
     pr_is_draft: bool,
     pr_mergeable: str,
     issue_state: str,
-) -> str:
-    """根据状态输出最优先的一个动作"""
-    if branch == main_branch:
-        if has_uncommitted:
-            return "⚠ main 有未提交变更，在 worktree 分支处理此变更"
-        try:
-            ahead = int(
-                run(f'git rev-list --count "origin/{main_branch}..{main_branch}"')
-            )
-            if ahead > 0:
-                return "git push  推送本地提交"
-        except (RuntimeError, ValueError):
-            pass
-        try:
-            behind = int(
-                run(f'git rev-list --count "{main_branch}..origin/{main_branch}"')
-            )
-            if behind > 0:
-                return "git pull  拉取最新"
-        except (RuntimeError, ValueError):
-            pass
-        return "最新，无需操作"
+    errors: list,
+) -> list[str]:
+    """根据状态返回多行动作指导"""
+    result: list[str] = []
 
-    # 异常处理
-    if status == "warning":
+    if branch == main_branch:
+        if has_uncommitted or errors:
+            result.append("在 worktree 分支处理未提交变更")
+        else:
+            # 检查是否需要推送/拉取
+            try:
+                ahead = int(
+                    run(f'git rev-list --count "origin/{main_branch}..{main_branch}"')
+                )
+                if ahead > 0:
+                    result.append("git push  推送本地提交")
+            except (RuntimeError, ValueError):
+                pass
+            try:
+                behind = int(
+                    run(f'git rev-list --count "{main_branch}..origin/{main_branch}"')
+                )
+                if behind > 0:
+                    result.append("git pull  拉取最新")
+            except (RuntimeError, ValueError):
+                pass
+            if not result:
+                result.append("最新，无需操作")
+        return result
+
+    # 异常场景
+    if status == "error":
         if pr_state == "MERGED" and has_uncommitted:
-            return "⚠ 已合并但存在未提交变更，处理后 dev prune"
-        if pr_state == "MERGED" and issue_state != "CLOSED":
-            return "dev prune  关闭 issue 并清理"
-        return "手动检查状态"
+            result.append("手动处理后 dev prune  清理")
+        elif pr_state == "MERGED" and issue_state != "CLOSED":
+            result.append("dev prune  关闭 issue 并清理 worktree")
+        elif has_uncommitted:
+            result.append("git add → dev commit")
+            if not pr_number:
+                result.append("dev pr  提交 PR")
+            elif pr_state == "OPEN":
+                result.append("git push  推送新 commit")
+        else:
+            result.append("手动检查状态")
+        return result
 
     # 正常流程
     if has_uncommitted:
-        return "git add → dev commit"
+        result.append("git add → dev commit")
     if pr_state == "MERGED":
-        return "dev prune  清理 worktree"
+        result.append("dev prune  清理 worktree")
+        return result
     if not pr_number:
-        return "dev pr  提交 PR"
+        if not has_uncommitted:
+            result.append("dev pr  提交 PR")
+        return result
+    if has_uncommitted:
+        result.append("git push  推送新 commit")
+        return result
     if pr_is_draft:
-        return "dev merge-pr --ready  转正后合并"
+        result.append("dev merge-pr --ready  转正后合并")
+        return result
     if pr_mergeable == "CONFLICTING":
-        return "git rebase origin/main 解决冲突后 dev merge-pr"
+        result.append("git rebase origin/main 解决冲突")
+        result.append("dev merge-pr  合并")
+        return result
     if pr_mergeable == "MERGEABLE":
-        return "dev merge-pr  合并 PR"
-    return "等待 review"
+        result.append("dev merge-pr  合并 PR")
+        return result
+    if pr_mergeable == "UNKNOWN":
+        result.append("等待 review")
+        return result
+    return result
 
 
 def _resolve_worktree_path(path: str) -> Optional[WorktreeInfo]:
     """将用户输入的路径解析为对应的 WorktreeInfo"""
-    import os
-
     worktrees = git_worktree_list()
     cwd = os.getcwd()
 
-    # 如果输入是 '.' 或空，用当前 worktree
     if path in (".", ""):
         for wt in worktrees:
             if wt.path == cwd:
                 return wt
-        # fallback: 取第一个匹配 cwd 前缀的
         for wt in worktrees:
             if cwd.startswith(wt.path):
                 return wt
         return None
 
-    # 精确匹配 path 或 short_path
     abs_input = os.path.abspath(path) if not path.startswith("/") else path
     for wt in worktrees:
         if wt.path == abs_input or wt.short_path == path:
@@ -610,7 +674,7 @@ def _resolve_worktree_path(path: str) -> Optional[WorktreeInfo]:
 
 
 # ===========================================================================
-# 分支拓扑（保留自原实现）
+# 分支拓扑
 # ===========================================================================
 
 
