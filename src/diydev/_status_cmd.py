@@ -54,12 +54,6 @@ def _short_path(path: str) -> str:
 
 @status_app.default
 def work_status(
-    worktree_path: Annotated[
-        Optional[str],
-        Parameter(
-            help="worktree path for detailed view (eg '.')",
-        ),
-    ] = None,
     verbose: VerboseFlag = 0,
     all: Annotated[
         bool,
@@ -76,16 +70,14 @@ def work_status(
         ),
     ] = None,
 ):
-    """Show worktree status overview or detailed view.
+    """Show worktree status tree.
 
     Default: show all worktrees as a status tree.
-    With worktree_path: show detailed status of a specific worktree.
 
     Examples:
       dev status            # tree overview of all worktrees
-      dev status -d         # expand issue/PR URLs, topology
-      dev status .          # detailed status of current worktree
-      dev status -i 19      # query issue #19
+      dev status -a         # expand issue/PR URLs, topology
+      dev status --issue 19 # query issue #19
     """
     set_verbosity(verbose)
     repo = get_github_repo()
@@ -93,10 +85,6 @@ def work_status(
 
     if issue is not None:
         _show_issue_view(issue, repo)
-        return
-
-    if worktree_path is not None:
-        _show_detailed(worktree_path, repo, main_branch, all)
         return
 
     _show_tree(repo, main_branch, all)
@@ -426,7 +414,7 @@ def _build_worktree_row(
     pr_review_label = ""
     if branch and branch != main_branch:
         try:
-            prs = gh_pr_list(repo, head=branch)
+            prs = gh_pr_list(repo, head=branch, state="all")
             if prs:
                 pr = prs[0]
                 pr_number = pr["number"]
