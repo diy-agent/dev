@@ -41,6 +41,14 @@
 - 提交信息遵循 Conventional Commits（`feat:`、`fix:`、`chore:`、`docs:` 等）
 - **绝对不要自主 push**，必须等用户明确要求后再执行
 
+## Skills
+
+| Skill | 触发场景 |
+|-------|---------|
+| `skills/dev-tool/SKILL.md` | 使用 dev CLI（start/commit/status/pr/merge-pr/prune 等） |
+| `skills/diy-project-manager/SKILL.md` | 讨论项目结构、命名、复盘设计 |
+| `skills/context-loader/SKILL.md` | 加载子包级 AGENTS.md 上下文 |
+
 ## 常用命令
 
 ```bash
