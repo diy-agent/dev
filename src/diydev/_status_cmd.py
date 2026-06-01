@@ -131,37 +131,46 @@ def _print_one_tree(row: dict, verbose: int):
     main_branch = get_main_branch()
     is_main = row["branch"] == main_branch
 
-    ICON = {
+    L1_ICON = {
         "completed": ("✅", "green"),
         "error": ("🟥", "red"),
         "wip": ("🔳", "dim"),
     }
-    icon, color = ICON.get(status, ("🔳", "dim"))
+    icon, color = L1_ICON.get(status, ("🔳", "dim"))
 
-    # ---- Level 1: [icon] 路径  (branch) ----
-    _console.print(
-        Text(f"{icon} {_short_path(wt.path)}  ({row['branch']})", style=color)
-    )
+    # ---- Level 1: [icon] 路径  (branch) — 仅 icon 上色 ----
+    l1 = Text()
+    l1.append(f"{icon} ", style=color)
+    l1.append(f"{_short_path(wt.path)}  ({row['branch']})")
+    _console.print(l1)
 
-    # ---- Level 2: Issue ----
+    # ---- Level 2: Issue（🔳 未完成 / ✅ 已完成） ----
     if row["issue_num"]:
-        l_issue = Text("  ")
-        l_issue.append(f"\U0001f4cc #{row['issue_num']} ")
-        _append_colored_state(l_issue, row["issue_state"])
-        l_issue.append(f"  {row['issue_title']}")
-        _console.print(l_issue)
+        i_icon, i_color = (
+            ("✅", "green") if row["issue_state"] == "CLOSED" else ("🔳", "dim")
+        )
+        _console.print(
+            Text(
+                f"  {i_icon} #{row['issue_num']} {row['issue_state']}  {row['issue_title']}",
+                style=i_color,
+            )
+        )
 
-    # ---- Level 2: PR（main 不显示 PR）----
+    # ---- Level 2: PR（🔳 未完成 / ✅ 已完成，main 不显示） ----
     if not is_main:
-        pr_line = _format_pr(row)
-        if pr_line:
-            _console.print(Text(f"  {pr_line}"))
+        pr_done = row["pr_state"] == "MERGED"
+        p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
+        _console.print(Text(f"  {p_icon} {_format_pr(row)}", style=p_color))
 
-    # ---- Level 2: 错误分类 ----
-    for ecat in row.get("error_categories", []):
-        _console.print(Text(f"  \U0001f7e5 {ecat['category']}:", style="red"))
-        for detail in ecat["details"]:
-            _console.print(Text(f"      {detail}", style="red"))
+    # ---- Level 2: 🟥 发现问题:（仅在有错误时出现） ----
+    if row.get("error_categories"):
+        _console.print(Text("  \U0001f7e5 发现问题:", style="red"))
+        for ecat in row["error_categories"]:
+            # Level 3: 具体错误类型
+            _console.print(Text(f"    {ecat['category']}:", style="red"))
+            # Level 4: 错误详情
+            for detail in ecat["details"]:
+                _console.print(Text(f"      {detail}", style="red"))
 
     # ---- 拓扑（仅 -v） ----
     if verbose and not is_main and row["issue_num"]:
