@@ -17,7 +17,7 @@ from cyclopts import App, Parameter
 from rich.console import Console
 from rich.text import Text
 
-from ._log import VerboseFlag, set_verbosity, verbosity as _verbosity_level
+from ._log import VerboseFlag, set_verbosity
 from ._git_ops import (
     run,
     get_github_repo,
@@ -61,6 +61,13 @@ def work_status(
         ),
     ] = None,
     verbose: VerboseFlag = 0,
+    detail: Annotated[
+        bool,
+        Parameter(
+            name=["--detail", "-d"],
+            help="show more details (URL, timeline etc)",
+        ),
+    ] = False,
     issue: Annotated[
         Optional[int],
         Parameter(
@@ -76,7 +83,7 @@ def work_status(
 
     Examples:
       dev status            # tree overview of all worktrees
-      dev status -v         # verbose tree with details
+      dev status -d         # expand issue/PR URLs, topology
       dev status .          # detailed status of current worktree
       dev status -i 19      # query issue #19
     """
@@ -89,10 +96,10 @@ def work_status(
         return
 
     if worktree_path is not None:
-        _show_detailed(worktree_path, repo, main_branch, verbose)
+        _show_detailed(worktree_path, repo, main_branch, detail)
         return
 
-    _show_tree(repo, main_branch, verbose)
+    _show_tree(repo, main_branch, detail)
 
 
 # ===========================================================================
@@ -100,7 +107,7 @@ def work_status(
 # ===========================================================================
 
 
-def _show_tree(repo: str, main_branch: str, verbose: int):
+def _show_tree(repo: str, main_branch: str, detail: bool):
     """渲染所有 worktree 的树状状态概览"""
     worktrees = git_worktree_list()
     rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
@@ -119,18 +126,17 @@ def _show_tree(repo: str, main_branch: str, verbose: int):
     for row in rows:
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
-        _print_one_tree(row, verbose, repo)
+        _print_one_tree(row, detail, repo)
 
-    _print_summary(counts, verbose)
+    _print_summary(counts, detail)
 
 
-def _print_one_tree(row: dict, verbose: int, repo: str):
+def _print_one_tree(row: dict, detail: bool, repo: str):
     """打印一棵 worktree 的状态树"""
     wt: WorktreeInfo = row["wt"]
     status = row["status"]
     main_branch = get_main_branch()
     is_main = row["branch"] == main_branch
-    _verbose = verbose or _verbosity_level()  # 兼容显式传参和全局 -v
 
     L1_ICON = {
         "completed": ("✅", "green"),
@@ -156,7 +162,7 @@ def _print_one_tree(row: dict, verbose: int, repo: str):
                 style=i_color,
             )
         )
-        if _verbose and row.get("issue_url"):
+        if detail and row.get("issue_url"):
             _console.print(f"    URL: {row['issue_url']}")
 
     # ---- Level 2: PR（main 不显示） ----
@@ -164,7 +170,7 @@ def _print_one_tree(row: dict, verbose: int, repo: str):
         pr_done = row["pr_state"] == "MERGED"
         p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
         _console.print(Text(f"  - {p_icon} {_format_pr(row)}", style=p_color))
-        if _verbose and row.get("pr_url"):
+        if detail and row.get("pr_url"):
             _console.print(f"    URL: {row['pr_url']}")
 
     # ---- Level 2: 🟥 发现问题: ----
@@ -172,11 +178,11 @@ def _print_one_tree(row: dict, verbose: int, repo: str):
         _console.print(Text("  - \U0001f7e5 发现问题:", style="red"))
         for ecat in row["error_categories"]:
             _console.print(Text(f"    - {ecat['category']}:", style="red"))
-            for detail in ecat["details"]:
-                _console.print(Text(f"      - {detail}", style="red"))
+            for d in ecat["details"]:
+                _console.print(Text(f"      - {d}", style="red"))
 
-    # ---- 拓扑（仅 -v） ----
-    if _verbose and not is_main and row["issue_num"]:
+    # ---- 拓扑（仅 -d） ----
+    if detail and not is_main and row["issue_num"]:
         diagram = _build_branch_diagram(row["branch"], main_branch)
         for line in diagram.split("\n"):
             _console.print(Text(f"    {line}", style="dim"))
@@ -220,21 +226,20 @@ def _append_colored_state(text: Text, state: str):
         text.append(f" {state}")
 
 
-def _print_summary(counts: dict[str, int], verbose: int):
+def _print_summary(counts: dict[str, int], detail: bool):
     """底部汇总行"""
     total = sum(counts.values())
     completed = counts.get("completed", 0)
     errors = counts.get("error", 0)
     wip = counts.get("wip", 0)
-    _verbose = verbose or _verbosity_level()
     parts = [
         f"已完成 {completed}/{total}",
         f"开发中 {wip}/{total}",
         f"问题:{errors}/{total}",
     ]
     _console.print(Text("  " + "  |  ".join(parts), style="dim"))
-    if not _verbose:
-        _console.print(Text("  dev status -v  获得更详细信息", style="dim"))
+    if not detail:
+        _console.print(Text("  dev status -d  展开详情", style="dim"))
 
 
 # ===========================================================================
@@ -286,8 +291,8 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
     if row.get("error_categories"):
         for ecat in row["error_categories"]:
             _console.print(Text(f"    - \U0001f7e5 {ecat['category']}:", style="red"))
-            for detail in ecat["details"]:
-                _console.print(Text(f"      - {detail}", style="red"))
+            for d in ecat["details"]:
+                _console.print(Text(f"      - {d}", style="red"))
     else:
         _console.print("    Changes:   clean")
 
