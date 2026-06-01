@@ -4,7 +4,6 @@ import subprocess
 import re
 from typing import Optional
 
-from ._config import WORKTREE_DIR
 from ._log import info, debug
 
 
@@ -70,9 +69,19 @@ def parse_issue_number(branch: str) -> Optional[int]:
     return None
 
 
+def get_worktree_path(branch: str) -> str:
+    """获取 worktree 的 sibling 路径
+
+    格式: ../<repo-name>-<branch>
+    示例: ../_diy-34-worktree-sibling
+    """
+    repo_name = get_github_repo().split("/")[1]
+    return f"../{repo_name}-{branch}"
+
+
 def git_worktree_add(branch: str, base_branch: str, cwd: Optional[str] = None) -> str:
-    """创建 worktree 并切换到新分支"""
-    worktree_path = f"{WORKTREE_DIR}/{branch}"
+    """创建 worktree 并切换到新分支，路径为 sibling 模式"""
+    worktree_path = get_worktree_path(branch)
     run(f'git worktree add -b "{branch}" "{worktree_path}" "{base_branch}"', cwd)
     return worktree_path
 
