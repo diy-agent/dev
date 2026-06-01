@@ -67,9 +67,22 @@ sync()  {
     run uv tool install -e ./
 
     run mkdir -p ~/.agents/skills/
-    run ln -sf packages/diydev/skills/find-context ~/.agents/skills/find-context
-    run ln -sf packages/diydev/skills/win-file-unlock ~/.agents/skills/win-file-unlock
+    [ -d ~/.agents/skills/find-context ]  || run   skills add ./skills/find-context -g -y
+    [ -d ~/.agents/skills/diy-project-manager ]  || run   skills add ./skills/diy-project-manager -g -y
+    [ -d ~/.agents/skills/diy-project-manager ]  || run   skills add ./skills/diy-project-manager -g -y
+
+    # run ln -sf skills/diy-project-manager ~/.agents/skills/diy-project-manager
+    # run ln -sf skills/find-context.       ~/.agents/skills/find-context
+    # run ln -sf skills/win-file-unlock     ~/.agents/skills/win-file-unlock
 }
+uninstall() {
+    run rm -rf ~/.agents/skills/diy-project-manager
+    run rm -rf ~/.agents/skills/find-context
+    run rm -rf ~/.agents/skills/win-file-unlock
+}
+
+
+
 test() { :; }
 # CI: check + test, 供 CI 流水线使用
 ci() { check; test; }
@@ -86,9 +99,5 @@ test-all() { test; test-headless;}
 
 panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
-uninstall() {
-    run rm -rf ~/.agents/skills/find-context
-    run rm -rf ~/.agents/skills/win-file-unlock
-}
 
 sha "$@"

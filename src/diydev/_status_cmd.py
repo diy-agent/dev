@@ -132,6 +132,7 @@ def work_status(
 
     # === PR info ===
     print("\n=== PR ===")
+    prs: list[dict] = []
     try:
         prs = gh_pr_list(repo, head=branch)
         if prs:
@@ -174,6 +175,12 @@ def work_status(
                 print("  Review:         (none)")
 
             print(f"  URL:            {pr['url']}")
+
+            # MERGED 状态醒目警告
+            if pr["state"] == "MERGED":
+                print()
+                print("  ⚠️  此 PR 已合并！无需再操作此分支")
+                print(f"  清理 worktree:  dev prune")
         else:
             print("  no related PR")
             print("  create PR:      dev pr")
@@ -184,7 +191,50 @@ def work_status(
     print("\n=== Branch Topology ===")
     diagram = _build_branch_diagram(branch, main_branch)
     print(diagram)
+
+    # === 下一步 ===
+    _print_next_step(branch, main_branch, prs)
     print()
+
+
+def _print_next_step(branch: str, main_branch: str, prs: list[dict]):
+    """根据当前状态输出下一步建议"""
+    if branch == main_branch:
+        return
+
+    print("=== 下一步 ===")
+
+    if prs:
+        pr = prs[0]
+        state = pr["state"]
+        is_draft = pr.get("isDraft", False)
+
+        if state == "MERGED":
+            print("  PR 已合并 → dev prune  清理 worktree + 远程分支")
+        elif is_draft:
+            print("  PR 草稿中  → 推送新提交后 dev pr 更新")
+            print("              → 或 dev merge-pr --ready  转正后合并")
+        elif state == "OPEN":
+            mergeable = pr.get("mergeable", "UNKNOWN")
+            if mergeable == "MERGEABLE":
+                print("  PR 可合并  → dev merge-pr  选择策略合并")
+            elif mergeable == "CONFLICTING":
+                print("  PR 有冲突  → git rebase origin/main 解决后 dev merge-pr")
+            else:
+                print("  PR 待审核  → 等待 review")
+        elif state == "CLOSED":
+            print("  PR 已关闭  → dev prune  清理，或重新 dev pr")
+    else:
+        # 检查是否有未提交变更
+        try:
+            status_out = run("git status --porcelain")
+            if status_out.strip():
+                print("  有未提交变更 → git add && git commit")
+                print("               → dev pr  提交后创建 PR")
+            else:
+                print("  无 PR    → dev pr  创建 Pull Request")
+        except RuntimeError:
+            print("  无 PR    → dev pr  创建 Pull Request")
 
 
 def _build_branch_diagram(branch: str, main_branch: str) -> str:
