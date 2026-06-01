@@ -9,7 +9,7 @@ description: >
 
 # diy-project-manager
 
-详见方法论文档：[docs/diy-project-manager.md](../docs/diy-project-manager.md)
+详见方法论文档：[docs/diy-project-manager.md](docs/diy-project-manager.md)
 
 核心要点：
 
