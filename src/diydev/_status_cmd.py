@@ -220,13 +220,13 @@ def _print_summary(counts: dict[str, int]):
     total = sum(counts.values())
     completed = counts.get("completed", 0)
     errors = counts.get("error", 0)
-    parts = []
-    if completed:
-        parts.append(f"完成{completed}/{total}")
-    if errors:
-        parts.append(f"问题:{errors}/{total}")
-    if parts:
-        _console.print(Text("  " + "  |  ".join(parts), style="dim"))
+    wip = counts.get("wip", 0)
+    parts = [
+        f"已完成 {completed}/{total}",
+        f"开发中 {wip}/{total}",
+        f"问题:{errors}/{total}",
+    ]
+    _console.print(Text("  " + "  |  ".join(parts), style="dim"))
 
 
 # ===========================================================================
