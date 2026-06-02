@@ -206,9 +206,9 @@ def _detect_sandbox_marker() -> Optional[str]:
 @sandbox_app.command(name="status")
 def sandbox_status(
     verbose: VerboseFlag = 0,
-    markdown: Annotated[
+    rich: Annotated[
         bool,
-        Parameter(name=["--md"], help="以 Markdown 格式输出"),
+        Parameter(name=["--rich"], help="以 Rich 表格格式输出"),
     ] = False,
     show_policy: Annotated[
         bool,
@@ -218,8 +218,8 @@ def sandbox_status(
     """显示 sandbox 诊断信息。
 
     示例:
-      dev sb status          # 表格格式
-      dev sb status --md     # Markdown 格式
+      dev sb status          # Markdown 格式
+      dev sb status --rich   # Rich 表格格式
       dev sb status --policy # 同时显示策略内容
     """
     set_verbosity(verbose)
@@ -243,7 +243,7 @@ def sandbox_status(
 
     _console.print()
 
-    if markdown:
+    if not rich:
         from rich.markdown import Markdown
 
         wd_bullets = "\n".join(f"  - `{w}`" for w in workdirs)
@@ -272,7 +272,6 @@ def sandbox_status(
 - **用户主目录**：`{home}`
 """
         _console.print(Markdown(md))
-        _console.print("─" * 60, style="dim")
     else:
         table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
         table.add_column(style="dim", width=11)

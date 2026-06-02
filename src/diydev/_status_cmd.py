@@ -62,9 +62,9 @@ def work_status(
             help="show all details (URL, timeline etc)",
         ),
     ] = False,
-    markdown: Annotated[
+    rich: Annotated[
         bool,
-        Parameter(name=["--md"], help="以 Markdown 格式输出"),
+        Parameter(name=["--rich"], help="以 Rich 格式输出"),
     ] = False,
     issue: Annotated[
         Optional[int],
@@ -77,8 +77,8 @@ def work_status(
     """Show worktree status tree.
 
     Examples:
-      dev status            # Rich 表格
-      dev status --md       # Markdown 格式
+      dev status            # Markdown 格式
+      dev status --rich     # Rich 格式
       dev status -a         # 展开详情
       dev status --issue 19 # 查询 issue #19
     """
@@ -90,10 +90,10 @@ def work_status(
         _show_issue_view(issue, repo)
         return
 
-    if markdown:
-        _show_tree_md(repo, main_branch, all)
-    else:
+    if rich:
         _show_tree(repo, main_branch, all)
+    else:
+        _show_tree_md(repo, main_branch, all)
 
 
 # ===========================================================================
@@ -140,7 +140,6 @@ def _show_tree_md(repo: str, main_branch: str, all: bool):
         md += "\n\n*`dev status -a` 展开详情*"
 
     _console.print(Markdown(md))
-    _console.print("─" * 60, style="dim")
 
 
 def _format_one_md(row: dict, all: bool, repo: str) -> list[str]:
