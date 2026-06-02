@@ -43,6 +43,30 @@ uv run dev ref rich            # 查依赖源码 mirror 路径
 ./sha.sh sync                  # 同步 skills/env
 ```
 
+### sha.sh 标准子命令
+
+所有 diy 项目应实现以下命令。未定义的打印 `[SKIP]`，不阻塞流程。
+
+| 命令 | 职责 | 说明 |
+|------|------|------|
+| `check` | lint + format + type check | ruff check / ruff format --check / pyright |
+| `test` | 单元测试 | pytest |
+| `test-all` | 全量测试（含慢速） | test + 集成/端到端 |
+| `fix` | 自动修复格式 | ruff check --fix + ruff format |
+| `clean` | 清理构建产物 | .venv / .ruff_cache / build / dist |
+| `sync` | 同步环境 | uv sync + submodule + skill 安装 |
+| `build` | 构建产物 | uv build / npm build（项目指定） |
+| `ci` | CI 入口 | check + test（或 check + test-all） |
+| **以下为 dev 桥接（thin wrapper）** | | |
+| `commit` | 提交代码 | → `dev commit $(current_issue)` |
+| `pr` | 创建 PR | → `dev pr $(current_issue)` |
+
+**原则**：
+- sha.sh 所有命令都是当前项目操作，不跨项目
+- 和 GitHub 交互的（commit/pr/close）通过 sha.sh → dev 桥接
+- 纯本地任务（test/build/check）sha.sh 直接执行，不走 dev
+- 详细模板和初始化规范见 `diy-workspace-spec` skill
+
 ### 任务拆分规则
 
 - 主任务承载完整设计，子任务只做工作分包
