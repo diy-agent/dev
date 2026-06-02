@@ -11,16 +11,16 @@ Usage:
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Annotated, Callable
+from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from ._log import VerboseFlag, set_verbosity, info
 from ._json_output import output_json
-
+from ._log import VerboseFlag, info, set_verbosity
 
 # ============================================================================
 # Check result types
@@ -62,7 +62,7 @@ class CheckSuite:
 # ============================================================================
 
 
-def _read_file(path: str | Path) -> Optional[str]:
+def _read_file(path: str | Path) -> str | None:
     """读取文件内容"""
     try:
         return Path(path).read_text()

@@ -3,12 +3,12 @@
 from cyclopts import App
 
 from ._list_cmd import work_list
-from ._start_cmd import start_app
-from ._new_cmd import new_app
-from ._status_cmd import status_app
-from ._pr_cmd import pr_app
 from ._merge_pr_cmd import merge_pr_app
+from ._new_cmd import new_app
+from ._pr_cmd import pr_app
 from ._prune_cmd import prune_app
+from ._start_cmd import start_app
+from ._status_cmd import status_app
 
 work_app = App(name="work", help="工作区管理")
 

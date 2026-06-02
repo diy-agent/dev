@@ -11,23 +11,23 @@ Commands:
 
 import json
 import os
-from typing import Optional, Annotated
+from typing import Annotated
 
 from cyclopts import App, Parameter
 from rich.console import Console
 from rich.text import Text
 
-from ._log import VerboseFlag, set_verbosity
+from ._gh_ops import gh_issue_view, gh_pr_list
 from ._git_ops import (
-    run,
     get_github_repo,
     get_main_branch,
     get_merge_base,
     parse_issue_number,
+    run,
 )
-from ._gh_ops import gh_issue_view, gh_pr_list
-from ._list_cmd import git_worktree_list, WorktreeInfo
 from ._json_output import output_json
+from ._list_cmd import WorktreeInfo, git_worktree_list
+from ._log import VerboseFlag, set_verbosity
 
 status_app = App(name="status", help="worktree tree overview")
 _console = Console()
@@ -72,7 +72,7 @@ def work_status(
         Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
     ] = False,
     issue: Annotated[
-        Optional[int],
+        int | None,
         Parameter(
             name=["--issue"],
             help="query a specific issue (no worktree required)",
@@ -669,9 +669,9 @@ def _build_worktree_row(
 def _detect_error_categories(
     branch: str,
     main_branch: str,
-    issue_num: Optional[int],
+    issue_num: int | None,
     issue_state: str,
-    pr_number: Optional[int],
+    pr_number: int | None,
     pr_state: str,
     git_status_lines: list[str],
     wt: WorktreeInfo,
@@ -744,7 +744,7 @@ def _get_guidance(
     branch: str,
     main_branch: str,
     has_uncommitted: bool,
-    pr_number: Optional[int],
+    pr_number: int | None,
     pr_state: str,
     pr_is_draft: bool,
     pr_mergeable: str,
@@ -823,7 +823,7 @@ def _get_guidance(
     return result
 
 
-def _resolve_worktree_path(path: str) -> Optional[WorktreeInfo]:
+def _resolve_worktree_path(path: str) -> WorktreeInfo | None:
     """将用户输入的路径解析为对应的 WorktreeInfo"""
     worktrees = git_worktree_list()
     cwd = os.getcwd()

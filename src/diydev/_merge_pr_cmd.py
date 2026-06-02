@@ -1,17 +1,18 @@
 """dev work merge-pr - 合并当前分支的 PR，支持交互式选择合并策略"""
 
-from cyclopts import App, Parameter
-from typing import Annotated, Optional
+from typing import Annotated
 
-from ._log import VerboseFlag, set_verbosity
-from ._git_ops import get_main_branch, get_current_branch, get_github_repo
+from cyclopts import App, Parameter
+
 from ._gh_ops import (
     gh_pr_list,
     gh_pr_merge,
     gh_pr_ready,
     gh_repo_merge_method,
 )
+from ._git_ops import get_current_branch, get_github_repo, get_main_branch
 from ._json_output import output_json
+from ._log import VerboseFlag, set_verbosity
 
 merge_pr_app = App(name="merge-pr", help="合并当前分支的 PR")
 
@@ -71,7 +72,7 @@ MERGE_METHOD_DIAGRAM: dict[str, str] = {
 def work_merge_pr(
     verbose: VerboseFlag = 0,
     method: Annotated[
-        Optional[str],
+        str | None,
         Parameter(
             name=["--method"],
             help="合并策略: merge | squash | rebase（未指定则交互选择；Agent: 必须通过 --method 指定）",

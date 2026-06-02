@@ -8,16 +8,15 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Optional, Annotated
+from typing import Annotated
 
 from cyclopts import Parameter
 from rich.console import Console
 from rich.table import Table
 
+from ._gh_ops import gh_all_prs_map, gh_issue_list, gh_issue_view
+from ._git_ops import get_github_repo, get_main_branch, parse_issue_number, run
 from ._log import VerboseFlag, set_verbosity
-from ._git_ops import run, get_main_branch, get_github_repo, parse_issue_number
-from ._gh_ops import gh_issue_list, gh_issue_view, gh_all_prs_map
-
 
 # ---------------------------------------------------------------------------
 # 数据类
@@ -61,7 +60,7 @@ class WorktreeInfo:
 # ---------------------------------------------------------------------------
 
 
-def git_worktree_list(cwd: Optional[str] = None) -> list[WorktreeInfo]:
+def git_worktree_list(cwd: str | None = None) -> list[WorktreeInfo]:
     """解析 git worktree list 输出"""
     main_branch = get_main_branch()
     raw = run("git worktree list", cwd)
@@ -128,7 +127,7 @@ def git_worktree_list(cwd: Optional[str] = None) -> list[WorktreeInfo]:
 
 def build_unified_rows(
     repo: str,
-    labels: Optional[str] = None,
+    labels: str | None = None,
 ) -> list[IssueRow]:
     """构建统一的 issue-worktree 行列表
 
@@ -243,7 +242,7 @@ def build_unified_rows(
 def work_list(
     verbose: VerboseFlag = 0,
     labels: Annotated[
-        Optional[str],
+        str | None,
         Parameter(
             name=["--label"],
             help="按标签过滤 issue",

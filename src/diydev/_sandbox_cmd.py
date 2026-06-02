@@ -10,15 +10,15 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 from cyclopts import App, Parameter
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
-from ._log import VerboseFlag, set_verbosity, info, debug
+from ._log import VerboseFlag, debug, info, set_verbosity
 
 _console = Console(highlight=False)
 _console_err = Console(stderr=True, highlight=False)
@@ -39,7 +39,7 @@ sandbox_app = App(
 # ---------------------------------------------------------------------------
 
 
-def _find_template_path(start_dir: str) -> Optional[Path]:
+def _find_template_path(start_dir: str) -> Path | None:
     """向上查找项目级 .sandbox.sb 模板文件，返回路径或 None"""
     d = Path(start_dir).resolve()
     while True:
@@ -194,7 +194,7 @@ def sandbox_init(
 # ---------------------------------------------------------------------------
 
 
-def _detect_sandbox_marker() -> Optional[str]:
+def _detect_sandbox_marker() -> str | None:
     """检测 sandbox 标记"""
     if os.environ.get("DIY_DEV_INSIDE_SANDBOX") == "1":
         return "DIY_DEV_INSIDE_SANDBOX=1 (dev sb)"
@@ -357,7 +357,7 @@ def _validate_sandbox_subcommand() -> None:
 def sandbox(
     verbose: VerboseFlag = 0,
     workdir: Annotated[
-        Optional[str],
+        str | None,
         Parameter(
             name=["--cd"],
             help="进入 sandbox 后的工作目录（默认当前目录）",

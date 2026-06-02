@@ -9,7 +9,7 @@
 import sys
 from typing import Annotated
 
-from cyclopts import Parameter, Group
+from cyclopts import Group, Parameter
 
 # 全局冗余级别: 0=静默, 1=INFO, 2=DEBUG, 3=TRACE
 _verbosity: int = 0
