@@ -27,6 +27,7 @@ from ._git_ops import (
 )
 from ._gh_ops import gh_issue_view, gh_pr_list
 from ._list_cmd import git_worktree_list, WorktreeInfo
+from ._json_output import output_json
 
 status_app = App(name="status", help="worktree tree overview")
 _console = Console()
@@ -66,6 +67,10 @@ def work_status(
         bool,
         Parameter(name=["--rich"], help="以 Rich 格式输出"),
     ] = False,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
+    ] = False,
     issue: Annotated[
         Optional[int],
         Parameter(
@@ -79,12 +84,50 @@ def work_status(
     Examples:
       dev status            # Markdown 格式
       dev status --rich     # Rich 格式
+      dev status --json     # JSON 格式 (agent)
       dev status -a         # 展开详情
       dev status --issue 19 # 查询 issue #19
     """
     set_verbosity(verbose)
     repo = get_github_repo()
     main_branch = get_main_branch()
+
+    if json_output:
+        worktrees = git_worktree_list()
+        rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
+        result = []
+        for row in rows:
+            result.append(
+                {
+                    "path": row["wt"].path,
+                    "short_path": row["wt"].short_path,
+                    "branch": row["branch"],
+                    "status": row["status"],
+                    "issue": {
+                        "number": row["issue_num"],
+                        "title": row["issue_title"],
+                        "state": row["issue_state"],
+                        "url": row["issue_url"],
+                    }
+                    if row["issue_num"]
+                    else None,
+                    "pr": {
+                        "number": row["pr_number"],
+                        "state": row["pr_state"],
+                        "is_draft": row["pr_is_draft"],
+                        "mergeable": row["pr_mergeable"],
+                        "title": row["pr_title"],
+                        "url": row["pr_url"],
+                    }
+                    if row["pr_number"]
+                    else None,
+                    "has_uncommitted": row["wt"].has_uncommitted,
+                    "error_categories": row["error_categories"],
+                    "guidance": row["guidance"],
+                }
+            )
+        output_json({"worktrees": result, "total": len(result)})
+        return
 
     if issue is not None:
         _show_issue_view(issue, repo)
@@ -169,18 +212,14 @@ def _print_one_md(row: dict, all: bool) -> None:
             f"  - {i_icon} #{row['issue_num']} {row['issue_state']}  {row['issue_title']}"
         )
         if all and row.get("issue_url"):
-            _console.print(
-                f"    - [link={row['issue_url']}]{row['issue_url']}[/link]"
-            )
+            _console.print(f"    - [link={row['issue_url']}]{row['issue_url']}[/link]")
 
     # L2: PR
     if not is_main:
         p_icon = "✅" if row["pr_state"] == "MERGED" else "🔳"
         _console.print(f"  - {p_icon} {_format_pr(row)}")
         if all and row.get("pr_url"):
-            _console.print(
-                f"    - [link={row['pr_url']}]{row['pr_url']}[/link]"
-            )
+            _console.print(f"    - [link={row['pr_url']}]{row['pr_url']}[/link]")
 
     # L2: 错误
     if row.get("error_categories"):
@@ -263,7 +302,9 @@ def _print_one_tree(row: dict, all: bool, repo: str):
             )
         )
         if all and row.get("issue_url"):
-            _console.print(f"    URL: [link={row['issue_url']}]{row['issue_url']}[/link]")
+            _console.print(
+                f"    URL: [link={row['issue_url']}]{row['issue_url']}[/link]"
+            )
 
     # ---- Level 2: PR（main 不显示） ----
     if not is_main:
@@ -446,7 +487,9 @@ def _show_issue_detail(issue_num: int, repo: str):
         _console.print(f"    State:     {data['state']}")
         _console.print(f"    Author:    {author_login}")
         _console.print(f"    Created:   {data.get('createdAt', '-')}")
-        _console.print(f"    URL:       [link={data.get('url', '-')}]{data.get('url', '-')}[/link]")
+        _console.print(
+            f"    URL:       [link={data.get('url', '-')}]{data.get('url', '-')}[/link]"
+        )
         body = data.get("body", "") or ""
         if body:
             lines = [ln for ln in body.strip().split("\n") if ln.strip()]
@@ -560,7 +603,9 @@ def _build_worktree_row(
     if wt.has_uncommitted:
         try:
             short = run("git status --short", cwd=wt.path)
-            git_status_lines = [ln.rstrip("\n") for ln in short.split("\n") if ln.strip()]
+            git_status_lines = [
+                ln.rstrip("\n") for ln in short.split("\n") if ln.strip()
+            ]
         except RuntimeError:
             pass
 

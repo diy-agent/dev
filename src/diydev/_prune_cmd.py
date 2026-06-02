@@ -11,6 +11,7 @@ from cyclopts import App, Parameter
 from typing import Annotated, Optional
 
 from ._log import VerboseFlag, set_verbosity
+from ._json_output import output_json
 from ._git_ops import (
     run,
     get_main_branch,
@@ -132,6 +133,10 @@ def work_prune(
             help="跳过确认，直接清理（Agent: 建议使用 --yes 跳过交互）",
         ),
     ] = False,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出，自动跳过确认 (agent 使用)"),
+    ] = False,
 ):
     """清理 PR 已合并的 worktree（删远程分支 + worktree，保留本地分支）。
 
@@ -141,17 +146,72 @@ def work_prune(
       dev prune            # 列出并确认后清理
       dev prune --dry-run  # 仅预览，不执行
       dev prune --yes      # 直接清理，跳过确认
+      dev prune --json     # JSON 输出，自动确认
     """
     set_verbosity(verbose)
     repo = get_github_repo()
     targets = _scan_prunable(repo)
 
     if not targets:
-        print("没有需要清理的工作项")
+        if json_output:
+            output_json({"items": []}, "没有需要清理的工作项")
+        else:
+            print("没有需要清理的工作项")
         return
 
-    # 列出待清理项
     orphan_count = sum(1 for t in targets if t.orphan_issue)
+
+    if json_output:
+        # JSON 模式：列出后直接执行
+        items_preview = []
+        for t in targets:
+            item = {
+                "branch": t.branch,
+                "pr_number": t.pr_number,
+                "worktree_path": t.worktree_path,
+            }
+            if t.orphan_issue:
+                item["orphan_issue"] = t.orphan_issue
+            items_preview.append(item)
+
+        if dry_run:
+            output_json(
+                {"items": items_preview, "dry_run": True},
+                f"共 {len(targets)} 项 (dry-run)",
+            )
+            return
+
+        # 执行
+        cleaned = 0
+        errors = 0
+        for t in targets:
+            if t.orphan_issue:
+                try:
+                    comment = _build_close_comment(t.pr_number)
+                    gh_issue_comment(t.orphan_issue, comment, repo)
+                    gh_issue_close(t.orphan_issue, repo)
+                except RuntimeError:
+                    errors += 1
+
+            try:
+                git_branch_delete_remote(t.branch)
+            except RuntimeError:
+                errors += 1
+
+            try:
+                git_worktree_remove(t.worktree_path)
+            except RuntimeError:
+                errors += 1
+
+            cleaned += 1
+
+        output_json(
+            {"items": items_preview, "cleaned": cleaned, "errors": errors},
+            f"清理 {cleaned} 项" + (f" ({errors} 个错误)" if errors else ""),
+        )
+        return
+
+    # --- 文本模式 ---
     print("待清理的工作项 (PR 已合并):\n")
     for t in targets:
         print(f"  分支: {t.branch}")
@@ -167,7 +227,6 @@ def work_prune(
         print(f"[dry-run] 共 {len(targets)} 项，未执行清理")
         return
 
-    # 确认
     if not yes:
         try:
             answer = input(f"确认清理以上 {len(targets)} 项? [y/N]: ").strip().lower()
@@ -178,13 +237,11 @@ def work_prune(
             print("已取消")
             return
 
-    # 执行清理
     cleaned = 0
     errors = 0
     for t in targets:
         print(f"\n清理: {t.branch} (PR #{t.pr_number})")
 
-        # 关闭孤儿 issue
         if t.orphan_issue:
             try:
                 comment = _build_close_comment(t.pr_number)
@@ -195,7 +252,6 @@ def work_prune(
                 print(f"  ✗ 关闭 issue #{t.orphan_issue} 失败: {e}")
                 errors += 1
 
-        # 删除远程分支
         try:
             git_branch_delete_remote(t.branch)
             print(f"  ✓ 删除远程分支 origin/{t.branch}")
@@ -203,7 +259,6 @@ def work_prune(
             print(f"  ✗ 删除远程分支失败: {e}")
             errors += 1
 
-        # 删除 worktree
         try:
             git_worktree_remove(t.worktree_path)
             print(f"  ✓ 删除 worktree {t.worktree_path}")
@@ -211,9 +266,7 @@ def work_prune(
             print(f"  ✗ 删除 worktree 失败: {e}")
             errors += 1
 
-        # 保留本地分支（人类 review 后自行清理）
         print(f"  → 本地分支 {t.branch} 已保留，请 review 后手动清理")
-
         cleaned += 1
 
     print(f"\n完成: 清理 {cleaned} 项", end="")

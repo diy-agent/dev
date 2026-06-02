@@ -1,6 +1,7 @@
 """dev work pr - 推送并创建 PR"""
 
-from cyclopts import App
+from cyclopts import App, Parameter
+from typing import Annotated
 
 from ._log import VerboseFlag, set_verbosity
 from ._git_ops import (
@@ -12,6 +13,7 @@ from ._git_ops import (
     git_push,
 )
 from ._gh_ops import gh_issue_view, gh_pr_list, gh_pr_create
+from ._json_output import output_json
 
 pr_app = App(name="pr", help="推送并创建 PR")
 
@@ -19,6 +21,10 @@ pr_app = App(name="pr", help="推送并创建 PR")
 @pr_app.default
 def work_pr(
     verbose: VerboseFlag = 0,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
+    ] = False,
 ):
     """推送当前分支并创建 Pull Request。
 
@@ -31,29 +37,49 @@ def work_pr(
     repo = get_github_repo()
 
     if branch == main_branch:
-        print("错误: 不能在主分支创建 PR")
+        if json_output:
+            output_json(
+                {"error": "cannot create PR on main branch"}, "不能在主分支创建 PR"
+            )
+        else:
+            print("错误: 不能在主分支创建 PR")
         return
 
     # 检查未提交变更
     status_out = run("git status --porcelain")
     if status_out.strip():
-        print("错误: 有未提交的变更，请先提交再创建 PR")
+        if json_output:
+            output_json({"error": "uncommitted changes"}, "有未提交的变更")
+        else:
+            print("错误: 有未提交的变更，请先提交再创建 PR")
         return
 
     issue_num = parse_issue_number(branch)
     if not issue_num:
-        print(f'错误: 无法从分支 "{branch}" 解析 issue 编号')
+        if json_output:
+            output_json(
+                {"error": "cannot parse issue number"},
+                f'无法从分支 "{branch}" 解析 issue 编号',
+            )
+        else:
+            print(f'错误: 无法从分支 "{branch}" 解析 issue 编号')
         return
 
     # 获取 issue 标题
     try:
         issue = gh_issue_view(issue_num, repo, "title")
     except RuntimeError:
-        print(f"错误: 找不到 issue #{issue_num}")
+        if json_output:
+            output_json({"error": "issue not found"}, f"找不到 issue #{issue_num}")
+        else:
+            print(f"错误: 找不到 issue #{issue_num}")
         return
 
     if not issue.get("title"):
-        print(f"错误: issue #{issue_num} 没有标题")
+        if json_output:
+            output_json({"error": "empty title"}, f"issue #{issue_num} 没有标题")
+        else:
+            print(f"错误: issue #{issue_num} 没有标题")
         return
 
     title = issue["title"]
@@ -62,16 +88,26 @@ def work_pr(
     existing = gh_pr_list(repo, head=branch, state="open")
     if existing:
         git_push()
-        draft_hint = " (草稿)" if existing[0].get("isDraft") else ""
-        print(
-            f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}{draft_hint}，新 commit 已推送'
-        )
-        print(f"合并: dev work merge-pr 或到 {existing[0]['url']} 页面手动合并")
+        if json_output:
+            output_json(
+                {
+                    "number": existing[0]["number"],
+                    "url": existing[0]["url"],
+                    "pushed": True,
+                },
+                f"分支 {branch} 已有 open PR，新 commit 已推送",
+            )
+        else:
+            draft_hint = " (草稿)" if existing[0].get("isDraft") else ""
+            print(
+                f'警告: 分支 "{branch}" 已存在 open PR #{existing[0]["number"]}{draft_hint}，新 commit 已推送'
+            )
+            print(f"合并: dev work merge-pr 或到 {existing[0]['url']} 页面手动合并")
         return
 
     # 检查是否已有 merged PR
     merged = gh_pr_list(repo, head=branch, state="merged")
-    if merged:
+    if merged and not json_output:
         print(f'注意: 分支 "{branch}" 已有已合并的 PR，建议开新 issue + 新分支')
 
     # 推送
@@ -79,5 +115,15 @@ def work_pr(
 
     # 创建 PR
     pr_num = gh_pr_create(repo, main_branch, branch, title, f"Complete #{issue_num}")
+    if json_output:
+        output_json(
+            {
+                "number": pr_num,
+                "url": f"https://github.com/{repo}/pull/{pr_num}",
+                "issue": issue_num,
+            },
+            f"创建 PR #{pr_num}",
+        )
+        return
     print(f"成功: 创建 PR #{pr_num}")
     print(f"URL:   https://github.com/{repo}/pull/{pr_num}")
