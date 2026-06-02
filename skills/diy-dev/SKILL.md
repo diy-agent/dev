@@ -1,9 +1,11 @@
 ---
 name: diy-dev
 description: >
-  AI Agent 使用 dev CLI 工具的操作指南，含设计理念与工具无法覆盖的补充规则。
+  AI Agent 使用 dev CLI 工具的操作指南，含设计理念、sha.sh 规范、
+  Python 项目规范、依赖源码查找、项目管理方法等工具无法覆盖的补充规则。
   触发词：创建 issue、开始工作、提交代码、创建 PR、合并 PR、查看状态、清理 worktree、
-  关闭 issue、复盘、dev 命令用法咨询、任务拆分、Issue 工作流。
+  关闭 issue、复盘、dev 命令用法咨询、任务拆分、Issue 工作流、
+  查依赖源码、看 xxx 包怎么实现、第三方库内部逻辑、依赖实现细节。
   任何涉及"dev start""dev commit""dev status""dev pr""dev merge""dev prune"等操作都触发此 skill。
 ---
 
@@ -17,7 +19,60 @@ dev 工具的设计遵循以下原则：
 2. **不确定性问题脚本化**。不给 agent 裸 `gh` 命令，所有 GitHub 操作通过 `dev` 封装
 3. **Worktree 隔离开发**。`dev start` 自动创建 worktree，main 分支不可直接修改
 4. **Agent 永远不删分支**。`dev remove` 只移除 worktree，分支留给人类 `dev prune`
-5. **命令行有参数 = agent 用，无参数 = TUI 人用**
+
+## 🚧 dev / sha.sh 架构（开发中）
+
+| | dev | sha.sh |
+|---|---|---|
+| 范围 | 全局、跨项目 | 仅当前项目 |
+| 列表类默认 | **展示所有**，当前 cwd 标记图标 | — |
+| 操作类参数 | **必须显式参数**，不猜上下文 | 自动检测当前 issue → 调 `dev <cmd> <issue>` |
+| 类比 | 全局控制面板 | 本地快捷键（thin wrapper） |
+
+```bash
+# dev — 跨项目，必须显式
+uv run dev status              # 所有项目 worktree 概览
+uv run dev list --label bug    # 所有项目 issue 过滤
+uv run dev commit 32           # 提交 issue 32 关联的 worktree
+uv run dev pr 32               # 为 issue 32 创建 PR
+uv run dev close 32            # 关闭 issue 32
+uv run dev ref rich            # 查依赖源码 mirror 路径
+
+# sha.sh — 当前项目，自动检测上下文
+./sha.sh commit                # → dev commit $(current_issue)
+./sha.sh pr                    # → dev pr $(current_issue)
+./sha.sh test                  # 项目本地 test（不做 dev 封装）
+./sha.sh sync                  # 同步 skills/env
+```
+
+### sha.sh 标准子命令
+
+所有 diy 项目应实现以下命令。未定义的打印 `[SKIP]`，不阻塞流程。
+
+| 命令 | 职责 | 说明 |
+|------|------|------|
+| `check` | lint + format + type check | ruff check / ruff format --check / pyright |
+| `test` | 单元测试 | pytest |
+| `test-all` | 全量测试（含慢速） | test + 集成/端到端 |
+| `fix` | 自动修复格式 | ruff check --fix + ruff format |
+| `clean` | 清理构建产物 | .venv / .ruff_cache / build / dist |
+| `sync` | 同步环境 | uv sync + submodule + skill 安装 |
+| `build` | 构建产物 | uv build / npm build（项目指定） |
+| `ci` | CI 入口 | check + test（或 check + test-all） |
+| **以下为 dev 桥接（thin wrapper）** | | |
+| `commit` | 提交代码 | → `dev commit $(current_issue)` |
+| `pr` | 创建 PR | → `dev pr $(current_issue)` |
+
+**原则**：
+- sha.sh 所有命令都是当前项目操作，不跨项目
+- 和 GitHub 交互的（commit/pr/close）通过 sha.sh → dev 桥接
+- 纯本地任务（test/build/check）sha.sh 直接执行，不走 dev
+
+**写作规则**：
+- 用 `run <cmd>` 包装外部命令，不用裸命令（自动彩色日志）
+- 不要 `2>/dev/null`，错误必须可见
+- 文件末尾保留 `sha "$@"` 调度入口
+- 模板代码直接抄 `_diy/sha.common.sh`
 
 ### 任务拆分规则
 
@@ -31,8 +86,10 @@ dev 工具的设计遵循以下原则：
 ## 执行规则
 
 - **始终使用 `uv run dev <command>`** 而非全局 `dev`，避免版本不一致
-- dev 命令默认在**当前 worktree 下**执行，涉及 git 操作会自动识别 worktree 上下文
+- **操作类命令必须提供 issue 编号或 worktree 名称**，dev 不猜上下文
+- 列表类命令默认展示所有项目，当前 cwd 所属项目用图标标记
 - 不要直接使用 `gh` 裸命令操作 issue/PR，通过 `dev` 封装命令
+- 当前项目的快捷操作用 `./sha.sh <cmd>`，它会自动检测上下文并调 `dev`
 
 ---
 
@@ -74,26 +131,28 @@ uv run dev start 42 --priority P1 --size M
 
 自动：Status → In progress → 创建 worktree（`.worktree/<N>-<slug>`）→ 创建分支 → 推送远端
 
-### `dev status [--all/-a] [--issue N]`
+### `dev status [--issue N]`
 
-查看 worktree 状态。
+查看所有项目的 worktree 状态。当前 cwd 所属项目/worktree 标记图标。
 
 ```bash
-uv run dev status           # 树状概览所有 worktree
-uv run dev status -a        # 展开详情（URL、拓扑图）
+uv run dev status             # 所有项目 worktree 概览
 uv run dev status --issue 42  # 查询单个 issue
 ```
 
-### `dev commit [--type TYPE] [--scope SCOPE] [--message MSG]`
+### `dev commit <issue> [--type TYPE] [--scope SCOPE] [--message MSG]`
 
-提交代码。
+提交代码。**必须指定 issue 编号**。
 
 ```bash
-uv run dev commit                          # 自动检测 type/scope+生成 message
-uv run dev commit --type fix --scope cli --message "修复路径问题"
+uv run dev commit 42                                # 自动检测 type/scope+生成 message
+uv run dev commit 42 --type fix --scope cli         # 指定 type/scope
+uv run dev commit 42 -m "修复路径问题"              # 完全指定
 ```
 
 执行链：`check` → `test` → git-cleanup 检查 → Conventional Commit → git commit
+
+快捷方式：在 worktree 内用 `./sha.sh commit`，自动检测当前 issue 并调 `dev commit <N>`。
 
 ### `dev doctor`
 
@@ -105,15 +164,17 @@ uv run dev doctor
 
 检查 sha.sh/pyproject 是否符合规范。
 
-### `dev pr`
+### `dev pr <issue>`
 
-创建 PR。
+创建 PR。**必须指定 issue 编号**。
 
 ```bash
-uv run dev pr
+uv run dev pr 42
 ```
 
 自动：推送 → 创建 PR（关联 issue）→ Status → In review
+
+快捷方式：`./sha.sh pr`
 
 ### `dev merge-pr [--method squash|merge]`
 
@@ -126,12 +187,12 @@ uv run dev merge-pr --method merge     # 普通 merge
 
 自动：GitHub squash merge → 拉取 main → 提示可清理
 
-### `dev remove`
+### `dev remove <issue>`
 
-移除 worktree，**不删除本地分支**。
+移除 worktree，**不删除本地分支**。**必须指定 issue 编号或 worktree 名称**。
 
 ```bash
-uv run dev remove
+uv run dev remove 42
 ```
 
 ### `dev prune`
@@ -156,21 +217,27 @@ uv run dev retro 42
 ## 常用流程
 
 ```bash
-# 新任务
+# 新任务（dev 显式参数）
 uv run dev new "功能描述"
 uv run dev start <N>
 # ... 修改代码，设计变更直接改 Issue body
-uv run dev commit
-uv run dev pr
 
-# 日常
-uv run dev status -a      # 查看所有 worktree 状态
-uv run dev doctor          # 检查规范
+# 当前项目快捷操作（sha.sh 自动检测上下文）
+./sha.sh commit              # → dev commit $(current_issue)
+./sha.sh pr                  # → dev pr $(current_issue)
+
+# 全局查看
+uv run dev status             # 所有项目 worktree 概览
+uv run dev list --label bug   # 跨项目 issue 过滤
+
+# 规范检查
+uv run dev doctor
 
 # 收尾
-uv run dev merge-pr        # 合并 PR
-uv run dev prune           # 清理
-uv run dev retro <N>       # 复盘
+uv run dev merge-pr <PR#>     # 合并 PR
+uv run dev prune              # 清理
+uv run dev retro <N>          # 复盘
+uv run dev close <N>          # 关闭 issue
 ```
 
 ---
@@ -223,3 +290,55 @@ Agent 必须请求人类确认：
 | 父子任务同步开发 | 叶子向上，禁止并行 |
 | AI agent 删分支 | dev remove 只删 worktree |
 | 给 agent 裸 gh 命令 | 通过 dev 工具封装 |
+
+### Python 项目规范
+
+| 规则 | 说明 |
+|------|------|
+| 开发依赖三项必备 | `ruff>=0.15` `pyright>=1.1` `pytest>=9.0` |
+| 用 `uv add`，不裸 `pip` | 已在 `~/git/AGENTS.md` 约束 |
+| 子包目录用 `packages/` | 不用 `pkgs/` |
+| 源码用 `src/` layout | `src/mypkg/`，不用平铺 |
+
+---
+
+## 依赖源码查找
+
+`diy sync` 将依赖源码 clone 到 `~/.diy/ref/`，并在项目 `.diy/ref.lock.json` 建立索引。
+
+查找流程（严格按此顺序）：
+
+### 1. 读 `.diy/ref.lock.json`
+
+```json
+{
+  "mirrorRoot": "~",
+  "workspaces": [{
+    "dependencies": [{
+      "name": "rich",
+      "mirrorPath": ".diy/ref/github.com/Textualize/rich/15.0.0"
+    }]
+  }]
+}
+```
+
+`mirrorPath` 相对于 `mirrorRoot`（`~`），完整路径 `~/.diy/ref/github.com/Textualize/rich/15.0.0`。
+
+### 2. 去 `~/.diy/ref/` 读源码
+
+```bash
+grep -r "关键词" ~/.diy/ref/github.com/Textualize/rich/15.0.0/
+ls ~/.diy/ref/github.com/Textualize/rich/15.0.0/src/
+```
+
+### 3. 兜底（lock 文件中找不到时）
+
+| 生态 | 路径 | 注意 |
+|------|------|------|
+| Python | `.venv/lib/` | 可能被编译或压缩 |
+| Node.js | `node_modules/` | 可能被打包或压缩 |
+
+### 原则
+
+- **永远先读 `.diy/ref.lock.json`**，不要直接翻 `.venv/lib/`
+- lock 文件在项目根目录的 `.diy/` 下

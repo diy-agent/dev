@@ -11,6 +11,7 @@ from cyclopts import App, Parameter
 
 from ._log import VerboseFlag, set_verbosity, info
 from ._git_ops import run, get_current_branch, get_main_branch
+from ._json_output import output_json
 
 
 COMMIT_TYPES = [
@@ -234,12 +235,16 @@ def work_commit(
         bool,
         Parameter(name=["--dry-run"], help="only run checks, do not commit"),
     ] = False,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出，自动跳过交互确认 (agent 使用)"),
+    ] = False,
 ):
     """check + test + cleanup + message + git commit.
 
     Agent one-shot commit, never forget steps again.
 
-    Agent: 提供 -t/-s/-m 任一参数则自动确认提交，不进入编辑器交互。
+    Agent: 提供 -t/-s/-m 任一参数或在 --json 模式下自动确认提交，不进入编辑器交互。
 
     Execution chain:
       1. ./sha.sh check   (skip if not defined)
@@ -251,6 +256,7 @@ def work_commit(
 
     Examples:
       dev commit                    # check -> test -> message -> commit
+      dev commit --json             # JSON 输出，自动确认
       dev commit --dry-run                      # dry-run: only checks, no commit
       dev commit --message "fix: typo"          # manual message
       dev commit --type fix --scope cli         # force type and scope
@@ -273,18 +279,28 @@ def work_commit(
 
     # 安全检查：不在 main 分支提交
     if branch == main_branch:
-        print(f"Error: cannot commit on {main_branch} branch directly")
-        print("Use worktree branches for development")
+        if json_output:
+            output_json(
+                {"error": "cannot commit on main"},
+                f"不能在 {main_branch} 分支直接提交",
+            )
+        else:
+            print(f"Error: cannot commit on {main_branch} branch directly")
+            print("Use worktree branches for development")
         return
 
     # 2. check (mandatory, no skip)
     if sha_path:
         if not _run_sha_check(sha_path):
+            if json_output:
+                output_json({"error": "check failed"}, "check 未通过")
             return
 
     # 3. test (mandatory, no skip)
     if sha_path:
         if not _run_sha_test(sha_path):
+            if json_output:
+                output_json({"error": "test failed"}, "test 未通过")
             return
 
     # 4. git-cleanup
@@ -295,7 +311,10 @@ def work_commit(
     try:
         run("git add -A", cwd=project_root)
     except Exception as e:
-        print(f"git add failed: {e}")
+        if json_output:
+            output_json({"error": "git add failed"}, str(e))
+        else:
+            print(f"git add failed: {e}")
         return
 
     # 检查是否有东西可以提交
@@ -304,7 +323,10 @@ def work_commit(
     except Exception:
         staged = ""
     if not staged.strip():
-        print("Nothing to commit (working tree clean)")
+        if json_output:
+            output_json({}, "nothing to commit")
+        else:
+            print("Nothing to commit (working tree clean)")
         return
 
     # 6. 生成或使用指定的 message
@@ -319,19 +341,33 @@ def work_commit(
         final_message = _generate_message(diff_info)
         info(f"Auto message: {final_message}")
 
+    files = staged.strip().split("\n")
+
     # 7. 展示确认
-    print(f"\nBranch:   {branch}")
-    print(f"Message:  {final_message}")
-    print("Files:")
-    for f in staged.strip().split("\n"):
-        print(f"  {f}")
+    if not json_output:
+        print(f"\nBranch:   {branch}")
+        print(f"Message:  {final_message}")
+        print("Files:")
+        for f in files:
+            print(f"  {f}")
 
     if dry_run:
-        print("\n[dry-run] Would commit with above message")
+        if json_output:
+            output_json(
+                {
+                    "message": final_message,
+                    "files": files,
+                    "branch": branch,
+                    "dry_run": True,
+                },
+                "dry-run",
+            )
+        else:
+            print("\n[dry-run] Would commit with above message")
         return
 
-    # auto-confirm if all flags were explicit (-m or -t/-s)
-    auto_confirm = bool(message or commit_type or scope)
+    # --json 模式或显式指定参数时自动确认
+    auto_confirm = json_output or bool(message or commit_type or scope)
 
     if not auto_confirm:
         try:
@@ -359,7 +395,6 @@ def work_commit(
             with open(tmp_path) as f:
                 edited = f.read()
             os.unlink(tmp_path)
-            # 过滤注释行
             lines = [x for x in edited.split("\n") if not x.strip().startswith("#")]
             edited_message = "\n".join(lines).strip()
             if not edited_message:
@@ -373,7 +408,16 @@ def work_commit(
     # 8. commit
     try:
         run(f'git commit -m "{final_message}"', cwd=project_root)
-        print(f"\n[OK] Committed: {final_message}")
+        if json_output:
+            output_json(
+                {"message": final_message, "files": files, "branch": branch},
+                f"已提交: {final_message}",
+            )
+        else:
+            print(f"\n[OK] Committed: {final_message}")
     except Exception as e:
-        print(f"Commit failed: {e}")
+        if json_output:
+            output_json({"error": "commit failed"}, str(e))
+        else:
+            print(f"Commit failed: {e}")
         return

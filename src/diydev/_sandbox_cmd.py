@@ -219,7 +219,7 @@ def _print_link_item(
     from rich.text import Text
 
     line = Text()
-    line.append(f"- ", style="dim")
+    line.append("- ", style="dim")
     line.append(f"{label}：", style="bold")
     if links:
         for i, url in enumerate(links):
@@ -282,11 +282,7 @@ def sandbox_status(
         from rich.markdown import Markdown
 
         # 状态头部用 Markdown
-        _console.print(
-            Markdown(
-                f"# Sandbox 状态\n\n{status_line}\n"
-            )
-        )
+        _console.print(Markdown(f"# Sandbox 状态\n\n{status_line}\n"))
         # 每一项手动排版，路径用 OSC 8 超链接
         _print_link_item("工作目录", [f"file://{w}" for w in workdirs])
         _print_link_item(
