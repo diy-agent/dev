@@ -104,7 +104,6 @@ def work_status(
 def _show_tree_md(repo: str, main_branch: str, all: bool):
     """Markdown 格式渲染 worktree 状态树"""
     from rich.markdown import Markdown
-    from rich.panel import Panel
 
     worktrees = git_worktree_list()
     rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
@@ -130,7 +129,6 @@ def _show_tree_md(repo: str, main_branch: str, all: bool):
     errors = counts.get("error", 0)
     wip = counts.get("wip", 0)
 
-    border = "red" if errors else ("yellow" if wip else "dim")
     status_line = (
         f"⚠️ **{errors} 异常** · 🔳 {wip} 开发中 · ✅ {completed} 完成  (共 {total})"
         if errors or wip
@@ -141,9 +139,8 @@ def _show_tree_md(repo: str, main_branch: str, all: bool):
     if not all:
         md += "\n\n*`dev status -a` 展开详情*"
 
-    _console.print()
-    _console.print(Panel(Markdown(md), border_style=border, padding=(1, 2)))
-    _console.print()
+    _console.print(Markdown(md))
+    _console.print("─" * 60, style="dim")
 
 
 def _format_one_md(row: dict, all: bool, repo: str) -> list[str]:

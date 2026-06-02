@@ -251,10 +251,8 @@ def sandbox_status(
 
         if marker:
             status_line = f"> ⚠️ **已隔离**（{marker}）\n>"
-            border = "yellow"
         else:
             status_line = "**未隔离**（宿主终端）"
-            border = "dim"
 
         pfx = (
             f"`{policy_file}`"
@@ -273,7 +271,8 @@ def sandbox_status(
 - **策略模板**：{tmpl_info}
 - **用户主目录**：`{home}`
 """
-        _console.print(Panel(Markdown(md), border_style=border, padding=(1, 2)))
+        _console.print(Markdown(md))
+        _console.print("─" * 60, style="dim")
     else:
         table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
         table.add_column(style="dim", width=11)
