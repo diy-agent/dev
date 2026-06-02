@@ -1,9 +1,11 @@
 ---
 name: diy-dev
 description: >
-  AI Agent 使用 dev CLI 工具的操作指南，含设计理念与工具无法覆盖的补充规则。
+  AI Agent 使用 dev CLI 工具的操作指南，含设计理念、sha.sh 规范、
+  Python 项目规范、依赖源码查找、项目管理方法等工具无法覆盖的补充规则。
   触发词：创建 issue、开始工作、提交代码、创建 PR、合并 PR、查看状态、清理 worktree、
-  关闭 issue、复盘、dev 命令用法咨询、任务拆分、Issue 工作流。
+  关闭 issue、复盘、dev 命令用法咨询、任务拆分、Issue 工作流、
+  查依赖源码、看 xxx 包怎么实现、第三方库内部逻辑、依赖实现细节。
   任何涉及"dev start""dev commit""dev status""dev pr""dev merge""dev prune"等操作都触发此 skill。
 ---
 
@@ -297,3 +299,46 @@ Agent 必须请求人类确认：
 | 用 `uv add`，不裸 `pip` | 已在 `~/git/AGENTS.md` 约束 |
 | 子包目录用 `packages/` | 不用 `pkgs/` |
 | 源码用 `src/` layout | `src/mypkg/`，不用平铺 |
+
+---
+
+## 依赖源码查找
+
+`diy sync` 将依赖源码 clone 到 `~/.diy/ref/`，并在项目 `.diy/ref.lock.json` 建立索引。
+
+查找流程（严格按此顺序）：
+
+### 1. 读 `.diy/ref.lock.json`
+
+```json
+{
+  "mirrorRoot": "~",
+  "workspaces": [{
+    "dependencies": [{
+      "name": "rich",
+      "mirrorPath": ".diy/ref/github.com/Textualize/rich/15.0.0"
+    }]
+  }]
+}
+```
+
+`mirrorPath` 相对于 `mirrorRoot`（`~`），完整路径 `~/.diy/ref/github.com/Textualize/rich/15.0.0`。
+
+### 2. 去 `~/.diy/ref/` 读源码
+
+```bash
+grep -r "关键词" ~/.diy/ref/github.com/Textualize/rich/15.0.0/
+ls ~/.diy/ref/github.com/Textualize/rich/15.0.0/src/
+```
+
+### 3. 兜底（lock 文件中找不到时）
+
+| 生态 | 路径 | 注意 |
+|------|------|------|
+| Python | `.venv/lib/` | 可能被编译或压缩 |
+| Node.js | `node_modules/` | 可能被打包或压缩 |
+
+### 原则
+
+- **永远先读 `.diy/ref.lock.json`**，不要直接翻 `.venv/lib/`
+- lock 文件在项目根目录的 `.diy/` 下
