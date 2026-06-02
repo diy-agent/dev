@@ -12,7 +12,6 @@ from ._status_cmd import status_app
 from ._pr_cmd import pr_app
 from ._merge_pr_cmd import merge_pr_app
 from ._prune_cmd import prune_app
-from ._commit_cmd import commit_app
 from ._close_cmd import close_app
 from ._doctor_cmd import doctor_app
 from ._sandbox_cmd import sandbox_app
@@ -43,9 +42,6 @@ app.command(merge_pr_app, name="merge-pr")
 
 # dev prune
 app.command(prune_app, name="prune")
-
-# dev commit
-app.command(commit_app, name="commit")
 
 # dev close
 app.command(close_app, name="close")

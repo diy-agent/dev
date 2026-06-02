@@ -70,7 +70,9 @@ sync()  {
     [ -d ~/.agents/skills/find-context ]  || run   skills add ./skills/find-context -g -y
     [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
     [ -d ~/.agents/skills/diy-ref-lookup ]  || run   skills add ./skills/diy-ref-lookup -g -y
-    [ -d ~/.agents/skills/win-file-unlock ]  || run   skills add ./skills/win-file-unlock -g -y
+    if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
+      [ -d ~/.agents/skills/win-file-unlock ] || run skills add ./skills/win-file-unlock -g -y
+    fi
 }
 uninstall() {
     run rm -rf ~/.agents/skills/find-context
