@@ -19,7 +19,7 @@ from ._sandbox_cmd import sandbox_app
 
 app = App(
     name="dev",
-    help="diy 开发流程管理 | 全局选项: --cd <path> 指定工作目录 | Agent: 交互命令(merge-pr/prune/commit/close)需先 dev <cmd> -h 确认参数，用 option 绕过 stdin",
+    help="diy 开发流程 | --cd <path> | --json 输出 | 交互命令用 -h 查看参数",
     version_flags=[],
 )
 

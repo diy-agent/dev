@@ -19,6 +19,7 @@ from typing import Optional, Annotated, Callable
 from cyclopts import App, Parameter
 
 from ._log import VerboseFlag, set_verbosity, info
+from ._json_output import output_json
 
 
 # ============================================================================
@@ -527,6 +528,10 @@ def work_doctor(
         bool,
         Parameter(name=["--py"], help="pyproject.toml checks only", group="Category"),
     ] = False,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
+    ] = False,
 ):
     """
     Check project conventions automatically.
@@ -535,18 +540,58 @@ def work_doctor(
       dev doctor           # run all checks
       dev doctor --sha     # sha.sh checks only
       dev doctor --py      # python project checks only
+      dev doctor --json    # JSON output for agent
     """
     set_verbosity(verbose)
     project_root = _find_project_root(os.getcwd())
-    info(f"Project root: {project_root}")
 
+    if json_output:
+        # JSON 模式：静默收集结果
+        all_checks: dict[str, list[tuple[str, Callable[[str], CheckResult]]]] = {
+            "sha": SHA_CHECKS,
+            "py": PY_CHECKS,
+            "general": GENERAL_CHECKS,
+        }
+        if sha:
+            categories = ["sha", "general"]
+        elif py:
+            categories = ["py", "general"]
+        else:
+            categories = list(all_checks.keys())
+
+        results: list[CheckResult] = []
+        for cat in categories:
+            if cat in all_checks:
+                for name, check_fn in all_checks[cat]:
+                    r = check_fn(project_root)
+                    results.append(r)
+
+        result_list = []
+        for r in results:
+            result_list.append(
+                {
+                    "category": r.category,
+                    "name": r.name,
+                    "status": r.status.value,
+                    "detail": r.detail,
+                    "fix": r.fix,
+                }
+            )
+        counts = {}
+        for r in results:
+            counts[r.status.value] = counts.get(r.status.value, 0) + 1
+        passed = counts.get("PASS", 0) or 0
+        output_json({"checks": result_list, "counts": counts}, f"{passed} passed")
+        return
+
+    info(f"Project root: {project_root}")
     if not sha and not py:
         run_all(project_root)
     else:
-        categories = []
+        cats = []
         if sha:
-            categories.append("sha")
+            cats.append("sha")
         if py:
-            categories.append("py")
-        categories.append("general")
-        run_all(project_root, categories)
+            cats.append("py")
+        cats.append("general")
+        run_all(project_root, cats)

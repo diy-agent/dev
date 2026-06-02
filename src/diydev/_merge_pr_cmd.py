@@ -11,6 +11,7 @@ from ._gh_ops import (
     gh_pr_ready,
     gh_repo_merge_method,
 )
+from ._json_output import output_json
 
 merge_pr_app = App(name="merge-pr", help="合并当前分支的 PR")
 
@@ -83,11 +84,18 @@ def work_merge_pr(
             help="草稿 PR 自动转换为 Ready for review 后再合并",
         ),
     ] = False,
+    json_output: Annotated[
+        bool,
+        Parameter(
+            name=["--json"], help="JSON 格式输出，必须配合 --method (agent 使用)"
+        ),
+    ] = False,
 ):
     """合并当前分支的 Pull Request。
 
     如果未通过 --method 指定合并策略，将显示交互式选择器。
     草稿 PR 无法合并，可通过 --ready 自动转换状态后再合并。
+    Agent: --json 模式下必须通过 --method 指定策略。
     """
     set_verbosity(verbose)
     branch = get_current_branch()
@@ -95,12 +103,18 @@ def work_merge_pr(
     repo = get_github_repo()
 
     if branch == main_branch:
-        print("错误: 请在 worktree 分支执行，不能在主分支")
+        if json_output:
+            output_json({"error": "on main branch"}, "请在 worktree 分支执行")
+        else:
+            print("错误: 请在 worktree 分支执行，不能在主分支")
         return
 
     prs = gh_pr_list(repo, head=branch, state="open")
     if not prs:
-        print(f'错误: 分支 "{branch}" 没有 open PR')
+        if json_output:
+            output_json({"error": "no open PR"}, f'分支 "{branch}" 没有 open PR')
+        else:
+            print(f'错误: 分支 "{branch}" 没有 open PR')
         return
 
     pr = prs[0]
@@ -108,50 +122,68 @@ def work_merge_pr(
 
     # 预检冲突
     if pr.get("mergeable") == "CONFLICTING":
-        print(f"错误: PR #{pr_num} 与 {main_branch} 有冲突，请先解决冲突")
-        print(f"\n  页面操作: {pr['url']}")
-        print("\n  手工命令:")
-        print("    git fetch origin")
-        print(f"    git rebase origin/{main_branch}")
-        print("    # 解决冲突后:")
-        print("    git add .")
-        print("    git rebase --continue")
-        print("    git push --force-with-lease")
-        print("\n  解决后重新执行: dev work merge-pr")
+        if json_output:
+            output_json({"error": "conflicting"}, f"PR #{pr_num} 有冲突")
+        else:
+            print(f"错误: PR #{pr_num} 与 {main_branch} 有冲突，请先解决冲突")
+            print(f"\n  页面操作: {pr['url']}")
+            print("\n  手工命令:")
+            print("    git fetch origin")
+            print(f"    git rebase origin/{main_branch}")
+            print("    # 解决冲突后:")
+            print("    git add .")
+            print("    git rebase --continue")
+            print("    git push --force-with-lease")
+            print("\n  解决后重新执行: dev work merge-pr")
         return
 
     # 预检草稿状态
     if pr.get("isDraft"):
         if ready:
-            # --ready 指定时直接转换
-            print(f"PR #{pr_num} 为草稿状态，正在转换为 Ready for review...")
+            if not json_output:
+                print(f"PR #{pr_num} 为草稿状态，正在转换为 Ready for review...")
             gh_pr_ready(pr_num, repo)
-            print("已转换为 Ready for review\n")
+            if not json_output:
+                print("已转换为 Ready for review\n")
         else:
-            # 未指定时交互式选择
-            print(f"PR #{pr_num} 为草稿状态，无法直接合并\n")
-            print("选择操作:")
-            print("  [1] 转换为 Ready for review 后继续合并")
-            print("  [q] 取消")
-            print()
-            try:
-                choice = input("请输入编号 [取消: q]: ").strip().lower()
-                if choice != "1":
+            if json_output:
+                output_json(
+                    {"error": "draft PR", "pr_number": pr_num},
+                    "草稿 PR，请用 --ready 转换",
+                )
+            else:
+                print(f"PR #{pr_num} 为草稿状态，无法直接合并\n")
+                print("选择操作:")
+                print("  [1] 转换为 Ready for review 后继续合并")
+                print("  [q] 取消")
+                print()
+                try:
+                    choice = input("请输入编号 [取消: q]: ").strip().lower()
+                    if choice != "1":
+                        print("已取消合并")
+                        return
+                except (ValueError, EOFError):
                     print("已取消合并")
                     return
-            except (ValueError, EOFError):
-                print("已取消合并")
-                return
 
-            print("\n正在转换为 Ready for review...")
-            gh_pr_ready(pr_num, repo)
-            print("已转换为 Ready for review\n")
+                print("\n正在转换为 Ready for review...")
+                gh_pr_ready(pr_num, repo)
+                print("已转换为 Ready for review\n")
 
     # 确定合并策略
     if method:
         if method not in ("merge", "squash", "rebase"):
-            print(f"错误: 不支持的合并策略 '{method}'，可选: merge, squash, rebase")
+            if json_output:
+                output_json({"error": "invalid method"}, f"不支持的策略 '{method}'")
+            else:
+                print(f"错误: 不支持的合并策略 '{method}'，可选: merge, squash, rebase")
             return
+    elif json_output:
+        output_json(
+            {"error": "--method required in json mode"},
+            "--json 模式下必须通过 --method 指定合并策略",
+        )
+        return
     else:
         available = gh_repo_merge_method(repo)
         methods = available.split(",")
@@ -196,4 +228,10 @@ def work_merge_pr(
 
     # 执行合并
     gh_pr_merge(pr_num, repo, method)
-    print(f"成功: PR #{pr_num} 已合并 ({method})")
+    if json_output:
+        output_json(
+            {"method": method, "pr_number": pr_num, "branch": branch},
+            f"PR #{pr_num} 已合并",
+        )
+    else:
+        print(f"成功: PR #{pr_num} 已合并 ({method})")

@@ -14,6 +14,7 @@ from ._git_ops import (
     git_push_upstream,
 )
 from ._gh_ops import gh_issue_view
+from ._json_output import output_json
 
 start_app = App(name="start", help="开始开发：pull main, 创建 worktree, 初始化并推送")
 
@@ -77,6 +78,10 @@ def work_start(
         ),
     ] = "",
     verbose: VerboseFlag = 0,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
+    ] = False,
 ):
     """从 issue 编号开始开发。
 
@@ -102,41 +107,77 @@ def work_start(
         run(f"git pull origin {main_branch}")
         info(f"{main_branch} is up to date")
     except Exception as e:
-        print(f"  无法更新 {main_branch}: {e}")
-        print(f"  请手动: git pull origin {main_branch}")
+        if json_output:
+            output_json({"error": "pull failed"}, str(e))
+        else:
+            print(f"  无法更新 {main_branch}: {e}")
+            print(f"  请手动: git pull origin {main_branch}")
         return
 
     # 1. 验证 issue 是否存在
     try:
         issue = gh_issue_view(issue_num, repo, "title")
-        print(f"Issue:  #{issue_num}  {issue.get('title', '')}")
+        if not json_output:
+            print(f"Issue:  #{issue_num}  {issue.get('title', '')}")
     except RuntimeError as e:
-        print(f"错误: 无法获取 issue #{issue_num} - {e}")
+        if json_output:
+            output_json({"error": "issue not found"}, str(e))
+        else:
+            print(f"错误: 无法获取 issue #{issue_num} - {e}")
         return
 
     # 2. 创建 worktree
     worktree_path = get_worktree_path(branch)
     try:
         git_worktree_add(branch, main_branch)
-        print(f"成功: 创建 worktree {worktree_path}")
+        if not json_output:
+            print(f"成功: 创建 worktree {worktree_path}")
     except RuntimeError as e:
-        print(f"错误: 创建 worktree 失败 - {e}")
+        if json_output:
+            output_json({"error": "worktree create failed"}, str(e))
+        else:
+            print(f"错误: 创建 worktree 失败 - {e}")
         return
 
     # 3. 初始化环境
-    print("初始化开发环境...")
+    if not json_output:
+        print("初始化开发环境...")
     if not _init_env(worktree_path):
-        print("\n  环境初始化失败，请检查后手动完成。")
-        print(f"  cd {worktree_path}")
-        print("  uv sync  # or npm install")
+        if json_output:
+            output_json(
+                {
+                    "worktree_path": worktree_path,
+                    "branch": branch,
+                    "issue": issue_num,
+                    "env_init_failed": True,
+                },
+                "环境初始化失败",
+            )
+        else:
+            print("\n  环境初始化失败，请检查后手动完成。")
+            print(f"  cd {worktree_path}")
+            print("  uv sync  # or npm install")
         return
 
     # 4. 推送分支
     try:
         git_push_upstream(branch)
-        print(f"成功: 推送分支 {branch} 到远程")
+        if not json_output:
+            print(f"成功: 推送分支 {branch} 到远程")
     except RuntimeError as e:
-        print(f"警告: 推送分支失败 - {e}")
-        print(f"请手动推送: git push -u origin {branch}")
+        if not json_output:
+            print(f"警告: 推送分支失败 - {e}")
+            print(f"请手动推送: git push -u origin {branch}")
 
-    print(f"\n开始开发: cd {worktree_path}")
+    if json_output:
+        output_json(
+            {
+                "worktree_path": worktree_path,
+                "branch": branch,
+                "issue": issue_num,
+                "issue_title": issue.get("title", ""),
+            },
+            f"开始开发 #{issue_num}",
+        )
+    else:
+        print(f"\n开始开发: cd {worktree_path}")

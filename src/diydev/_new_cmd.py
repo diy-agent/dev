@@ -6,6 +6,7 @@ from typing import Annotated
 from ._log import VerboseFlag, set_verbosity
 from ._git_ops import get_github_repo
 from ._gh_ops import gh_issue_create
+from ._json_output import output_json
 
 new_app = App(name="new", help="创建新的 issue")
 
@@ -20,6 +21,10 @@ def work_new(
         ),
     ],
     verbose: VerboseFlag = 0,
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出 (agent 使用)"),
+    ] = False,
 ):
     """创建新的 GitHub issue，描述同时作为 title 和 body。
 
@@ -31,5 +36,11 @@ def work_new(
     repo = get_github_repo()
     desc = " ".join(description)
     num = gh_issue_create(desc, desc, repo)
+    if json_output:
+        output_json(
+            {"number": num, "url": f"https://github.com/{repo}/issues/{num}"},
+            f"创建 issue #{num}",
+        )
+        return
     print(f"成功: 创建 issue #{num}")
     print(f"URL:   https://github.com/{repo}/issues/{num}")
