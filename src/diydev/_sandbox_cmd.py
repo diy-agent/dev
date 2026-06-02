@@ -13,8 +13,15 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from cyclopts import App, Parameter
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
 
 from ._log import VerboseFlag, set_verbosity, info, debug
+
+_console = Console(highlight=False)
+_console_err = Console(stderr=True, highlight=False)
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 _DEFAULT_SHELL = "/bin/bash"
@@ -123,19 +130,16 @@ def _build_policy(home: str, workdir: str, extra_dirs: list[str]) -> str:
 def _check_sandbox() -> None:
     """检查 sandbox-exec 是否可用 / 是否已在 sandbox 内"""
     if not os.path.isfile(_SANDBOX_EXEC):
-        print("错误: sandbox-exec 不可用，仅支持 macOS", file=sys.stderr)
+        _console_err.print("[bold red]错误:[/] sandbox-exec 不可用，仅支持 macOS")
         raise SystemExit(1)
     inside = (
         os.environ.get("PI_INSIDE_SANDBOX") == "1"
         or os.environ.get("DIYDEV_INSIDE_SANDBOX") == "1"
     )
     if inside:
-        print(
-            "错误: 当前已在 sandbox 内，无法启动新 sandbox",
-            file=sys.stderr,
-        )
-        print("sandbox 内可用命令: dev sb status (诊断)", file=sys.stderr)
-        print("退出 sandbox: exit 或 Ctrl+D", file=sys.stderr)
+        _console_err.print("[bold red]错误:[/] 当前已在 sandbox 内，无法启动新 sandbox")
+        _console_err.print("[dim]sandbox 内可用命令: dev sb status (诊断)[/]")
+        _console_err.print("[dim]退出 sandbox: exit 或 Ctrl+D[/]")
         raise SystemExit(1)
 
 
@@ -202,62 +206,103 @@ def _detect_sandbox_marker() -> Optional[str]:
 @sandbox_app.command(name="status")
 def sandbox_status(
     verbose: VerboseFlag = 0,
+    markdown: Annotated[
+        bool,
+        Parameter(name=["--md"], help="以 Markdown 格式输出"),
+    ] = False,
     show_policy: Annotated[
         bool,
-        Parameter(
-            name=["--policy"],
-            help="同时显示实际生效的策略内容",
-        ),
+        Parameter(name=["--policy"], help="同时显示实际生效的策略内容"),
     ] = False,
 ):
-    """显示 sandbox 诊断信息：当前是否在沙箱内、模板路径、策略来源等。
+    """显示 sandbox 诊断信息。
 
     示例:
-      dev sb status        # 查看状态
-      dev sb status -p     # 同时显示策略内容
+      dev sb status          # 表格格式
+      dev sb status --md     # Markdown 格式
+      dev sb status --policy # 同时显示策略内容
     """
     set_verbosity(verbose)
     home = os.environ["HOME"]
     cwd = os.getcwd()
     marker = _detect_sandbox_marker()
 
-    # sandbox 内通过环境变量获取实际工作目录列表
     dirs_env = os.environ.get("DIYDEV_SANDBOX_DIRS", "")
     sandbox_dirs = [d for d in dirs_env.split(":") if d] if dirs_env else []
+    workdirs = sandbox_dirs if sandbox_dirs else [cwd]
 
     proj_tmpl = _find_template_path(cwd)
     if proj_tmpl:
         lines = proj_tmpl.read_text().count("\n") + 1
-        tmpl_display = f"{proj_tmpl} ({lines} 行)"
+        tmpl_path = str(proj_tmpl)
     else:
         lines = _BUILTIN_TEMPLATE.read_text().count("\n") + 1
-        tmpl_display = f"{_BUILTIN_TEMPLATE} ({lines} 行)"
+        tmpl_path = str(_BUILTIN_TEMPLATE)
 
-    # 策略文件路径（sandbox 内可见，宿主终端显示 -n 提示）
     policy_file = os.environ.get("DIYDEV_SANDBOX_POLICY", "")
 
-    print()
-    print("╭─ Sandbox 状态 ───────────────────────────────────────────────╮")
-    print(f"│ 当前进程:    {'已隔离' if marker else '未隔离 (宿主终端)'}")
-    if sandbox_dirs:
-        print(f"│ 工作目录:    {sandbox_dirs[0]}")
-        for d in sandbox_dirs[1:]:
-            print(f"│              {d}")
+    _console.print()
+
+    if markdown:
+        from rich.markdown import Markdown
+
+        wd_bullets = "\n".join(f"  - `{w}`" for w in workdirs)
+        tmpl_info = f"`{tmpl_path}`（{lines} 行）"
+
+        if marker:
+            status_line = f"> ⚠️ **已隔离**（{marker}）\n>"
+            border = "yellow"
+        else:
+            status_line = "**未隔离**（宿主终端）"
+            border = "dim"
+
+        pfx = (
+            f"`{policy_file}`"
+            if policy_file
+            else "*(未启动，使用 `dev sb --dry-run` 预览)*"
+        )
+
+        md = f"""\
+# Sandbox 状态
+
+{status_line}
+
+- **工作目录**：
+{wd_bullets}
+- **策略文件**：{pfx}
+- **策略模板**：{tmpl_info}
+- **用户主目录**：`{home}`
+"""
+        _console.print(Panel(Markdown(md), border_style=border, padding=(1, 2)))
     else:
-        print(f"│ 工作目录:    {cwd}")
-    if policy_file:
-        print(f"│ 策略文件:    {policy_file}")
-    else:
-        print("│ 策略文件:    (未启动，使用 dev sb -n 预览)")
-    print(f"│ 策略模板:    {tmpl_display}")
-    print(f"│ 用户主目录:  {home}")
-    print("╰──────────────────────────────────────────────────────────────╯")
-    print()
+        table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
+        table.add_column(style="dim", width=11)
+        table.add_column()
+
+        if marker:
+            table.add_row("当前进程", f"[bold yellow]已隔离[/] ({marker})")
+        else:
+            table.add_row("当前进程", "[green]未隔离[/] (宿主终端)")
+
+        table.add_row("工作目录", "\n".join(workdirs))
+
+        if policy_file:
+            table.add_row("策略文件", policy_file)
+        else:
+            table.add_row("策略文件", "[dim](未启动，使用 dev sb --dry-run 预览)[/]")
+
+        table.add_row("策略模板", f"[dim]{tmpl_path}（{lines} 行）[/]")
+        table.add_row("用户主目录", home)
+
+        _console.print(Panel(table, title="Sandbox 状态", border_style="dim"))
+
+    _console.print()
 
     if show_policy:
+        if marker:
+            _console.print("[dim](sandbox 内仅显示当前目录策略预览)[/]")
         policy = _build_policy(home, cwd, [])
-        print("── 策略预览 (模板渲染后，仅显示当前目录) ──")
-        print(policy)
+        _console.print(Panel(policy, title="策略预览", border_style="dim"))
 
 
 # ---------------------------------------------------------------------------
@@ -275,12 +320,13 @@ def _validate_sandbox_subcommand() -> None:
             token = sys.argv[i + 1]
             if not token.startswith("-") and token not in known:
                 suggestions = difflib.get_close_matches(token, known, n=1, cutoff=0.5)
-                hint = f" Did you mean '{suggestions[0]}'?" if suggestions else ""
-                print(
-                    f"错误: 未知命令 '{token}'。{hint}",
-                    file=sys.stderr,
+                hint = (
+                    f" Did you mean '[bold]{suggestions[0]}[/]'?" if suggestions else ""
                 )
-                print(f"可用命令: {', '.join(known)}", file=sys.stderr)
+                _console_err.print(
+                    f"[bold red]错误:[/] 未知命令 '[bold]{token}[/]'。{hint}"
+                )
+                _console_err.print(f"[dim]可用命令: {', '.join(known)}[/]")
                 raise SystemExit(1)
             return
 
