@@ -69,15 +69,15 @@ sync()  {
     run mkdir -p ~/.agents/skills/
     [ -d ~/.agents/skills/find-context ]  || run   skills add ./skills/find-context -g -y
     [ -d ~/.agents/skills/diy-project-manager ]  || run   skills add ./skills/diy-project-manager -g -y
-    [ -d ~/.agents/skills/diy-project-manager ]  || run   skills add ./skills/diy-project-manager -g -y
-
-    # run ln -sf skills/diy-project-manager ~/.agents/skills/diy-project-manager
-    # run ln -sf skills/find-context.       ~/.agents/skills/find-context
-    # run ln -sf skills/win-file-unlock     ~/.agents/skills/win-file-unlock
+    [ -d ~/.agents/skills/dev-tools ]  || run   skills add ./skills/dev-tools -g -y
+    [ -d ~/.agents/skills/diy-ref-lookup ]  || run   skills add ./skills/diy-ref-lookup -g -y
+    [ -d ~/.agents/skills/win-file-unlock ]  || run   skills add ./skills/win-file-unlock -g -y
 }
 uninstall() {
     run rm -rf ~/.agents/skills/diy-project-manager
     run rm -rf ~/.agents/skills/find-context
+    run rm -rf ~/.agents/skills/dev-tools
+    run rm -rf ~/.agents/skills/diy-ref-lookup  
     run rm -rf ~/.agents/skills/win-file-unlock
 }
 
