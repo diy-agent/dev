@@ -24,7 +24,7 @@ _console = Console(highlight=False)
 _console_err = Console(stderr=True, highlight=False)
 
 _SANDBOX_EXEC = "/usr/bin/sandbox-exec"
-_DEFAULT_SHELL = "/bin/bash"
+_DEFAULT_SHELL = os.environ.get("SHELL", "/bin/bash")
 _TEMPLATE_FILE = ".sandbox.sb"
 _BUILTIN_TEMPLATE = Path(__file__).parent / "_sandbox_default.sb"
 
@@ -350,7 +350,7 @@ def sandbox(
         str,
         Parameter(
             name=["--shell"],
-            help=f"使用的 shell（默认 {_DEFAULT_SHELL}）",
+            help=f"使用的 shell（默认 $SHELL，当前 {_DEFAULT_SHELL}）",
         ),
     ] = _DEFAULT_SHELL,
     dry_run: Annotated[
