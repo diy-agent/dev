@@ -53,7 +53,8 @@ ${WORKDIRS_READ})
   (literal "${HOME}/.zshrc")
   (subpath "${HOME}/.config")
   (subpath "${HOME}/.cargo")
-  (subpath "${HOME}/.ssh"))
+  (subpath "${HOME}/.ssh")
+  (subpath "${HOME}/Library/Caches/mise"))
 
 ;; ============================================================
 ;; 写白名单 — 只允许写这些路径
@@ -70,7 +71,8 @@ ${WORKDIRS_WRITE}
   (subpath "${HOME}/.bun")
   (subpath "${HOME}/.local")
   (subpath "${HOME}/.config")
-  (subpath "${HOME}/.cargo"))
+  (subpath "${HOME}/.cargo")
+  (subpath "${HOME}/Library/Caches/mise"))
 
 ${DENY_UNLINKS}
 
