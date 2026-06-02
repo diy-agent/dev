@@ -102,8 +102,9 @@ def work_status(
 
 
 def _show_tree_md(repo: str, main_branch: str, all: bool):
-    """Markdown 格式渲染 worktree 状态树"""
+    """默认输出：Markdown 头部 + Rich Text（OSC 8 链接）"""
     from rich.markdown import Markdown
+    from rich.text import Text
 
     worktrees = git_worktree_list()
     rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
@@ -117,12 +118,10 @@ def _show_tree_md(repo: str, main_branch: str, all: bool):
         )
     )
 
-    lines: list[str] = []
     counts: dict[str, int] = {}
     for row in rows:
         st = row["status"]
         counts[st] = counts.get(st, 0) + 1
-        lines.extend(_format_one_md(row, all, repo))
 
     total = sum(counts.values())
     completed = counts.get("completed", 0)
@@ -135,66 +134,76 @@ def _show_tree_md(repo: str, main_branch: str, all: bool):
         else f"✅ 全部完成 ({total})"
     )
 
-    md = "# Worktree 状态\n\n" + status_line + "\n\n" + "\n".join(lines)
+    _console.print()
+    _console.print(Markdown(f"# Worktree 状态\n\n{status_line}\n"))
+
+    for row in rows:
+        _print_one_md(row, all)
+
     if not all:
-        md += "\n\n*`dev status -a` 展开详情*"
+        _console.print(Text("dev status -a 展开详情", style="dim"))
+    _console.print()
 
-    _console.print(Markdown(md))
 
+def _print_one_md(row: dict, all: bool) -> None:
+    """Rich Text + OSC 8 输出单棵 worktree"""
+    from rich.text import Text
 
-def _format_one_md(row: dict, all: bool, repo: str) -> list[str]:
-    """将单棵 worktree 树格式化为 Markdown 列表行"""
     wt = row["wt"]
     status = row["status"]
-    main_branch = get_main_branch()
-    is_main = row["branch"] == main_branch
+    is_main = row["branch"] == get_main_branch()
 
     ICON = {"completed": "✅", "error": "🟥", "wip": "🔳"}
     icon = ICON.get(status, "🔳")
 
-    result: list[str] = []
-
-    # L1: - icon path (branch)
-    result.append(f"- {icon} `{_short_path(wt.path)}`  (**{row['branch']}**)")
+    # L1: 路径（OSC 8）
+    _console.print(
+        f"- {icon} [link=file://{wt.path}]{_short_path(wt.path)}[/link]"
+        f"  (**{row['branch']}**)"
+    )
 
     # L2: Issue
     if row["issue_num"]:
         i_icon = "✅" if row["issue_state"] == "CLOSED" else "🔳"
-        result.append(
-            f"  - {i_icon} `#{row['issue_num']}` {row['issue_state']}  {row['issue_title']}"
+        _console.print(
+            f"  - {i_icon} #{row['issue_num']} {row['issue_state']}  {row['issue_title']}"
         )
         if all and row.get("issue_url"):
-            result.append(f"    - {row['issue_url']}")
+            _console.print(
+                f"    - [link={row['issue_url']}]{row['issue_url']}[/link]"
+            )
 
     # L2: PR
     if not is_main:
-        pr_done = row["pr_state"] == "MERGED"
-        p_icon = "✅" if pr_done else "🔳"
-        result.append(f"  - {p_icon} {_format_pr(row)}")
+        p_icon = "✅" if row["pr_state"] == "MERGED" else "🔳"
+        _console.print(f"  - {p_icon} {_format_pr(row)}")
         if all and row.get("pr_url"):
-            result.append(f"    - {row['pr_url']}")
+            _console.print(
+                f"    - [link={row['pr_url']}]{row['pr_url']}[/link]"
+            )
 
     # L2: 错误
     if row.get("error_categories"):
-        result.append("  - 🟥 **发现问题:**")
+        _console.print(Text("  - 🟥 **发现问题:**", style="red"))
         for ecat in row["error_categories"]:
-            result.append(f"    - **{ecat['category']}:**")
+            _console.print(Text(f"    - **{ecat['category']}:**", style="red"))
             for d in ecat["details"]:
-                result.append(f"      - `{d}`")
+                rel = d[3:]
+                abs_path = os.path.join(wt.path, rel)
+                _console.print(
+                    f"      [link=file://{abs_path}]{abs_path}[/link]",
+                    style="red",
+                )
 
     # 拓扑
     if all and not is_main and row["issue_num"]:
-        diagram = _build_branch_diagram(row["branch"], main_branch)
-        result.append("    ```")
-        result.append(diagram)
-        result.append("    ```")
+        diagram = _build_branch_diagram(row["branch"], get_main_branch())
+        _console.print(Text(f"    ```\n{diagram}\n    ```", style="dim"))
 
     # 指导
     if row["guidance"]:
         for g in row["guidance"]:
-            result.append(f"  > {g}")
-
-    return result
+            _console.print(Text(f"  > {g}", style="dim"))
 
 
 def _show_tree(repo: str, main_branch: str, all: bool):
@@ -238,7 +247,8 @@ def _print_one_tree(row: dict, all: bool, repo: str):
     # ---- Level 1: - [icon] 路径  (branch) ----
     l1 = Text()
     l1.append(f"- {icon} ", style=color)
-    l1.append(f"{_short_path(wt.path)}  ({row['branch']})")
+    l1.append(_short_path(wt.path), style=f"link file://{wt.path}")
+    l1.append(f"  ({row['branch']})")
     _console.print(l1)
 
     # ---- Level 2: Issue ----
@@ -253,7 +263,7 @@ def _print_one_tree(row: dict, all: bool, repo: str):
             )
         )
         if all and row.get("issue_url"):
-            _console.print(f"    URL: {row['issue_url']}")
+            _console.print(f"    URL: [link={row['issue_url']}]{row['issue_url']}[/link]")
 
     # ---- Level 2: PR（main 不显示） ----
     if not is_main:
@@ -261,7 +271,7 @@ def _print_one_tree(row: dict, all: bool, repo: str):
         p_icon, p_color = ("✅", "green") if pr_done else ("🔳", "dim")
         _console.print(Text(f"  - {p_icon} {_format_pr(row)}", style=p_color))
         if all and row.get("pr_url"):
-            _console.print(f"    URL: {row['pr_url']}")
+            _console.print(f"    URL: [link={row['pr_url']}]{row['pr_url']}[/link]")
 
     # ---- Level 2: 🟥 发现问题: ----
     if row.get("error_categories"):
@@ -352,7 +362,7 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
     # Level 1
     l1 = Text()
     l1.append(f"{icon} ", style=color)
-    l1.append(_short_path(row["wt"].path))
+    l1.append(_short_path(row["wt"].path), style=f"link file://{row['wt'].path}")
     l1.append(f"  ({row['branch']})")
     _console.print(l1)
 
@@ -409,7 +419,7 @@ def _show_detailed(path: str, repo: str, main_branch: str, verbose: int):
         _console.print(f"    Mergeable: {mergeable_display}")
         if row.get("pr_review_label"):
             _console.print(f"    Review:    {row['pr_review_label']}")
-        _console.print(f"    URL:       {row['pr_url']}")
+        _console.print(f"    URL:       [link={row['pr_url']}]{row['pr_url']}[/link]")
 
     # 拓扑
     if row["branch"] != main_branch:
@@ -436,7 +446,7 @@ def _show_issue_detail(issue_num: int, repo: str):
         _console.print(f"    State:     {data['state']}")
         _console.print(f"    Author:    {author_login}")
         _console.print(f"    Created:   {data.get('createdAt', '-')}")
-        _console.print(f"    URL:       {data.get('url', '-')}")
+        _console.print(f"    URL:       [link={data.get('url', '-')}]{data.get('url', '-')}[/link]")
         body = data.get("body", "") or ""
         if body:
             lines = [ln for ln in body.strip().split("\n") if ln.strip()]
@@ -550,7 +560,7 @@ def _build_worktree_row(
     if wt.has_uncommitted:
         try:
             short = run("git status --short", cwd=wt.path)
-            git_status_lines = [ln for ln in short.split("\n") if ln.strip()]
+            git_status_lines = [ln.rstrip("\n") for ln in short.split("\n") if ln.strip()]
         except RuntimeError:
             pass
 

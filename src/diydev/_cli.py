@@ -103,7 +103,7 @@ def _strip_global_flags(argv: list[str]) -> tuple[int, str | None, list[str]]:
 
 def _check_cd_allowed(target: str) -> None:
     """沙箱内限制 --cd 只能跳转到允许的目录"""
-    if os.environ.get("DIYDEV_INSIDE_SANDBOX") != "1":
+    if os.environ.get("DIY_DEV_INSIDE_SANDBOX") != "1":
         return
     dirs_env = os.environ.get("DIYDEV_SANDBOX_DIRS", "")
     allowed = [d for d in dirs_env.split(":") if d]

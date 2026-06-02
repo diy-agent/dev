@@ -134,7 +134,7 @@ def _check_sandbox() -> None:
         raise SystemExit(1)
     inside = (
         os.environ.get("PI_INSIDE_SANDBOX") == "1"
-        or os.environ.get("DIYDEV_INSIDE_SANDBOX") == "1"
+        or os.environ.get("DIY_DEV_INSIDE_SANDBOX") == "1"
     )
     if inside:
         _console_err.print("[bold red]错误:[/] 当前已在 sandbox 内，无法启动新 sandbox")
@@ -196,11 +196,41 @@ def sandbox_init(
 
 def _detect_sandbox_marker() -> Optional[str]:
     """检测 sandbox 标记"""
-    if os.environ.get("DIYDEV_INSIDE_SANDBOX") == "1":
-        return "DIYDEV_INSIDE_SANDBOX=1 (dev sb)"
+    if os.environ.get("DIY_DEV_INSIDE_SANDBOX") == "1":
+        return "DIY_DEV_INSIDE_SANDBOX=1 (dev sb)"
     if os.environ.get("PI_INSIDE_SANDBOX") == "1":
         return "PI_INSIDE_SANDBOX=1 (pi sandbox)"
     return None
+
+
+def _print_link_item(
+    label: str,
+    links: list[str],
+    fallback: str = "",
+    suffix: str = "",
+) -> None:
+    """打印带 OSC 8 超链接的键值行
+
+    label: 项目名（加粗）
+    links: file:// 或 https:// URL 列表
+    fallback: 无链接时的占位文本
+    suffix: 链接后的附加文本
+    """
+    from rich.text import Text
+
+    line = Text()
+    line.append(f"- ", style="dim")
+    line.append(f"{label}：", style="bold")
+    if links:
+        for i, url in enumerate(links):
+            if i > 0:
+                line.append("\n     ")
+            # 去掉 file:// 前缀做显示文本
+            display = url.removeprefix("file://") if url.startswith("file://") else url
+            line.append(f"{display}{suffix}", style=f"link {url}")
+    elif fallback:
+        line.append(f" {fallback}", style="dim")
+    _console.print(line)
 
 
 @sandbox_app.command(name="status")
@@ -243,35 +273,33 @@ def sandbox_status(
 
     _console.print()
 
+    if marker:
+        status_line = f"> ⚠️ **已隔离**（{marker}）\n>"
+    else:
+        status_line = "**未隔离**（宿主终端）"
+
     if not rich:
         from rich.markdown import Markdown
 
-        wd_bullets = "\n".join(f"  - `{w}`" for w in workdirs)
-        tmpl_info = f"`{tmpl_path}`（{lines} 行）"
-
-        if marker:
-            status_line = f"> ⚠️ **已隔离**（{marker}）\n>"
-        else:
-            status_line = "**未隔离**（宿主终端）"
-
-        pfx = (
-            f"`{policy_file}`"
-            if policy_file
-            else "*(未启动，使用 `dev sb --dry-run` 预览)*"
+        # 状态头部用 Markdown
+        _console.print(
+            Markdown(
+                f"# Sandbox 状态\n\n{status_line}\n"
+            )
         )
-
-        md = f"""\
-# Sandbox 状态
-
-{status_line}
-
-- **工作目录**：
-{wd_bullets}
-- **策略文件**：{pfx}
-- **策略模板**：{tmpl_info}
-- **用户主目录**：`{home}`
-"""
-        _console.print(Markdown(md))
+        # 每一项手动排版，路径用 OSC 8 超链接
+        _print_link_item("工作目录", [f"file://{w}" for w in workdirs])
+        _print_link_item(
+            "策略文件",
+            [f"file://{policy_file}"] if policy_file else [],
+            fallback="*(未启动，使用 `dev sb --dry-run` 预览)*",
+        )
+        _print_link_item(
+            "策略模板",
+            [f"file://{tmpl_path}"] if tmpl_path.startswith("/") else [],
+            suffix=f"（{lines} 行）",
+        )
+        _print_link_item("用户主目录", [f"file://{home}"])
     else:
         table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
         table.add_column(style="dim", width=11)
@@ -423,9 +451,23 @@ def sandbox(
         os.close(fd)
 
         info(f"策略文件: {policy_path}")
-        info("启动 sandbox shell... 输入 exit 或 Ctrl+D 退出")
 
-        os.environ["DIYDEV_INSIDE_SANDBOX"] = "1"
+        # 进入前打印清晰横幅，帮助理解后续的 "Operation not permitted"
+        _console.print()
+        _console.print(
+            Panel(
+                f"工作目录: [bold]{cwd}[/]\n"
+                f"附加目录: [dim]{', '.join(dir_) or '(无)'}[/]\n\n"
+                "[dim]如遇 [bold]Operation not permitted[/] 说明文件不在沙箱白名单中[/]\n"
+                "[dim]可用 [bold]dev sb status[/] 查看诊断（需要新终端窗口）[/]\n"
+                "[dim]退出: exit 或 Ctrl+D[/]",
+                title="[bold]🔒 Sandbox 隔离环境[/]",
+                border_style="yellow",
+            )
+        )
+        _console.print()
+
+        os.environ["DIY_DEV_INSIDE_SANDBOX"] = "1"
         # 记录所有工作目录供 status 查询
         all_dirs = _resolve_dirs(cwd, dir_)
         os.environ["DIYDEV_SANDBOX_DIRS"] = ":".join(all_dirs)

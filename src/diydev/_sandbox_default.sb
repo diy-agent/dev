@@ -14,6 +14,7 @@
 (allow file-read* file-write*
   (require-all (regex #"^/dev/ttys[0-9]+") (extension "com.apple.sandbox.pty")))
 (allow file-ioctl (regex #"^/dev/ttys[0-9]+"))
+(allow file-read* (subpath "/dev/fd"))
 (allow sysctl-read)
 (allow iokit-open (iokit-registry-entry-class "RootDomainUserClient"))
 (allow ipc-posix-sem)
@@ -28,7 +29,9 @@
 ;; 系统
 (allow file-read* file-map-executable
   (subpath "/System")
+  (subpath "/Applications")
   (subpath "/usr")
+  (subpath "/opt/homebrew")
   (subpath "/bin")
   (subpath "/sbin")
   (subpath "/Library")
@@ -42,6 +45,7 @@ ${WORKDIRS_READ})
 
 ;; 工具链配置
 (allow file-read*
+  (subpath "${HOME}/git")
   (subpath "${HOME}/.pi")
   (subpath "${HOME}/.agents")
   (subpath "${HOME}/.bun")
