@@ -41,9 +41,14 @@ grep -r "关键词" ~/.diy/ref/github.com/Textualize/rich/15.0.0/
 ls ~/.diy/ref/github.com/Textualize/rich/15.0.0/src/
 ```
 
-### 3. `.venv/lib/` — 兜底
+### 3. 兜底（lock 文件中找不到时）
 
-仅当 `.diy/ref.lock.json` 中找不到该依赖时才用。注意：这里的代码可能被编译或压缩。
+| 生态 | 路径 | 注意 |
+|------|------|------|
+| Python | `.venv/lib/` | 可能被编译或压缩 |
+| Node.js | `node_modules/` | 可能被打包或压缩 |
+
+仅当 `.diy/ref.lock.json` 中找不到该依赖、或 mirrorPath 对应的目录不存在时才用兜底路径。
 
 ## 原则
 
