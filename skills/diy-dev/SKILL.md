@@ -288,3 +288,12 @@ Agent 必须请求人类确认：
 | 父子任务同步开发 | 叶子向上，禁止并行 |
 | AI agent 删分支 | dev remove 只删 worktree |
 | 给 agent 裸 gh 命令 | 通过 dev 工具封装 |
+
+### Python 项目规范
+
+| 规则 | 说明 |
+|------|------|
+| 开发依赖三项必备 | `ruff>=0.15` `pyright>=1.1` `pytest>=9.0` |
+| 用 `uv add`，不裸 `pip` | 已在 `~/git/AGENTS.md` 约束 |
+| 子包目录用 `packages/` | 不用 `pkgs/` |
+| 源码用 `src/` layout | `src/mypkg/`，不用平铺 |
