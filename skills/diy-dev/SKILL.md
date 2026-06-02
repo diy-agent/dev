@@ -17,7 +17,31 @@ dev 工具的设计遵循以下原则：
 2. **不确定性问题脚本化**。不给 agent 裸 `gh` 命令，所有 GitHub 操作通过 `dev` 封装
 3. **Worktree 隔离开发**。`dev start` 自动创建 worktree，main 分支不可直接修改
 4. **Agent 永远不删分支**。`dev remove` 只移除 worktree，分支留给人类 `dev prune`
-5. **命令行有参数 = agent 用，无参数 = TUI 人用**
+
+## 🚧 dev / sha.sh 架构（开发中）
+
+| | dev | sha.sh |
+|---|---|---|
+| 范围 | 全局、跨项目 | 仅当前项目 |
+| 列表类默认 | **展示所有**，当前 cwd 标记图标 | — |
+| 操作类参数 | **必须显式参数**，不猜上下文 | 自动检测当前 issue → 调 `dev <cmd> <issue>` |
+| 类比 | 全局控制面板 | 本地快捷键（thin wrapper） |
+
+```bash
+# dev — 跨项目，必须显式
+uv run dev status              # 所有项目 worktree 概览
+uv run dev list --label bug    # 所有项目 issue 过滤
+uv run dev commit 32           # 提交 issue 32 关联的 worktree
+uv run dev pr 32               # 为 issue 32 创建 PR
+uv run dev close 32            # 关闭 issue 32
+uv run dev ref rich            # 查依赖源码 mirror 路径
+
+# sha.sh — 当前项目，自动检测上下文
+./sha.sh commit                # → dev commit $(current_issue)
+./sha.sh pr                    # → dev pr $(current_issue)
+./sha.sh test                  # 项目本地 test（不做 dev 封装）
+./sha.sh sync                  # 同步 skills/env
+```
 
 ### 任务拆分规则
 
@@ -31,8 +55,10 @@ dev 工具的设计遵循以下原则：
 ## 执行规则
 
 - **始终使用 `uv run dev <command>`** 而非全局 `dev`，避免版本不一致
-- dev 命令默认在**当前 worktree 下**执行，涉及 git 操作会自动识别 worktree 上下文
+- **操作类命令必须提供 issue 编号或 worktree 名称**，dev 不猜上下文
+- 列表类命令默认展示所有项目，当前 cwd 所属项目用图标标记
 - 不要直接使用 `gh` 裸命令操作 issue/PR，通过 `dev` 封装命令
+- 当前项目的快捷操作用 `./sha.sh <cmd>`，它会自动检测上下文并调 `dev`
 
 ---
 
@@ -74,26 +100,28 @@ uv run dev start 42 --priority P1 --size M
 
 自动：Status → In progress → 创建 worktree（`.worktree/<N>-<slug>`）→ 创建分支 → 推送远端
 
-### `dev status [--all/-a] [--issue N]`
+### `dev status [--issue N]`
 
-查看 worktree 状态。
+查看所有项目的 worktree 状态。当前 cwd 所属项目/worktree 标记图标。
 
 ```bash
-uv run dev status           # 树状概览所有 worktree
-uv run dev status -a        # 展开详情（URL、拓扑图）
+uv run dev status             # 所有项目 worktree 概览
 uv run dev status --issue 42  # 查询单个 issue
 ```
 
-### `dev commit [--type TYPE] [--scope SCOPE] [--message MSG]`
+### `dev commit <issue> [--type TYPE] [--scope SCOPE] [--message MSG]`
 
-提交代码。
+提交代码。**必须指定 issue 编号**。
 
 ```bash
-uv run dev commit                          # 自动检测 type/scope+生成 message
-uv run dev commit --type fix --scope cli --message "修复路径问题"
+uv run dev commit 42                                # 自动检测 type/scope+生成 message
+uv run dev commit 42 --type fix --scope cli         # 指定 type/scope
+uv run dev commit 42 -m "修复路径问题"              # 完全指定
 ```
 
 执行链：`check` → `test` → git-cleanup 检查 → Conventional Commit → git commit
+
+快捷方式：在 worktree 内用 `./sha.sh commit`，自动检测当前 issue 并调 `dev commit <N>`。
 
 ### `dev doctor`
 
@@ -105,15 +133,17 @@ uv run dev doctor
 
 检查 sha.sh/pyproject 是否符合规范。
 
-### `dev pr`
+### `dev pr <issue>`
 
-创建 PR。
+创建 PR。**必须指定 issue 编号**。
 
 ```bash
-uv run dev pr
+uv run dev pr 42
 ```
 
 自动：推送 → 创建 PR（关联 issue）→ Status → In review
+
+快捷方式：`./sha.sh pr`
 
 ### `dev merge-pr [--method squash|merge]`
 
@@ -126,12 +156,12 @@ uv run dev merge-pr --method merge     # 普通 merge
 
 自动：GitHub squash merge → 拉取 main → 提示可清理
 
-### `dev remove`
+### `dev remove <issue>`
 
-移除 worktree，**不删除本地分支**。
+移除 worktree，**不删除本地分支**。**必须指定 issue 编号或 worktree 名称**。
 
 ```bash
-uv run dev remove
+uv run dev remove 42
 ```
 
 ### `dev prune`
@@ -156,21 +186,27 @@ uv run dev retro 42
 ## 常用流程
 
 ```bash
-# 新任务
+# 新任务（dev 显式参数）
 uv run dev new "功能描述"
 uv run dev start <N>
 # ... 修改代码，设计变更直接改 Issue body
-uv run dev commit
-uv run dev pr
 
-# 日常
-uv run dev status -a      # 查看所有 worktree 状态
-uv run dev doctor          # 检查规范
+# 当前项目快捷操作（sha.sh 自动检测上下文）
+./sha.sh commit              # → dev commit $(current_issue)
+./sha.sh pr                  # → dev pr $(current_issue)
+
+# 全局查看
+uv run dev status             # 所有项目 worktree 概览
+uv run dev list --label bug   # 跨项目 issue 过滤
+
+# 规范检查
+uv run dev doctor
 
 # 收尾
-uv run dev merge-pr        # 合并 PR
-uv run dev prune           # 清理
-uv run dev retro <N>       # 复盘
+uv run dev merge-pr <PR#>     # 合并 PR
+uv run dev prune              # 清理
+uv run dev retro <N>          # 复盘
+uv run dev close <N>          # 关闭 issue
 ```
 
 ---
