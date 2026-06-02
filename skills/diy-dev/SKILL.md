@@ -1,5 +1,5 @@
 ---
-name: dev-tool
+name: diy-dev
 description: >
   AI Agent 使用 dev CLI 工具的操作指南，含设计理念与工具无法覆盖的补充规则。
   触发词：创建 issue、开始工作、提交代码、创建 PR、合并 PR、查看状态、清理 worktree、
@@ -7,7 +7,7 @@ description: >
   任何涉及"dev start""dev commit""dev status""dev pr""dev merge""dev prune"等操作都触发此 skill。
 ---
 
-# dev-tool — dev CLI 工具指南
+# diy-dev — dev CLI 工具指南
 
 ## 设计理念
 
