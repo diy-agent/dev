@@ -62,6 +62,10 @@ def work_status(
             help="show all details (URL, timeline etc)",
         ),
     ] = False,
+    markdown: Annotated[
+        bool,
+        Parameter(name=["--md"], help="以 Markdown 格式输出"),
+    ] = False,
     issue: Annotated[
         Optional[int],
         Parameter(
@@ -72,12 +76,11 @@ def work_status(
 ):
     """Show worktree status tree.
 
-    Default: show all worktrees as a status tree.
-
     Examples:
-      dev status            # tree overview of all worktrees
-      dev status -a         # expand issue/PR URLs, topology
-      dev status --issue 19 # query issue #19
+      dev status            # Rich 表格
+      dev status --md       # Markdown 格式
+      dev status -a         # 展开详情
+      dev status --issue 19 # 查询 issue #19
     """
     set_verbosity(verbose)
     repo = get_github_repo()
@@ -87,12 +90,115 @@ def work_status(
         _show_issue_view(issue, repo)
         return
 
-    _show_tree(repo, main_branch, all)
+    if markdown:
+        _show_tree_md(repo, main_branch, all)
+    else:
+        _show_tree(repo, main_branch, all)
 
 
 # ===========================================================================
 # 模式1: 树状概览（默认）
 # ===========================================================================
+
+
+def _show_tree_md(repo: str, main_branch: str, all: bool):
+    """Markdown 格式渲染 worktree 状态树"""
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+
+    worktrees = git_worktree_list()
+    rows = [_build_worktree_row(wt, repo, main_branch) for wt in worktrees]
+
+    _ORDER = {"error": 0, "wip": 1, "completed": 2}
+    rows.sort(
+        key=lambda r: (
+            _ORDER.get(r["status"], 9),
+            r["branch"] == main_branch,
+            r["branch"],
+        )
+    )
+
+    lines: list[str] = []
+    counts: dict[str, int] = {}
+    for row in rows:
+        st = row["status"]
+        counts[st] = counts.get(st, 0) + 1
+        lines.extend(_format_one_md(row, all, repo))
+
+    total = sum(counts.values())
+    completed = counts.get("completed", 0)
+    errors = counts.get("error", 0)
+    wip = counts.get("wip", 0)
+
+    border = "red" if errors else ("yellow" if wip else "dim")
+    status_line = (
+        f"⚠️ **{errors} 异常** · 🔳 {wip} 开发中 · ✅ {completed} 完成  (共 {total})"
+        if errors or wip
+        else f"✅ 全部完成 ({total})"
+    )
+
+    md = "# Worktree 状态\n\n" + status_line + "\n\n" + "\n".join(lines)
+    if not all:
+        md += "\n\n*`dev status -a` 展开详情*"
+
+    _console.print()
+    _console.print(Panel(Markdown(md), border_style=border, padding=(1, 2)))
+    _console.print()
+
+
+def _format_one_md(row: dict, all: bool, repo: str) -> list[str]:
+    """将单棵 worktree 树格式化为 Markdown 列表行"""
+    wt = row["wt"]
+    status = row["status"]
+    main_branch = get_main_branch()
+    is_main = row["branch"] == main_branch
+
+    ICON = {"completed": "✅", "error": "🟥", "wip": "🔳"}
+    icon = ICON.get(status, "🔳")
+
+    result: list[str] = []
+
+    # L1: - icon path (branch)
+    result.append(f"- {icon} `{_short_path(wt.path)}`  (**{row['branch']}**)")
+
+    # L2: Issue
+    if row["issue_num"]:
+        i_icon = "✅" if row["issue_state"] == "CLOSED" else "🔳"
+        result.append(
+            f"  - {i_icon} `#{row['issue_num']}` {row['issue_state']}  {row['issue_title']}"
+        )
+        if all and row.get("issue_url"):
+            result.append(f"    - {row['issue_url']}")
+
+    # L2: PR
+    if not is_main:
+        pr_done = row["pr_state"] == "MERGED"
+        p_icon = "✅" if pr_done else "🔳"
+        result.append(f"  - {p_icon} {_format_pr(row)}")
+        if all and row.get("pr_url"):
+            result.append(f"    - {row['pr_url']}")
+
+    # L2: 错误
+    if row.get("error_categories"):
+        result.append("  - 🟥 **发现问题:**")
+        for ecat in row["error_categories"]:
+            result.append(f"    - **{ecat['category']}:**")
+            for d in ecat["details"]:
+                result.append(f"      - `{d}`")
+
+    # 拓扑
+    if all and not is_main and row["issue_num"]:
+        diagram = _build_branch_diagram(row["branch"], main_branch)
+        result.append("    ```")
+        result.append(diagram)
+        result.append("    ```")
+
+    # 指导
+    if row["guidance"]:
+        for g in row["guidance"]:
+            result.append(f"  > {g}")
+
+    return result
 
 
 def _show_tree(repo: str, main_branch: str, all: bool):
