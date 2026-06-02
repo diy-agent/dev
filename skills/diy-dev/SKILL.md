@@ -65,7 +65,12 @@ uv run dev ref rich            # 查依赖源码 mirror 路径
 - sha.sh 所有命令都是当前项目操作，不跨项目
 - 和 GitHub 交互的（commit/pr/close）通过 sha.sh → dev 桥接
 - 纯本地任务（test/build/check）sha.sh 直接执行，不走 dev
-- 详细模板和初始化规范见 `diy-workspace-spec` skill
+
+**写作规则**：
+- 用 `run <cmd>` 包装外部命令，不用裸命令（自动彩色日志）
+- 不要 `2>/dev/null`，错误必须可见
+- 文件末尾保留 `sha "$@"` 调度入口
+- 模板代码直接抄 `_diy/sha.common.sh`
 
 ### 任务拆分规则
 
