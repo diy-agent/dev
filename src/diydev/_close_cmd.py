@@ -28,7 +28,7 @@ def work_close(
     reason: Annotated[
         Optional[str],
         Parameter(
-            name=["--reason", "-r"],
+            name=["--reason"],
             help="关闭原因: completed | not-planned（GitHub state_reason；Agent: 默认 completed）",
         ),
     ] = None,
@@ -43,7 +43,7 @@ def work_close(
         bool,
         Parameter(
             name=["--yes", "-y"],
-            help="跳过确认（Agent: 使用 -y 跳过交互确认）",
+            help="跳过确认（Agent: 使用 --yes 跳过交互确认）",
         ),
     ] = False,
     verbose: VerboseFlag = 0,
@@ -55,8 +55,8 @@ def work_close(
 
     Examples:
       dev close 19                           # interactive confirm
-      dev close 19 -r duplicate -c "dup #14"  # specify reason+comment
-      dev close 19 -y -r completed            # skip confirm
+      dev close 19 --reason duplicate --comment "dup #14"
+      dev close 19 --yes --reason completed
     """
     set_verbosity(verbose)
     repo = get_github_repo()

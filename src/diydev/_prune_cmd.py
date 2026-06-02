@@ -121,7 +121,7 @@ def work_prune(
     dry_run: Annotated[
         bool,
         Parameter(
-            name=["--dry-run", "-n"],
+            name=["--dry-run"],
             help="仅列出待清理项，不实际执行",
         ),
     ] = False,
@@ -129,7 +129,7 @@ def work_prune(
         bool,
         Parameter(
             name=["--yes", "-y"],
-            help="跳过确认，直接清理（Agent: 建议使用 -y 跳过交互）",
+            help="跳过确认，直接清理（Agent: 建议使用 --yes 跳过交互）",
         ),
     ] = False,
 ):
@@ -139,8 +139,8 @@ def work_prune(
 
     示例:
       dev prune            # 列出并确认后清理
-      dev prune -n         # 仅预览，不执行
-      dev prune -y         # 直接清理，跳过确认
+      dev prune --dry-run  # 仅预览，不执行
+      dev prune --yes      # 直接清理，跳过确认
     """
     set_verbosity(verbose)
     repo = get_github_repo()

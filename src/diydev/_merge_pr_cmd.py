@@ -72,14 +72,14 @@ def work_merge_pr(
     method: Annotated[
         Optional[str],
         Parameter(
-            name=["--method", "-m"],
+            name=["--method"],
             help="合并策略: merge | squash | rebase（未指定则交互选择；Agent: 必须通过 --method 指定）",
         ),
     ] = None,
     ready: Annotated[
         bool,
         Parameter(
-            name=["--ready", "-r"],
+            name=["--ready"],
             help="草稿 PR 自动转换为 Ready for review 后再合并",
         ),
     ] = False,

@@ -217,24 +217,22 @@ def work_commit(
     verbose: VerboseFlag = 0,
     commit_type: Annotated[
         Optional[str],
-        Parameter(
-            name=["--type", "-t"], help="commit type: feat/fix/refactor/test/..."
-        ),
+        Parameter(name=["--type"], help="commit type: feat/fix/refactor/test/..."),
     ] = None,
     scope: Annotated[
         Optional[str],
-        Parameter(name=["--scope", "-s"], help="commit scope"),
+        Parameter(name=["--scope"], help="commit scope"),
     ] = None,
     message: Annotated[
         Optional[str],
         Parameter(
-            name=["--message", "-m"],
-            help="manual commit message (skip auto-generate; Agent: 用 -m 或 -t/-s 组合跳过编辑器交互)",
+            name=["--message"],
+            help="manual commit message (skip auto-generate; Agent: 用 --message 或 --type/--scope 组合跳过编辑器交互)",
         ),
     ] = None,
     dry_run: Annotated[
         bool,
-        Parameter(name=["--dry-run", "-n"], help="only run checks, do not commit"),
+        Parameter(name=["--dry-run"], help="only run checks, do not commit"),
     ] = False,
 ):
     """check + test + cleanup + message + git commit.
@@ -253,9 +251,9 @@ def work_commit(
 
     Examples:
       dev commit                    # check -> test -> message -> commit
-      dev commit -n                 # dry-run: only checks, no commit
-      dev commit -m "fix: typo"     # manual message
-      dev commit -t fix -s cli      # force type and scope
+      dev commit --dry-run                      # dry-run: only checks, no commit
+      dev commit --message "fix: typo"          # manual message
+      dev commit --type fix --scope cli         # force type and scope
     """
     set_verbosity(verbose)
 

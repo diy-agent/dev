@@ -1,8 +1,7 @@
 """diydev CLI 入口 - dev 根命令"""
 
 import sys
-from typing import Annotated
-from cyclopts import App, Parameter, Group
+from cyclopts import App
 
 from ._log import set_verbosity
 from ._list_cmd import work_list
@@ -15,18 +14,7 @@ from ._prune_cmd import prune_app
 from ._commit_cmd import commit_app
 from ._close_cmd import close_app
 from ._doctor_cmd import doctor_app
-
-_GLOBAL_GROUP = Group("全局选项")
-
-VerboseRoot = Annotated[
-    int,
-    Parameter(
-        name=["--verbose", "-v"],
-        count=True,
-        group=_GLOBAL_GROUP,
-        help="冗余级别: -v=INFO, -vv=DEBUG, -vvv=TRACE",
-    ),
-]
+from ._sandbox_cmd import sandbox_app
 
 app = App(
     name="dev",
@@ -64,11 +52,9 @@ app.command(close_app, name="close")
 # dev doctor
 app.command(doctor_app, name="doctor")
 
-
-@app.default
-def root(verbose: VerboseRoot = 0):
-    """diy 开发流程管理"""
-    set_verbosity(verbose)
+# dev sandbox / sb
+app.command(sandbox_app, name="sandbox")
+app.command(sandbox_app, name="sb")
 
 
 # 解析 -v/-vv/-vvv 并从 argv 中移除，再交给 cyclopts 处理
@@ -112,8 +98,11 @@ def main():
     set_verbosity(verbose)
     try:
         app(args if args else ["--help"])
+    except SystemExit:
+        raise
     except Exception:
-        # cyclopts 已用 Rich 打印错误消息，不再重复输出 traceback
+        # cyclopts 通常已用 Rich 打印错误，此处兜底
+        print("错误: 无效命令或参数，使用 dev --help 查看可用命令", file=sys.stderr)
         sys.exit(1)
 
 

@@ -245,7 +245,7 @@ def work_list(
     labels: Annotated[
         Optional[str],
         Parameter(
-            name=["--label", "-l"],
+            name=["--label"],
             help="按标签过滤 issue",
         ),
     ] = None,
