@@ -1,12 +1,13 @@
 """dev close - close issue with interactive confirmation"""
 
-from typing import Optional, Annotated
+from typing import Annotated
+
 from cyclopts import App, Parameter
 
-from ._log import VerboseFlag, set_verbosity
+from ._gh_ops import gh_issue_close, gh_issue_comment, gh_issue_view
 from ._git_ops import get_github_repo
-from ._gh_ops import gh_issue_view, gh_issue_comment, gh_issue_close
 from ._json_output import output_json
+from ._log import VerboseFlag, set_verbosity
 
 close_app = App(name="close", help="close issue with confirmation")
 
@@ -27,14 +28,14 @@ def work_close(
         ),
     ],
     reason: Annotated[
-        Optional[str],
+        str | None,
         Parameter(
             name=["--reason"],
             help="关闭原因: completed | not-planned（state_reason，默认 completed）",
         ),
     ] = None,
     comment: Annotated[
-        Optional[str],
+        str | None,
         Parameter(
             name=["--comment", "-c"],
             help="close comment",

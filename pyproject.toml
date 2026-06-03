@@ -24,3 +24,19 @@ packages = ["src/diydev"]
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+
+[tool.ruff]
+# 严格模式
+lint.select = ["E", "F", "W", "I", "UP", "B", "SIM", "N"]
+lint.ignore = [
+    "E501",  # 行长度由 formatter 管理
+    "N806",  # 函数内大写常量有可读性价值
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/diydev/_doctor_cmd.py" = ["B007"]
+"src/diydev/_git_ops.py" = ["B904"]
+"src/diydev/_sandbox_cmd.py" = ["B006", "SIM108", "SIM105"]

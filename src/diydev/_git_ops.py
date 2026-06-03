@@ -1,13 +1,12 @@
 """Git 操作工具函数"""
 
-import subprocess
 import re
-from typing import Optional
+import subprocess
 
-from ._log import info, debug
+from ._log import debug, info
 
 
-def run(cmd: str, cwd: Optional[str] = None) -> str:
+def run(cmd: str, cwd: str | None = None) -> str:
     """执行 shell 命令，返回 stdout。失败时抛出 RuntimeError。"""
     info(f"$ {cmd}")
     try:
@@ -49,7 +48,7 @@ def get_github_repo() -> str:
     return f"{m.group(1)}/{m.group(2)}"
 
 
-def parse_issue_number(branch: str) -> Optional[int]:
+def parse_issue_number(branch: str) -> int | None:
     """从分支名提取 issue 编号
 
     兼容格式:
@@ -79,48 +78,48 @@ def get_worktree_path(branch: str) -> str:
     return f"../{repo_name}-{branch}"
 
 
-def git_worktree_add(branch: str, base_branch: str, cwd: Optional[str] = None) -> str:
+def git_worktree_add(branch: str, base_branch: str, cwd: str | None = None) -> str:
     """创建 worktree 并切换到新分支，路径为 sibling 模式"""
     worktree_path = get_worktree_path(branch)
     run(f'git worktree add -b "{branch}" "{worktree_path}" "{base_branch}"', cwd)
     return worktree_path
 
 
-def git_push_upstream(branch: str, cwd: Optional[str] = None) -> None:
+def git_push_upstream(branch: str, cwd: str | None = None) -> None:
     """推送分支并设置 upstream"""
     run(f'git push -u origin "{branch}"', cwd)
 
 
-def git_push(cwd: Optional[str] = None) -> None:
+def git_push(cwd: str | None = None) -> None:
     """推送当前分支"""
     run("git push", cwd)
 
 
-def git_pull(cwd: Optional[str] = None) -> None:
+def git_pull(cwd: str | None = None) -> None:
     """拉取最新"""
     run("git pull", cwd)
 
 
-def get_current_branch(cwd: Optional[str] = None) -> str:
+def get_current_branch(cwd: str | None = None) -> str:
     """获取当前分支名"""
     return run("git branch --show-current", cwd)
 
 
-def get_merge_base(branch1: str, branch2: str, cwd: Optional[str] = None) -> str:
+def get_merge_base(branch1: str, branch2: str, cwd: str | None = None) -> str:
     """获取两个分支的 merge-base"""
     return run(f'git merge-base "{branch1}" "{branch2}"', cwd)
 
 
-def git_worktree_remove(worktree_path: str, cwd: Optional[str] = None) -> None:
+def git_worktree_remove(worktree_path: str, cwd: str | None = None) -> None:
     """删除 worktree"""
     run(f'git worktree remove "{worktree_path}" --force', cwd)
 
 
-def git_branch_delete_force(branch: str, cwd: Optional[str] = None) -> None:
+def git_branch_delete_force(branch: str, cwd: str | None = None) -> None:
     """强制删除本地分支"""
     run(f'git branch -D "{branch}"', cwd)
 
 
-def git_branch_delete_remote(branch: str, cwd: Optional[str] = None) -> None:
+def git_branch_delete_remote(branch: str, cwd: str | None = None) -> None:
     """删除远程分支"""
     run(f'git push origin --delete "{branch}"', cwd)

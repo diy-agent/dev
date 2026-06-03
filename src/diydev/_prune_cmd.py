@@ -3,29 +3,30 @@
 删除远程分支 + worktree，保留本地分支供人类 review。
 """
 
+import os
 import re
 from dataclasses import dataclass, field
 from importlib.metadata import version as pkg_version
+from typing import Annotated
 
 from cyclopts import App, Parameter
-from typing import Annotated, Optional
 
-from ._log import VerboseFlag, set_verbosity
-from ._json_output import output_json
-from ._git_ops import (
-    run,
-    get_main_branch,
-    get_github_repo,
-    parse_issue_number,
-    git_worktree_remove,
-    git_branch_delete_remote,
-)
 from ._gh_ops import (
-    gh_pr_list_by_branch,
-    gh_issue_view,
-    gh_issue_comment,
     gh_issue_close,
+    gh_issue_comment,
+    gh_issue_view,
+    gh_pr_list_by_branch,
 )
+from ._git_ops import (
+    get_github_repo,
+    get_main_branch,
+    git_branch_delete_remote,
+    git_worktree_remove,
+    parse_issue_number,
+    run,
+)
+from ._json_output import output_json
+from ._log import VerboseFlag, set_verbosity
 
 DIYDEV_VERSION = pkg_version("diydev")
 
@@ -39,6 +40,106 @@ def _build_close_comment(pr_number: int) -> str:
     )
 
 
+def validate_worktree_path(path: str, cwd: str | None = None) -> str:
+    """校验路径是否为合法的 git worktree。
+
+    校验:
+      1. 路径在 git worktree list 中
+      2. 不是主仓库（.git 是目录，worktree 的 .git 是文件）
+
+    返回绝对路径。非法时抛出 RuntimeError。
+    """
+    abs_path = os.path.realpath(path)
+
+    # 拒绝主仓库路径：.git 是目录（worktree 的 .git 是文件）
+    git_path = os.path.join(abs_path, ".git")
+    if os.path.isdir(git_path):
+        raise RuntimeError(
+            f"拒绝删除主仓库路径: {abs_path}（包含 .git 目录，这是主仓库！）"
+        )
+
+    # 校验在 git worktree list 中
+    raw = run("git worktree list", cwd=cwd)
+    matched = False
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 1:
+            continue
+        wt_path = os.path.realpath(parts[0])
+        if wt_path == abs_path:
+            matched = True
+            break
+
+    if not matched:
+        raise RuntimeError(
+            f"不是 git worktree: {abs_path}（不在 git worktree list 中）"
+        )
+
+    return abs_path
+
+
+@dataclass
+class _RawWorktree:
+    """原始 worktree 信息（未查 PR 状态）"""
+
+    full_path: str
+    branch: str
+    worktree_path: str  # 相对/简短路径
+
+
+def scan_prunable_raw(cwd: str | None = None) -> list[_RawWorktree]:
+    """扫描所有 worktree，返回原始列表（不查 PR，用于单元测试）"""
+    main_branch = get_main_branch()
+    raw = run("git worktree list", cwd=cwd)
+    cwd_root = cwd if cwd else run("pwd", cwd=cwd)
+    results: list[_RawWorktree] = []
+
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+
+        full_path = parts[0]
+        bracket_match = re.search(r"\[(.+?)\]", line)
+        branch = bracket_match.group(1).strip() if bracket_match else ""
+
+        if not branch or branch == main_branch:
+            continue
+
+        if full_path == cwd_root:
+            wt_path = "."
+        elif full_path.startswith(cwd_root + "/"):
+            wt_path = full_path[len(cwd_root) + 1 :]
+        else:
+            wt_path = full_path
+
+        results.append(
+            _RawWorktree(
+                full_path=full_path,
+                branch=branch,
+                worktree_path=wt_path,
+            )
+        )
+
+    return results
+
+
+def safe_remove_worktree(wt_path: str, project_root: str) -> str:
+    """安全删除 worktree：先校验路径合法性，再执行 remove。
+
+    返回绝对路径。
+    """
+    abs_path = validate_worktree_path(wt_path, project_root)
+    git_worktree_remove(abs_path)
+    return abs_path
+
+
 prune_app = App(name="prune", help="清理已完成合并的 worktree 和分支")
 
 
@@ -50,7 +151,7 @@ class _PruneTarget:
     worktree_path: str
     pr_number: int
     pr_state: str
-    orphan_issue: Optional[int] = field(default=None)
+    orphan_issue: int | None = field(default=None)
 
 
 def _scan_prunable(repo: str) -> list[_PruneTarget]:
@@ -93,7 +194,7 @@ def _scan_prunable(repo: str) -> list[_PruneTarget]:
             wt_path = full_path
 
         # 从分支名提取关联的 issue 编号，检查是否仍为 open
-        orphan_issue: Optional[int] = None
+        orphan_issue: int | None = None
         issue_num = parse_issue_number(branch)
         if issue_num:
             try:
@@ -150,6 +251,7 @@ def work_prune(
     """
     set_verbosity(verbose)
     repo = get_github_repo()
+    cwd = os.getcwd()
     targets = _scan_prunable(repo)
 
     if not targets:
@@ -199,7 +301,7 @@ def work_prune(
                 errors += 1
 
             try:
-                git_worktree_remove(t.worktree_path)
+                abs_path = safe_remove_worktree(t.worktree_path, cwd)
             except RuntimeError:
                 errors += 1
 
@@ -259,11 +361,11 @@ def work_prune(
             print(f"  ✗ 删除远程分支失败: {e}")
             errors += 1
 
-        try:
-            git_worktree_remove(t.worktree_path)
-            print(f"  ✓ 删除 worktree {t.worktree_path}")
-        except RuntimeError as e:
-            print(f"  ✗ 删除 worktree 失败: {e}")
+            try:
+                abs_path = safe_remove_worktree(t.worktree_path, cwd)
+                print(f"  ✓ 删除 worktree {abs_path}")
+            except RuntimeError as e:
+                print(f"  ✗ 删除 worktree 失败: {e}")
             errors += 1
 
         print(f"  → 本地分支 {t.branch} 已保留，请 review 后手动清理")

@@ -1,19 +1,20 @@
 """dev work pr - 推送并创建 PR"""
 
-from cyclopts import App, Parameter
 from typing import Annotated
 
-from ._log import VerboseFlag, set_verbosity
+from cyclopts import App, Parameter
+
+from ._gh_ops import gh_issue_view, gh_pr_create, gh_pr_list
 from ._git_ops import (
-    run,
+    get_current_branch,
     get_github_repo,
     get_main_branch,
-    get_current_branch,
-    parse_issue_number,
     git_push,
+    parse_issue_number,
+    run,
 )
-from ._gh_ops import gh_issue_view, gh_pr_list, gh_pr_create
 from ._json_output import output_json
+from ._log import VerboseFlag, set_verbosity
 
 pr_app = App(name="pr", help="推送并创建 PR")
 

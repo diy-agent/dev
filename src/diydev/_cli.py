@@ -2,19 +2,20 @@
 
 import os
 import sys
+
 from cyclopts import App
 
-from ._log import set_verbosity
-from ._list_cmd import work_list
-from ._start_cmd import start_app
-from ._new_cmd import new_app
-from ._status_cmd import status_app
-from ._pr_cmd import pr_app
-from ._merge_pr_cmd import merge_pr_app
-from ._prune_cmd import prune_app
 from ._close_cmd import close_app
 from ._doctor_cmd import doctor_app
+from ._list_cmd import work_list
+from ._log import set_verbosity
+from ._merge_pr_cmd import merge_pr_app
+from ._new_cmd import new_app
+from ._pr_cmd import pr_app
+from ._prune_cmd import prune_app
 from ._sandbox_cmd import sandbox_app
+from ._start_cmd import start_app
+from ._status_cmd import status_app
 
 app = App(
     name="dev",

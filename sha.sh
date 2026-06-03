@@ -58,30 +58,34 @@ sync()  {
       run curl -LsSf https://astral.sh/uv/install.sh | sh
       run source $HOME/.local/bin/env
     }
-
-    uninstall
     run uv sync --all-packages
     # run npm i --workspaces
     run git submodule update --init --recursive
+
+    unlink
+    link
+}
+link() { 
     # ln dev version
     run uv tool install -e ./
-
     run mkdir -p ~/.agents/skills/
     [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
     [ -d ~/.agents/skills/diy-context-refactor ] || run skills add ./skills/diy-context-refactor -g -y
+    [ -d ~/.agents/skills/git-cleanup ]  || run   skills add ./skills/git-cleanup -g -y
     if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
       [ -d ~/.agents/skills/win-file-unlock ] || run skills add ./skills/win-file-unlock -g -y
     fi
 }
-uninstall() {
+unlink() {
     run rm -rf ~/.agents/skills/diy-dev
     run rm -rf ~/.agents/skills/diy-context-refactor
+    run rm -rf ~/.agents/skills/git-cleanup  
     run rm -rf ~/.agents/skills/win-file-unlock
 }
 
 
 
-test() { :; }
+test() { run uv run pytest "${@:-tests/}" -m "not browser";}
 # CI: check + test, 供 CI 流水线使用
 ci() { check; test; }
 #  ./sha.sh test-headless

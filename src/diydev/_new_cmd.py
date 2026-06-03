@@ -1,12 +1,13 @@
 """dev work new - 创建新 GitHub issue"""
 
-from cyclopts import App, Parameter
 from typing import Annotated
 
-from ._log import VerboseFlag, set_verbosity
-from ._git_ops import get_github_repo
+from cyclopts import App, Parameter
+
 from ._gh_ops import gh_issue_create
+from ._git_ops import get_github_repo
 from ._json_output import output_json
+from ._log import VerboseFlag, set_verbosity
 
 new_app = App(name="new", help="创建新的 issue")
 
