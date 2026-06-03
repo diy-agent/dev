@@ -1,0 +1,10 @@
+name: Add issues to diy project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    uses: diy-agent/.github/.github/workflows/add-to-project.yml@main
+    secrets: inherit
