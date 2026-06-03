@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "generatedAt": "2026-06-03T09:41:50.552931Z",
+  "mirrorRoot": "~",
+  "workspaces": [
+    {
+      "id": "python:.",
+      "name": "diydev",
+      "version": "0.1.15",
+      "ecosystem": "python",
+      "path": ".",
+      "manifest": "pyproject.toml",
+      "dependencies": [
+        {
+          "name": "cyclopts",
+          "spec": ">=3.0",
+          "scope": "runtime",
+          "resolvedVersion": "v4.16.1",
+          "mirrorPath": ".diy/ref/github.com/BrianPugh/cyclopts/v4.16.1"
+        },
+        {
+          "name": "pyright",
+          "spec": ">=1.1.409",
+          "scope": "runtime",
+          "resolvedVersion": "v1.1.409",
+          "mirrorPath": ".diy/ref/github.com/RobertCraigie/pyright-python/v1.1.409"
+        },
+        {
+          "name": "rich",
+          "spec": ">=13.0",
+          "scope": "runtime",
+          "resolvedVersion": "15.0.0",
+          "mirrorPath": ".diy/ref/github.com/Textualize/rich/15.0.0"
+        },
+        {
+          "name": "ruff",
+          "spec": ">=0.15.15",
+          "scope": "runtime",
+          "resolvedVersion": "0.15.15",
+          "mirrorPath": ".diy/ref/github.com/astral-sh/ruff/0.15.15"
+        }
+      ]
+    }
+  ]
+}

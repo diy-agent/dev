@@ -60,6 +60,7 @@ sha.sh 标准子命令清单见 `~/git/AGENTS.md`。sha.sh 写作规则：用 `r
 - 不要直接使用 `gh` 裸命令操作 issue/PR，通过 `dev` 封装命令
 - 当前项目的快捷操作用 `./sha.sh <cmd>`
 - 执行 dev 命令前先查 `dev <cmd> -h`，确保不落入交互模式
+- **禁止跨 worktree 写文件**：当前 worktree 为 `_diy-N` 时，只允许写文件到该 worktree 目录下，严禁写文件到其他 `_diy-*` 目录。如果当前 worktree 缺少测试或文件，应创建新 issue/worktree 而非在无关 issue 中顺手添加。（事件复盘：Issue #57）
 
 ## 命令参考
 

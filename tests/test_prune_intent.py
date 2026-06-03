@@ -280,7 +280,7 @@ def test_intent_prune_full_lifecycle():
         _sh(f"uv run --project {_DIY} dev pr --json", cwd=wt)
         time.sleep(2)
         merge_raw = _sh(f"uv run --project {_DIY} dev merge-pr --method squash --json", cwd=wt)
-        PR = json.loads(merge_raw)["data"]["number"]
+        PR = json.loads(merge_raw)["data"]["pr_number"]
         _sh("git pull", cwd=repo)
 
         # ── 意图 transcript ───────────────────────────────────────
