@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-06-03T09:41:50.552931Z",
+  "generatedAt": "2026-06-03T10:35:09.655693Z",
   "mirrorRoot": "~",
   "workspaces": [
     {
@@ -22,8 +22,8 @@
           "name": "pyright",
           "spec": ">=1.1.409",
           "scope": "runtime",
-          "resolvedVersion": "v1.1.409",
-          "mirrorPath": ".diy/ref/github.com/RobertCraigie/pyright-python/v1.1.409"
+          "resolvedVersion": "v1.1.410",
+          "mirrorPath": ".diy/ref/github.com/RobertCraigie/pyright-python/v1.1.410"
         },
         {
           "name": "rich",
@@ -40,6 +40,22 @@
           "mirrorPath": ".diy/ref/github.com/astral-sh/ruff/0.15.15"
         }
       ]
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/github/gh-aw/tree/main",
+      "host": "github.com",
+      "owner": "github",
+      "repo": "gh-aw",
+      "mirrorPath": ".diy/ref/github.com/github/gh-aw/main"
+    },
+    {
+      "url": "https://github.com/github/docs/tree/main",
+      "host": "github.com",
+      "owner": "github",
+      "repo": "docs",
+      "mirrorPath": ".diy/ref/github.com/github/docs/main"
     }
   ]
 }

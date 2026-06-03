@@ -5,6 +5,7 @@ description = "diy 开发流程 CLI - issue 与 worktree 统一管理"
 requires-python = ">=3.12"
 dependencies = [
     "cyclopts>=3.0",
+    "diy-cli",
     "pyright>=1.1.409",
     "rich>=13.0",
     "ruff>=0.15.15",
@@ -12,6 +13,9 @@ dependencies = [
 
 [project.scripts]
 dev = "diydev:main"
+
+[tool.uv.sources]
+diy-cli = { path = "../diy/pkgs/diy-cli" }
 
 [build-system]
 requires = ["hatchling"]

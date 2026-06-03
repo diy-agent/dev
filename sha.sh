@@ -77,6 +77,8 @@ link() {
     fi
 }
 unlink() {
+    if command -v dev; then  uv tool uninstall diydev; fi;
+
     run rm -rf ~/.agents/skills/diy-dev
     run rm -rf ~/.agents/skills/diy-context-refactor
     run rm -rf ~/.agents/skills/git-cleanup  
