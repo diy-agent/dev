@@ -14,7 +14,7 @@ from cyclopts import Parameter
 from rich.console import Console
 from rich.table import Table
 
-from ._gh_ops import gh_all_prs_map, gh_issue_list, gh_issue_view
+from ._gh_ops import gh_all_prs_map, gh_issue_list, gh_issue_view, gh_project_items
 from ._git_ops import get_github_repo, get_main_branch, parse_issue_number, run
 from ._log import VerboseFlag, set_verbosity
 
@@ -43,6 +43,9 @@ class IssueRow:
     pr_state: str = "-"
     pr_mergeable: str = "-"
     is_draft: bool = False
+    # project 字段
+    priority: str = "-"
+    status: str = "-"
 
 
 @dataclass
@@ -53,6 +56,74 @@ class WorktreeInfo:
     ahead: int
     is_prunable: bool
     has_uncommitted: bool
+
+
+# ---------------------------------------------------------------------------
+# Filter 解析
+# ---------------------------------------------------------------------------
+
+
+def parse_filter(filter_str: str | None) -> dict[str, dict]:
+    """解析 --filter 字符串，返回条件 dict。
+
+    语法：key:value 用空格分隔为 AND，-key:value 为排除，value 逗号分隔为 OR。
+
+    返回:
+        {"priority": {"values": ["P0"], "negate": False},
+         "status": {"values": ["Ready"], "negate": False}}
+    """
+    if not filter_str:
+        return {}
+
+    conditions: dict[str, dict] = {}
+    for token in filter_str.split():
+        token = token.strip()
+        if not token:
+            continue
+        negate = token.startswith("-")
+        if negate:
+            token = token[1:]
+        if ":" not in token:
+            continue
+        key, value = token.split(":", 1)
+        conditions[key.lower()] = {
+            "values": [v.strip() for v in value.split(",") if v.strip()],
+            "negate": negate,
+        }
+    return conditions
+
+
+def needs_project_data(conditions: dict[str, dict]) -> bool:
+    """检查是否需要 project 数据（priority, status）"""
+    return bool({"priority", "status"} & set(conditions.keys()))
+
+
+def match_row(row: IssueRow, conditions: dict[str, dict]) -> bool:
+    """检查 IssueRow 是否匹配所有过滤条件"""
+    for key, cond in conditions.items():
+        if key == "number":
+            actual = str(row.issue_number)
+        elif key == "state":
+            actual = row.issue_state
+        elif key == "title":
+            actual = row.issue_title
+        elif key == "priority":
+            actual = row.priority
+        elif key == "status":
+            actual = row.status
+        else:
+            continue  # 未知字段跳过（不阻断）
+
+        values = cond["values"]
+        negate = cond["negate"]
+
+        matched = any(
+            v.upper() == actual.upper() if v.upper() in ("OPEN", "CLOSED", "ALL") else v.lower() in actual.lower()
+            for v in values
+        )
+        if negate == matched:  # 排除时 matched 应为 False，包含时 matched 应为 True
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +199,8 @@ def git_worktree_list(cwd: str | None = None) -> list[WorktreeInfo]:
 def build_unified_rows(
     repo: str,
     labels: str | None = None,
+    conditions: dict[str, dict] | None = None,
+    project_map: dict[int, dict[str, str]] | None = None,
 ) -> list[IssueRow]:
     """构建统一的 issue-worktree 行列表
 
@@ -135,7 +208,21 @@ def build_unified_rows(
     1. 扫描所有 git worktree，匹配对应的 issue
     2. 从 GitHub 获取最近 50 个 open issue
     3. 将 worktree 已覆盖的 issue 排在前面，其余跟在后面
+    4. 应用过滤条件
     """
+    if conditions is None:
+        conditions = {}
+
+    # 从 filter 中获取 limit
+    limit_cond = conditions.pop("limit", None)
+    sort_cond = conditions.pop("sort", None)
+    gh_limit = 50
+    if limit_cond:
+        try:
+            gh_limit = max(int(limit_cond["values"][0]), 1)
+        except (ValueError, IndexError):
+            pass
+
     # 1. 扫描 worktree
     worktrees = git_worktree_list()
 
@@ -185,6 +272,11 @@ def build_unified_rows(
                 row.issue_url = issue.get("url", "-")
                 row.issue_created = issue.get("createdAt", "-")
                 row.issue_author = author_login
+
+                # project 字段
+                if project_map and issue_num in project_map:
+                    row.priority = project_map[issue_num].get("priority", "-")
+                    row.status = project_map[issue_num].get("status", "-")
             except RuntimeError:
                 pass
 
@@ -202,8 +294,18 @@ def build_unified_rows(
         wt_rows.append(row)
 
     # 4. 获取 GitHub open issues（排除已覆盖的）
+    # 如果 filter 要求 state:ALL 或 state:CLOSED，需要特殊处理
+    state_filter = conditions.get("state", {})
+    gh_state = "open"
+    if state_filter and not state_filter.get("negate"):
+        vals = [v.upper() for v in state_filter["values"]]
+        if "ALL" in vals:
+            gh_state = "all"
+        elif "CLOSED" in vals:
+            gh_state = "closed"
+
     try:
-        all_issues = gh_issue_list(repo, state="open", limit=50, labels=labels)
+        all_issues = gh_issue_list(repo, state=gh_state, limit=gh_limit, labels=labels)
     except RuntimeError:
         all_issues = []
 
@@ -214,24 +316,50 @@ def build_unified_rows(
             continue
         author = iss.get("author", {})
         author_login = author.get("login", "-") if isinstance(author, dict) else "-"
-        issue_rows.append(
-            IssueRow(
-                issue_number=num,
-                issue_title=iss.get("title", "-"),
-                issue_state=iss.get("state", "-"),
-                issue_url=iss.get("url", "-"),
-                issue_created=iss.get("createdAt", "-"),
-                issue_author=author_login,
-                worktree_path="-",
-                branch="-",
-                ahead=0,
-                is_prunable=False,
-                pr_number="-",
-                pr_state="-",
-            )
+        row = IssueRow(
+            issue_number=num,
+            issue_title=iss.get("title", "-"),
+            issue_state=iss.get("state", "-"),
+            issue_url=iss.get("url", "-"),
+            issue_created=iss.get("createdAt", "-"),
+            issue_author=author_login,
+            worktree_path="-",
+            branch="-",
+            ahead=0,
+            is_prunable=False,
+            pr_number="-",
+            pr_state="-",
         )
 
-    return wt_rows + issue_rows
+        # project 字段
+        if project_map and num in project_map:
+            row.priority = project_map[num].get("priority", "-")
+            row.status = project_map[num].get("status", "-")
+
+        issue_rows.append(row)
+
+    # 5. 应用过滤条件
+    all_rows = wt_rows + issue_rows
+    if conditions:
+        all_rows = [r for r in all_rows if match_row(r, conditions)]
+
+    # 6. 排序
+    if sort_cond:
+        sort_val = sort_cond["values"][0].lower()
+        if sort_val == "created":
+            all_rows.sort(key=lambda r: r.issue_created, reverse=True)
+        elif sort_val == "updated":
+            all_rows.sort(key=lambda r: r.issue_created, reverse=True)  # 暂无 updated 字段
+
+    # 7. 应用结果 limit
+    if limit_cond:
+        try:
+            result_limit = int(limit_cond["values"][0])
+            all_rows = all_rows[:result_limit]
+        except (ValueError, IndexError):
+            pass
+
+    return all_rows
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +376,14 @@ def work_list(
             help="按标签过滤 issue",
         ),
     ] = None,
+    filter_str: Annotated[
+        str | None,
+        Parameter(
+            name=["--filter"],
+            help="过滤条件，语法: key:value（空格=AND, 逗号=OR, -前缀=排除）。"
+            "支持 number/state/title/priority/status/limit/sort",
+        ),
+    ] = None,
     json_output: Annotated[
         bool,
         Parameter(
@@ -260,10 +396,26 @@ def work_list(
 
     先列出有 worktree 对应的 issue（正在开发中），再列出其余最近 open issue。
     无 worktree 对应关系的 issue，path/branch 等字段标注 '-'。
+
+    示例:
+      dev list --filter "priority:P0 status:Ready"
+      dev list --filter "number:42"
+      dev list --filter "title:prune"
+      dev list --filter "state:ALL limit:10"
     """
     set_verbosity(verbose)
     repo = get_github_repo()
-    rows = build_unified_rows(repo, labels)
+
+    # 解析 filter
+    conditions = parse_filter(filter_str)
+
+    # 如果需要 project 字段，获取 project 数据
+    project_map = None
+    if needs_project_data(conditions):
+        repo_short = repo.split("/", 1)[-1] if "/" in repo else repo
+        project_map = gh_project_items(repo_filter=repo_short)
+
+    rows = build_unified_rows(repo, labels, conditions, project_map)
 
     if json_output:
         result = []
@@ -291,13 +443,17 @@ def work_list(
                         "isDraft": r.is_draft,
                     },
                     "prune": r.is_prunable,
+                    "project": {
+                        "priority": r.priority if r.priority != "-" else None,
+                        "status": r.status if r.status != "-" else None,
+                    },
                 }
             )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
 
     if not rows:
-        print("没有 open issue")
+        print("没有匹配的 issue")
         return
 
     # Rich 表格输出
@@ -312,6 +468,8 @@ def work_list(
     table.add_column("State", no_wrap=True, width=6)
     table.add_column("Created", no_wrap=True, width=10)
     table.add_column("Title", no_wrap=True, max_width=40)
+    table.add_column("Priority", no_wrap=True, width=4)
+    table.add_column("Status", no_wrap=True, width=8)
     table.add_column("Worktree", no_wrap=True, max_width=35)
     table.add_column("Ahead", justify="right", width=5)
     table.add_column("PR", no_wrap=True, max_width=12)
@@ -373,6 +531,8 @@ def work_list(
             issue_state_display,
             created_short,
             title,
+            r.priority,
+            r.status,
             wt_display,
             ahead_str,
             pr_display,

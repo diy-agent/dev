@@ -1,6 +1,7 @@
 """GitHub CLI 操作工具函数"""
 
 import json
+import os
 import re
 from typing import Any
 
@@ -140,3 +141,124 @@ def gh_repo_merge_method(repo: str) -> str:
         return ",".join(methods) or "squash"
     except RuntimeError:
         return "squash"
+
+
+def gh_project_items(
+    repo_owner: str = "diy-agent", project_num: int = 3,
+    repo_filter: str | None = None,
+) -> dict[int, dict[str, str]]:
+    """获取 org project 中所有 item 的字段数据。
+
+    返回 {issue_number: {"priority": "P0", "status": "Ready", ...}}
+    如果 repo_filter 指定，只返回该仓库的 issue。
+    """
+    import subprocess
+
+    query = """query($owner: String!, $projectNum: Int!) {
+      organization(login: $owner) {
+        projectV2(number: $projectNum) {
+          items(first: 100) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              fieldValues(first: 20) {
+                nodes {
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    field { ... on ProjectV2SingleSelectField { name } }
+                    name
+                  }
+                }
+              }
+              content { ... on Issue { number repository { name } } }
+            }
+          }
+        }
+      }
+    }"""
+
+    query_page2 = """query($owner: String!, $projectNum: Int!, $cursor: String!) {
+      organization(login: $owner) {
+        projectV2(number: $projectNum) {
+          items(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              fieldValues(first: 20) {
+                nodes {
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    field { ... on ProjectV2SingleSelectField { name } }
+                    name
+                  }
+                }
+              }
+              content { ... on Issue { number repository { name } } }
+            }
+          }
+        }
+      }
+    }"""
+
+    result: dict[int, dict[str, str]] = {}
+    all_data = []
+
+    try:
+        r = subprocess.run(
+            ["gh", "api", "graphql", "-f", f"query={query}",
+             "-f", f"owner={repo_owner}", "-F", f"projectNum={project_num}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            return result
+        data = json.loads(r.stdout)
+        items = (
+            data.get("data", {})
+            .get("organization", {})
+            .get("projectV2", {})
+            .get("items", {})
+        )
+        if not items:
+            return result
+        all_data.extend(items.get("nodes", []))
+        # 翻页
+        while items.get("pageInfo", {}).get("hasNextPage"):
+            cursor = items["pageInfo"]["endCursor"]
+            r2 = subprocess.run(
+                ["gh", "api", "graphql", "-f", f"query={query_page2}",
+                 "-f", f"owner={repo_owner}", "-F", f"projectNum={project_num}",
+                 "-f", f"cursor={cursor}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r2.returncode != 0:
+                break
+            data2 = json.loads(r2.stdout)
+            items = (
+                data2.get("data", {})
+                .get("organization", {})
+                .get("projectV2", {})
+                .get("items", {})
+            )
+            if not items:
+                break
+            all_data.extend(items.get("nodes", []))
+    except Exception:
+        return result
+
+    for node in all_data:
+        content = node.get("content")
+        if not content:
+            continue
+        num = content.get("number")
+        if num is None:
+            continue
+        # 按仓库过滤
+        if repo_filter:
+            repo_name = content.get("repository", {}).get("name", "")
+            if repo_name != repo_filter:
+                continue
+        fields = {}
+        for fv in node.get("fieldValues", {}).get("nodes", []):
+            field_name = fv.get("field", {}).get("name", "")
+            fv_name = fv.get("name", "")
+            if field_name and fv_name:
+                fields[field_name.lower()] = fv_name
+        result[num] = fields
+
+    return result
