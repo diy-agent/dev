@@ -69,16 +69,16 @@ link() {
     # ln dev version
     run uv tool install -e ./
     run mkdir -p ~/.agents/skills/
-    # [ -d ~/.agents/skills/find-context ]  || run   skills add ./skills/find-context -g -y
     [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
+    [ -d ~/.agents/skills/diy-context-refactor ] || run skills add ./skills/diy-context-refactor -g -y
     [ -d ~/.agents/skills/git-cleanup ]  || run   skills add ./skills/git-cleanup -g -y
     if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
       [ -d ~/.agents/skills/win-file-unlock ] || run skills add ./skills/win-file-unlock -g -y
     fi
 }
 unlink() {
-    run rm -rf ~/.agents/skills/find-context
     run rm -rf ~/.agents/skills/diy-dev
+    run rm -rf ~/.agents/skills/diy-context-refactor
     run rm -rf ~/.agents/skills/git-cleanup  
     run rm -rf ~/.agents/skills/win-file-unlock
 }
