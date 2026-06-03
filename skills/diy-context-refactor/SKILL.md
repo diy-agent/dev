@@ -1,12 +1,12 @@
 ---
-name: context-refactor
+name: diy-context-refactor
 description: >
   定期扫描 diy 生态所有 AGENTS.md，检查是否符合上下文组织规范并自动修复。
   触发词：上下文重构、清理 AGENTS.md、更新生态地图、检查项目上下文、
   agents.md 审计、context cleanup、refactor context。
 ---
 
-# context-refactor — diy 生态上下文重构
+# diy-context-refactor — diy 生态上下文重构
 
 > 详细检查清单和操作步骤见 `references/checklist.md`。
 > 本文件定义组织规范和核心原则。

@@ -68,14 +68,14 @@ sync()  {
 
     run mkdir -p ~/.agents/skills/
     [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
-    [ -d ~/.agents/skills/context-refactor ] || run skills add ./skills/context-refactor -g -y
+    [ -d ~/.agents/skills/diy-context-refactor ] || run skills add ./skills/diy-context-refactor -g -y
     if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
       [ -d ~/.agents/skills/win-file-unlock ] || run skills add ./skills/win-file-unlock -g -y
     fi
 }
 uninstall() {
     run rm -rf ~/.agents/skills/diy-dev
-    run rm -rf ~/.agents/skills/context-refactor
+    run rm -rf ~/.agents/skills/diy-context-refactor
     run rm -rf ~/.agents/skills/win-file-unlock
 }
 
