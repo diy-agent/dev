@@ -7,4 +7,5 @@ on:
 jobs:
   add-to-project:
     uses: diy-agent/.github/.github/workflows/add-to-project.yml@main
-    secrets: inherit
+    secrets:
+      DIY_PROJECT_EDIT_PAT: ${{ secrets.DIY_PROJECT_EDIT_PAT }}
