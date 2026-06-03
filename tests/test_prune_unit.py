@@ -31,16 +31,23 @@ def _run(cmd: str, cwd: str | None = None) -> str:
 def _setup_test_repo() -> str:
     """Create a temporary git repo with worktrees for testing."""
     tmp = tempfile.mkdtemp(prefix="dev-prune-test-")
-    os.chdir(tmp)
-    _run("git init -b main")
-    _run("git config user.email test@test")
-    _run("git config user.name test")
-    # 初始 commit
-    Path("README.md").write_text("# test repo\n")
-    _run("git add -A && git commit -m init")
-    # 创建 worktree 用的分支（不能 add 到 main，因为 main 是主 worktree）
-    _run("git branch worktree-base main")
-    return tmp
+    _prev_cwd = os.getcwd()
+    try:
+        os.chdir(tmp)
+        _run("git init -b main")
+        _run("git config user.email test@test")
+        _run("git config user.name test")
+        # 初始 commit
+        Path("README.md").write_text("# test repo\n")
+        _run("git add -A && git commit -m init")
+        # 创建 worktree 用的分支（不能 add 到 main，因为 main 是主 worktree）
+        _run("git branch worktree-base main")
+        return tmp
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    finally:
+        os.chdir(_prev_cwd)
 
 
 # ============================================================================

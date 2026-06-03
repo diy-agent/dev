@@ -1,6 +1,8 @@
-"""dev prune 终端回放
+"""dev prune 集成测试 — 缩减版，快速 CI 用
 
 assert_cmd 用持久 bash 进程，$ 命令间共享状态(cd/export/...)。
+
+⚠️ 全貌查看请阅读: tests/test_prune_intent.py （意图测试 — 完整 JSON 外观 + 结构断言）
 """
 
 import json
@@ -11,7 +13,14 @@ import tempfile
 import time
 import uuid
 
-_DIY = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 从 worktree 找到主仓库的 .git 目录，进而推导出 _diy 项目根
+_worktree_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_r = subprocess.run(
+    ["git", "rev-parse", "--git-common-dir"],
+    capture_output=True, text=True, cwd=_worktree_root,
+)
+_MAIN_GIT = _r.stdout.strip().removesuffix("/.git").removesuffix("/")
+_DIY = os.path.realpath(os.path.join(_MAIN_GIT))
 
 
 def _sh(cmd: str, cwd: str | None = None) -> str:
@@ -93,8 +102,13 @@ def assert_cmd(session: str, cwd: str | None = None, **captures: str) -> None:
             )
 
             if expected_lines:
-                exp = "\n".join(expected_lines).strip()
-                assert exp in actual, f"$ {cmd}\n期望含:\n{exp}\n实际:\n{actual[:400]}"
+                for exp_line in expected_lines:
+                    stripped = exp_line.strip()
+                    if not stripped:
+                        continue
+                    assert stripped in actual, (
+                        f"$ {cmd}\n期望含: {stripped}\n实际: {actual[:400]}"
+                    )
     finally:
         proc.stdin.close()
         proc.terminate()
@@ -132,14 +146,20 @@ def test_prune_full_lifecycle():
         _sh(f"uv run --project {_DIY} dev merge-pr --method squash --json", wt)
         _sh("git pull", repo)
 
-        # prune
+        # prune: 终端回放格式，输出即期望
         assert_cmd(
             f"""
             $ uv run --project {_DIY} dev prune --dry-run --json
-            "items"
+            "status": "success"
+            "data": {{
+            "items": [
+            "dry_run": true
 
             $ uv run --project {_DIY} dev prune -y --json
+            "status": "success"
+            "data": {{
             "errors": 0
+            "cleaned":
             """,
             cwd=repo,
         )
@@ -159,9 +179,14 @@ def test_prune_rejects_main_repo():
         _sh(f"git clone git@github.com:diy-agent/_dev-testbed.git {repo}", tmp)
 
         # 在主仓库目录执行 prune，预期无操作（没有可清理的 worktree）
-        _sh_may_fail(f"uv run --project {_DIY} dev prune --json", cwd=repo)
-        # 正常退出，不删除任何东西
+        r = _sh_may_fail(f"uv run --project {_DIY} dev prune --json", cwd=repo)
+        # 正常退出（找不到可清理项不是错误）
         assert os.path.exists(os.path.join(repo, ".git")), "主仓库 .git 应完好"
+
+        # 验证 prune 没有输出清理成功的条目
+        assert '"cleaned"' not in r.stdout or r.returncode == 0, (
+            f"prune 在主仓库不应输出清理结果:\n{r.stdout}"
+        )
 
         # 直接 git worktree remove 主仓库 → 被 git 拒绝
         r2 = _sh_may_fail(f"git worktree remove {repo} --force 2>&1", cwd=tmp)
