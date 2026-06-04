@@ -6,6 +6,7 @@ import sys
 from cyclopts import App
 
 from ._close_cmd import close_app
+from ._commit_cmd import commit_app
 from ._doctor_cmd import doctor_app
 from ._list_cmd import work_list
 from ._log import set_verbosity
@@ -50,6 +51,9 @@ app.command(ref_app, name="ref")
 
 # dev close
 app.command(close_app, name="close")
+
+# dev commit
+app.command(commit_app, name="commit")
 
 # dev doctor
 app.command(doctor_app, name="doctor")
