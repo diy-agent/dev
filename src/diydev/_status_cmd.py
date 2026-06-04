@@ -700,8 +700,120 @@ def _detect_error_categories(
             }
         )
 
+    # PR 已合并但分支有未进 main 的变更
+    if pr_state == "MERGED" and pr_number:
+        unmerged = _check_branch_unmerged_changes(
+            branch=branch,
+            main_branch=main_branch,
+            pr_number=pr_number,
+            cwd=wt.path,
+        )
+        if unmerged:
+            categories.append(unmerged)
+
     return categories
 
+
+def _check_branch_unmerged_changes(
+    branch: str,
+    main_branch: str,
+    pr_number: int,
+    cwd: str,
+) -> dict | None:
+    """检查 PR 已合并后，分支是否有未进入 main 的变更。
+
+    覆盖三种 GitHub merge 方式：
+      - Squash merge:  比较 diff(S^..S)  vs diff(S^..branch)
+      - Merge commit:  检查 merge 后分支有无新 commit
+      - Rebase merge:  用 git cherry 检测
+
+    返回: 错误分类 dict，或 None（无问题）
+    """
+    import subprocess
+
+    def _run(cmd: str) -> str | None:
+        try:
+            return subprocess.check_output(
+                cmd, shell=True, cwd=cwd, text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+        except subprocess.CalledProcessError:
+            return None
+
+    # 1. 找到 main 上对应该 PR 的 merge/squash commit
+    merge_sha = _run(f'git log origin/{main_branch} --oneline --grep="#{pr_number}" -1 --format="%H"')
+    if not merge_sha:
+        # 找不到对应 commit → 可能是 rebase merge，用 git cherry
+        cherry_out = _run(f'git cherry origin/{main_branch} origin/{branch}')
+        if cherry_out:
+            unmerged_count = sum(1 for line in cherry_out.split("\n") if line.startswith("+"))
+            if unmerged_count > 0:
+                return {
+                    "category": "分支有未合入 main 的 commit",
+                    "details": [
+                        f"{unmerged_count} 个 commit 未进 origin/{main_branch}",
+                        f"git cherry origin/{main_branch} origin/{branch}",
+                    ],
+                }
+        return None
+
+    # 2. 判断是 squash (1 parent) 还是 merge commit (2 parents)
+    parent_count = _run(f'git log -1 --format="%P" {merge_sha} | wc -w')
+    if not parent_count:
+        return None
+    parent_count = int(parent_count.strip())
+
+    if parent_count == 1:
+        # --- Squash merge ---
+        parent = _run(f'git log -1 --format="%P" {merge_sha}')
+        if not parent:
+            return None
+
+        diff_squash = _run(f'git diff {parent}..{merge_sha}')
+        diff_branch = _run(f'git diff {parent}..origin/{branch}')
+        if diff_squash is None or diff_branch is None:
+            return None
+
+        if diff_squash != diff_branch:
+            # 有差异 → 分支在 merge 后被修改过
+            return {
+                "category": "PR 已合并但分支有变更未进 main",
+                "details": [
+                    f"PR #{pr_number} squash merge 后，分支 origin/{branch} 有新增/修改",
+                    "请检查是否需要再提 PR，或手动清理后 dev prune",
+                ],
+            }
+        return None  # 一致，安全
+
+    else:
+        # --- Merge commit (true merge) ---
+        parent = _run(f'git log -1 --format="%P" {merge_sha} | awk \'{{print $1}}\'')
+        if not parent:
+            return None
+
+        # M^2 是分支 merge 时的 tip，检查之后有无新 commit
+        # 若分支已是 M 的祖先 → 直接安全
+        branch_sha = _run(f'git rev-parse origin/{branch}')
+        if not branch_sha:
+            return None
+
+        is_ancestor = _run(
+            f'git merge-base --is-ancestor origin/{branch} {merge_sha} && echo yes || echo no'
+        )
+        if is_ancestor == "yes":
+            return None
+
+        # merge 后有新 commit
+        diff_after = _run(f'git diff {merge_sha}..origin/{branch} --stat')
+        if diff_after and diff_after.strip():
+            new_count = _run(f'git rev-list --count {merge_sha}..origin/{branch}')
+            return {
+                "category": "PR 已合并但分支有变更未进 main",
+                "details": [
+                    f"PR #{pr_number} merge 后，分支有 {new_count or '?'} 个新 commit",
+                    f"git diff {merge_sha[:7]}..origin/{branch} --stat",
+                ],
+            }
+        return None
 
 def _determine_status(
     branch: str,
