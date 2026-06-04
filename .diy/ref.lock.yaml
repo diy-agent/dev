@@ -1,0 +1,10 @@
+version: 2
+generated: "2026-06-03T23:59:29.856196Z"
+
+refs:
+  python:cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
+  python:pyright: ~/.diy/ref/github.com/RobertCraigie/pyright-python/v1.1.410
+  python:rich: ~/.diy/ref/github.com/Textualize/rich/15.0.0
+  python:ruff: ~/.diy/ref/github.com/astral-sh/ruff/0.15.15
+  source:github/docs: ~/.diy/ref/github.com/github/docs/main
+  source:github/gh-aw: ~/.diy/ref/github.com/github/gh-aw/main

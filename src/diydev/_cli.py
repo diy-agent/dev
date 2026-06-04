@@ -13,6 +13,7 @@ from ._merge_pr_cmd import merge_pr_app
 from ._new_cmd import new_app
 from ._pr_cmd import pr_app
 from ._prune_cmd import prune_app
+from ._ref_cmd import ref_app
 from ._sandbox_cmd import sandbox_app
 from ._start_cmd import start_app
 from ._status_cmd import status_app
@@ -43,6 +44,9 @@ app.command(merge_pr_app, name="merge-pr")
 
 # dev prune
 app.command(prune_app, name="prune")
+
+# dev ref list / dev ref sync
+app.command(ref_app, name="ref")
 
 # dev close
 app.command(close_app, name="close")
