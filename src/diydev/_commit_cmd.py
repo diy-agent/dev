@@ -1,5 +1,6 @@
 """dev commit - 检查并提交代码（任意分支直接放行，不做 worktree 逻辑）"""
 
+import shlex
 import sys
 from typing import Annotated
 
@@ -61,7 +62,7 @@ def work_commit(
     branch = get_current_branch()
     msg = message or "WIP"
     run("git add -A")
-    run(f'git commit -m "{msg}"')
+    run(f'git commit -m {shlex.quote(msg)}')
 
     if json_output:
         output_json(
