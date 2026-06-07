@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 dev = "diydev:main"
+dai = "diydev._dai_cli:main"
 
 [tool.uv.sources]
 diy-cli = { path = "../diy/pkgs/diy-cli" }

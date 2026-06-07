@@ -125,6 +125,70 @@ def state(
 
 
 # ════════════════════════════════════════════════════════════════
+# dai profile
+# ════════════════════════════════════════════════════════════════
+
+profile_app = App(
+    name="profile",
+    help="查询 state.yaml 中的 profile 预设",
+)
+
+
+@profile_app.command(name="list")
+def list_profiles(
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出"),
+    ] = False,
+):
+    """列出所有 profile（YAML 默认，--json 切 JSON）。"""
+    data = load_state()
+    profiles = data.get("profiles", {})
+    if json_output:
+        print(json.dumps(profiles, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(
+            profiles,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            explicit_start=True,
+        )
+
+
+@profile_app.command
+def show(
+    name: Annotated[str, Parameter(help="profile 名称")],
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出"),
+    ] = False,
+):
+    """查看单个 profile。"""
+    data = load_state()
+    profiles = data.get("profiles", {})
+    if name not in profiles:
+        print(f"错误: profile {shlex.quote(name)} 不存在", file=sys.stderr)
+        sys.exit(1)
+    profile_data = profiles[name]
+    if json_output:
+        print(json.dumps(profile_data, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(
+            profile_data,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            explicit_start=True,
+        )
+
+
+app.command(profile_app)
+
+
+# ════════════════════════════════════════════════════════════════
 # dai tree --sync
 # ════════════════════════════════════════════════════════════════
 

@@ -4,7 +4,8 @@
 阅读本文件 = 理解测试意图，无需查文档。
 
 语法（assert_intent）：
-  $ <command>              — 执行命令（持久 bash，cd/export 跨 $ 共享）
+  $ <command>              — 执行命令（持久 bash，cd/export 跨 $ 共享），期望 exit 0
+  $! <command>             — 执行命令，期望 exit ≠ 0
   <text line>              — 预期输出行（substring 匹配）
   { ... }                  — JSON 预期（结构匹配，自动处理单行/多行）
   ...                      — 跳过任意输出（通配符）
@@ -127,19 +128,24 @@ def assert_intent(session: str, *, cwd: str | None = None) -> None:
             dedented.append(line)
 
     # 解析为命令块
-    blocks: list[tuple[str, list[str]]] = []
+    blocks: list[tuple[str, list[str], bool]] = []
     i = 0
     while i < len(dedented):
         line = dedented[i]
         i += 1
-        if not line.startswith("$ "):
+        if line.startswith("$! "):
+            cmd = line[3:]
+            expect_fail = True
+        elif line.startswith("$ "):
+            cmd = line[2:]
+            expect_fail = False
+        else:
             continue
-        cmd = line[2:]
         expected: list[str] = []
-        while i < len(dedented) and not dedented[i].startswith("$ "):
+        while i < len(dedented) and not (dedented[i].startswith("$ ") or dedented[i].startswith("$! ")):
             expected.append(dedented[i])
             i += 1
-        blocks.append((cmd, expected))
+        blocks.append((cmd, expected, expect_fail))
 
     if not blocks:
         return
@@ -155,7 +161,7 @@ def assert_intent(session: str, *, cwd: str | None = None) -> None:
     assert proc.stdin and proc.stdout and proc.stderr
 
     try:
-        for cmd, expected_lines in blocks:
+        for cmd, expected_lines, expect_fail in blocks:
             marker = f"__END_{uuid.uuid4().hex[:8]}__"
             proc.stdin.write(f"{cmd}\necho {marker} $?\n")
             proc.stdin.flush()
@@ -171,6 +177,15 @@ def assert_intent(session: str, *, cwd: str | None = None) -> None:
                 output_lines.append(line.rstrip("\n"))
 
             actual = "\n".join(output_lines).strip()
+            if expect_fail:
+                assert exit_code != 0, (
+                    f"$! {cmd}\nexit={exit_code}（期望非零）\nstdout: {actual}"
+                )
+                # For $! blocks: skip output matching (stderr not captured).
+                # Intent tests for error paths validate exit code only;
+                # error message format is verified by integration tests.
+                continue
+
             assert exit_code == 0, (
                 f"$ {cmd}\nexit={exit_code}\nstderr: {proc.stderr.read()}"
             )
