@@ -19,6 +19,7 @@ from typing import Annotated
 import yaml
 from cyclopts import App, Parameter
 
+from ._dai_scan import find_spaces, find_workspace_root
 from ._log import VerboseFlag, set_verbosity
 from ._state import load_state, save_state
 
@@ -116,6 +117,50 @@ def state(
     else:
         yaml.dump(
             data,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            explicit_start=True,
+        )
+
+
+# ════════════════════════════════════════════════════════════════
+# dai scan
+# ════════════════════════════════════════════════════════════════
+
+
+@app.command
+def scan(
+    json_output: Annotated[
+        bool,
+        Parameter(name=["--json"], help="JSON 格式输出"),
+    ] = False,
+    path: Annotated[
+        str | None,
+        Parameter(help="扫描起始目录（默认当前工作目录）"),
+    ] = None,
+):
+    """扫描 workspace 与 spaces — 向上查找 diy.yaml，向下发现 .git。"""
+    start = os.path.realpath(path) if path else os.path.realpath(os.getcwd())
+
+    workspace_root = find_workspace_root(start)
+    if workspace_root is None:
+        print("错误: 未找到 diy.yaml（向上扫描到 $HOME 为止）", file=sys.stderr)
+        sys.exit(1)
+
+    spaces = find_spaces(workspace_root)
+
+    result: dict = {
+        "workspace": workspace_root,
+        "spaces": spaces,
+    }
+
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(
+            result,
             sys.stdout,
             allow_unicode=True,
             default_flow_style=False,
