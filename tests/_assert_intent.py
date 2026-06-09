@@ -23,6 +23,7 @@ Sentinel：
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -192,22 +193,36 @@ def _run_blocks(
             ej = _try_parse_json(joined)
             aj = _try_parse_json(actual)
             if ej is not None and aj is not None:
-                assert _json_contains(ej, aj), (
-                    f"! {cmd}\nJSON 不匹配\n"
-                    f"期望:\n{json.dumps(ej, indent=2, ensure_ascii=False)}\n"
-                    f"实际:\n{json.dumps(aj, indent=2, ensure_ascii=False)}"
-                )
+                ok = _json_contains(ej, aj)
+                if not ok:
+                    exp_str = json.dumps(ej, indent=2, ensure_ascii=False)
+                    act_str = json.dumps(aj, indent=2, ensure_ascii=False)
+                    diff = "\n".join(difflib.unified_diff(
+                        exp_str.splitlines(), act_str.splitlines(),
+                        fromfile="期望", tofile="实际",
+                        lineterm="",
+                    ))
+                    raise AssertionError(
+                        f"! {cmd}\nJSON 结构不匹配\n{diff}"
+                    )
                 continue
 
             # 2) 嗅探 YAML
             ey = _try_parse_yaml(joined)
             ay = _try_parse_yaml(actual)
             if ey is not None and ay is not None:
-                assert _json_contains(ey, ay), (
-                    f"! {cmd}\nYAML 不匹配\n"
-                    f"期望:\n{joined}\n"
-                    f"实际:\n{actual[:600]}"
-                )
+                ok = _json_contains(ey, ay)
+                if not ok:
+                    exp_str = json.dumps(ey, indent=2, ensure_ascii=False)
+                    act_str = json.dumps(ay, indent=2, ensure_ascii=False)
+                    diff = "\n".join(difflib.unified_diff(
+                        exp_str.splitlines(), act_str.splitlines(),
+                        fromfile="期望", tofile="实际",
+                        lineterm="",
+                    ))
+                    raise AssertionError(
+                        f"! {cmd}\nYAML 结构不匹配\n{diff}"
+                    )
                 continue
 
             # 3) 逐行字符串匹配
@@ -227,9 +242,16 @@ def _run_blocks(
                         ai += 1
                         break
                     ai += 1
-                assert found, (
-                    f"! {cmd}\n期望含: {el!r}\n实际:\n{actual[:600]}"
-                )
+                if not found:
+                    exp_lines = [ln for ln in check if ln.strip()]
+                    diff = "\n".join(difflib.unified_diff(
+                        exp_lines, actual_lines,
+                        fromfile="期望", tofile="实际",
+                        lineterm="",
+                    ))
+                    raise AssertionError(
+                        f"! {cmd}\n行不匹配 — 第 {check.index(el)+1} 行\n{diff}"
+                    )
     finally:
         proc.stdin.close()
         proc.terminate()
