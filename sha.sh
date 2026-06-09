@@ -69,7 +69,7 @@ link() {
     # ln dev version
     run uv tool install -e ./
     run mkdir -p ~/.agents/skills/
-    [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
+#    [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
     [ -d ~/.agents/skills/diy-context-refactor ] || run skills add ./skills/diy-context-refactor -g -y
     [ -d ~/.agents/skills/git-cleanup ]  || run   skills add ./skills/git-cleanup -g -y
     if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
@@ -79,7 +79,7 @@ link() {
 unlink() {
     if command -v dev; then  uv tool uninstall diydev; fi;
 
-    run rm -rf ~/.agents/skills/diy-dev
+#    run rm -rf ~/.agents/skills/diy-dev
     run rm -rf ~/.agents/skills/diy-context-refactor
     run rm -rf ~/.agents/skills/git-cleanup  
     run rm -rf ~/.agents/skills/win-file-unlock
