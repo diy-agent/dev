@@ -1,7 +1,6 @@
 """dai subject — Subject 树管理意图测试。
 
-命令前缀 ! 代替 $，避免 shell 变量混淆。
-匹配策略定义在 _assert_intent 模块。
+命令前缀 ! 代替 $。
 """
 
 from __future__ import annotations
@@ -13,14 +12,6 @@ from pathlib import Path
 from _assert_intent import assert_intent
 
 
-# ════════════════════════════════════════════════════════════════
-# 测试
-# ════════════════════════════════════════════════════════════════
-
-_DIY = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
-_DAI = f"uv run --project {_DIY} python -m diydev._dai_cli"
-
-
 def test_intent_subject_add_and_list():
     """添加 subject → 列表 → 树状。"""
     tmp = tempfile.mkdtemp(prefix="dai-")
@@ -29,21 +20,17 @@ def test_intent_subject_add_and_list():
     assert_intent(f"""
 # 路径自带父子关系：~/git/diy/_diy 的父级是 ~/git/diy
 ! export DIY_STATE_PATH={state}
-! {_DAI} subject add ~/git --desc "根目录"
----
+! dai subject add ~/git --desc "根目录"
 status: success
 
-! {_DAI} subject add ~/git/diy --desc "diy 生态根"
----
+! dai subject add ~/git/diy --desc "diy 生态根"
 status: success
 
-! {_DAI} subject add ~/git/diy/_diy --desc "核心工具" --type workspace
----
+! dai subject add ~/git/diy/_diy --desc "核心工具" --type workspace
 status: success
 
 # cat 看实际写入
 ! cat {state}
----
 subjects:
   ~/git:
     description: 根目录
@@ -54,25 +41,23 @@ subjects:
     type: workspace
 
 # 扁平列表
-! {_DAI} subject list
----
+! dai subject list
 ~/git:
-{{*}}
+  {{*}}
 ~/git/diy:
-{{*}}
+  {{*}}
 ~/git/diy/_diy:
-{{*}}
+  {{*}}
 
 # 树状
-! {_DAI} subject tree
----
+! dai subject tree
 ~/git:
   {{*}}
   ~/git/diy:
     {{*}}
     ~/git/diy/_diy:
       {{*}}
-""", cwd=_DIY, env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": state})
 
 
 def test_intent_subject_remove():
@@ -82,28 +67,23 @@ def test_intent_subject_remove():
 
     assert_intent(f"""
 ! export DIY_STATE_PATH={state}
-! {_DAI} subject add ~/git
----
+! dai subject add ~/git
 status: success
 
-! {_DAI} subject add ~/git/diy
----
+! dai subject add ~/git/diy
 status: success
 
-! {_DAI} subject remove ~/git/diy
----
+! dai subject remove ~/git/diy
 status: success
 
-! {_DAI} subject list
----
+! dai subject list
 ~/git:
   {{*}}
-# 没有 ~/git/diy
 
-! {_DAI} subject show ~/git/diy 2>&1; echo $?
+! dai subject show ~/git/diy 2>&1; echo $?
 {{regex:.*}}
 1
-""", cwd=_DIY, env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": state})
 
 
 def test_intent_subject_duplicate():
@@ -113,14 +93,13 @@ def test_intent_subject_duplicate():
 
     assert_intent(f"""
 ! export DIY_STATE_PATH={state}
-! {_DAI} subject add ~/git
----
+! dai subject add ~/git
 status: success
 
-! {_DAI} subject add ~/git 2>&1; echo $?
+! dai subject add ~/git 2>&1; echo $?
 {{regex:.*}}
 1
-""", cwd=_DIY, env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": state})
 
 
 def test_intent_subject_scan():
@@ -137,12 +116,10 @@ def test_intent_subject_scan():
 
     assert_intent(f"""
 ! export DIY_STATE_PATH={state}
-! {_DAI} subject scan --root {repo}
----
+! dai subject scan --root {repo}
 status: success
 
-! {_DAI} subject tree
----
+! dai subject tree
 {repo}:
   {{*}}
   {repo / "alpha"}:
@@ -151,4 +128,4 @@ status: success
     {{*}}
     {repo / "beta" / "gamma"}:
       {{*}}
-""", cwd=_DIY, env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": state})

@@ -173,7 +173,8 @@ def _run_blocks(
 
             actual = "\n".join(out).strip()
             assert exit_code == 0, (
-                f"! {cmd}\nexit={exit_code}\nstderr: {proc.stderr.read()}"
+                f"! {cmd}\nexit={exit_code}\n"
+                f"stderr: {proc.stderr.read() if proc.poll() is not None else '(进程仍存活)'}"
             )
 
             # 过滤注释和空行
