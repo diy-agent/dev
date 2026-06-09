@@ -39,20 +39,17 @@ status: success
 ! dai subject add {sub} --desc "核心工具"
 status: success
 
-# cat 看实际写入
+# cat 看实际写入（is_git 不在文件中，实时检测）
 ! cat {state}
 subjects:
   {root}:
-    is_git: true
     description: 根目录
   {diy}:
-    is_git: true
     description: diy 生态根
   {sub}:
-    is_git: false
     description: 核心工具
 
-# 扁平列表
+# 扁平列表（实时 is_git 显示）
 ! dai subject list
 {root}:
   {{*}}

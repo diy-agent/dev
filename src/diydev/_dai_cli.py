@@ -301,6 +301,20 @@ def _norm(path: str) -> str:
     return expanded
 
 
+def _subject_is_git(path: str) -> bool:
+    """实时检测 subject 目录是否为 git 仓库。"""
+    full = os.path.expanduser(path)
+    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
+
+
+def _enrich(subjects: dict[str, dict]) -> dict[str, dict]:
+    """给 subject 条目添加实时检测的 is_git 字段。"""
+    return {
+        p: {**entry, "is_git": _subject_is_git(p)}
+        for p, entry in subjects.items()
+    }
+
+
 @subject_app.command(name="add")
 def subject_add(
     path: Annotated[str, Parameter(help="subject 路径（如 ~/git/diy/_diy）")],
@@ -318,11 +332,7 @@ def subject_add(
         print(f"错误: subject {shlex.quote(path_n)} 已存在", file=sys.stderr)
         sys.exit(1)
 
-    # 展开 ~/ 变绝对路径检查 .git
-    full = os.path.expanduser(path_n)
-    is_git = os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
-
-    entry: dict[str, object] = {"is_git": is_git}
+    entry: dict[str, object] = {}
     if desc:
         entry["description"] = desc
     subjects[path_n] = entry
@@ -341,9 +351,9 @@ def subject_list(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """扁平列表。"""
+    """扁平列表（实时 is_git 检测）。"""
     data = load_state()
-    subjects = data.get("subjects", {})
+    subjects = _enrich(data.get("subjects", {}))
     if json_output:
         print(json.dumps(subjects, indent=2, ensure_ascii=False))
     else:
@@ -356,9 +366,9 @@ def subject_tree(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """树状展示。"""
+    """树状展示（实时 is_git 检测）。"""
     data = load_state()
-    subjects = data.get("subjects", {})
+    subjects = _enrich(data.get("subjects", {}))
 
     tree = _build_subject_tree(subjects)
     if json_output:
@@ -374,14 +384,15 @@ def subject_show(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """查看单个 subject。"""
+    """查看单个 subject（含实时 is_git 检测）。"""
     path_n = _norm(path)
     data = load_state()
     subjects = data.get("subjects", {})
     if path_n not in subjects:
         print(f"subject {shlex.quote(path_n)} 不存在", file=sys.stderr)
         sys.exit(1)
-    entry = subjects[path_n]
+    entry = dict(subjects[path_n])
+    entry["is_git"] = _subject_is_git(path_n)
     if json_output:
         print(json.dumps(entry, indent=2, ensure_ascii=False))
     else:
