@@ -1,11 +1,11 @@
 """dai subject — Subject 树管理意图测试。
 
 命令前缀 ! 代替 $。
+subject 自动检测 is_git（路径下 .git 是否存在）。
 """
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -14,99 +14,117 @@ from _assert_intent import assert_intent
 
 def test_intent_subject_add_and_list():
     """添加 subject → 列表 → 树状。"""
-    tmp = tempfile.mkdtemp(prefix="dai-")
-    state = os.path.join(tmp, "state.yaml")
+    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
+    state = tmp / "state.yaml"
+
+    # 创建实际目录区分 git/non-git
+    root = tmp / "git"
+    root.mkdir()
+    (root / ".git").touch()  # git 仓库
+    diy = root / "diy"
+    diy.mkdir()
+    (diy / ".git").touch()  # git 仓库
+    sub = diy / "_diy"
+    sub.mkdir()
+    # 无 .git → 非 git
 
     assert_intent(f"""
-# 路径自带父子关系：~/git/diy/_diy 的父级是 ~/git/diy
 ! export DIY_STATE_PATH={state}
-! dai subject add ~/git --desc "根目录"
+! dai subject add {root} --desc "根目录"
 status: success
 
-! dai subject add ~/git/diy --desc "diy 生态根"
+! dai subject add {diy} --desc "diy 生态根"
 status: success
 
-! dai subject add ~/git/diy/_diy --desc "核心工具" --type workspace
+! dai subject add {sub} --desc "核心工具"
 status: success
 
 # cat 看实际写入
 ! cat {state}
 subjects:
-  ~/git:
+  {root}:
+    is_git: true
     description: 根目录
-  ~/git/diy:
+  {diy}:
+    is_git: true
     description: diy 生态根
-  ~/git/diy/_diy:
+  {sub}:
+    is_git: false
     description: 核心工具
-    type: workspace
 
 # 扁平列表
 ! dai subject list
-~/git:
+{root}:
   {{*}}
-~/git/diy:
+{diy}:
   {{*}}
-~/git/diy/_diy:
+{sub}:
   {{*}}
 
 # 树状
 ! dai subject tree
-~/git:
+{root}:
   {{*}}
-  ~/git/diy:
+  {diy}:
     {{*}}
-    ~/git/diy/_diy:
+    {sub}:
       {{*}}
-""", env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": str(state)})
 
 
 def test_intent_subject_remove():
     """删除 subject。"""
-    tmp = tempfile.mkdtemp(prefix="dai-")
-    state = os.path.join(tmp, "state.yaml")
+    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
+    state = tmp / "state.yaml"
+    root = tmp / "git"
+    root.mkdir()
+    sub = root / "sub"
+    sub.mkdir()
 
     assert_intent(f"""
 ! export DIY_STATE_PATH={state}
-! dai subject add ~/git
+! dai subject add {root}
 status: success
 
-! dai subject add ~/git/diy
+! dai subject add {sub}
 status: success
 
-! dai subject remove ~/git/diy
+! dai subject remove {sub}
 status: success
 
 ! dai subject list
-~/git:
+{root}:
   {{*}}
 
-! dai subject show ~/git/diy 2>&1; echo $?
+! dai subject show {sub} 2>&1; echo $?
 {{regex:.*}}
 1
-""", env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": str(state)})
 
 
 def test_intent_subject_duplicate():
     """重复添加 → 报错。"""
-    tmp = tempfile.mkdtemp(prefix="dai-")
-    state = os.path.join(tmp, "state.yaml")
+    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
+    state = tmp / "state.yaml"
+    root = tmp / "x"
+    root.mkdir()
 
     assert_intent(f"""
 ! export DIY_STATE_PATH={state}
-! dai subject add ~/git
+! dai subject add {root}
 status: success
 
-! dai subject add ~/git 2>&1; echo $?
+! dai subject add {root} 2>&1; echo $?
 {{regex:.*}}
 1
-""", env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": str(state)})
 
 
 def test_intent_subject_scan():
     """scan 扫描文件系统发现 subject 树。"""
-    tmp = tempfile.mkdtemp(prefix="dai-")
-    state = os.path.join(tmp, "state.yaml")
-    repo = Path(tmp) / "repos"
+    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
+    state = tmp / "state.yaml"
+    repo = tmp / "repos"
     (repo / "alpha").mkdir(parents=True)
     (repo / "beta").mkdir()
     (repo / "beta" / "gamma").mkdir()
@@ -128,4 +146,4 @@ status: success
     {{*}}
     {repo / "beta" / "gamma"}:
       {{*}}
-""", env={"DIY_STATE_PATH": state})
+""", env={"DIY_STATE_PATH": str(state)})

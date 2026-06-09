@@ -305,12 +305,11 @@ def _norm(path: str) -> str:
 def subject_add(
     path: Annotated[str, Parameter(help="subject 路径（如 ~/git/diy/_diy）")],
     desc: Annotated[str | None, Parameter(name="--desc", help="描述")] = None,
-    type: Annotated[str | None, Parameter(name="--type", help="类型（workspace/group/...）")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """注册 subject。路径自带层级关系。"""
+    """注册 subject。自动检测是否为 git 仓库。"""
     path_n = _norm(path)
     data = load_state()
     subjects = data.setdefault("subjects", {})
@@ -319,11 +318,13 @@ def subject_add(
         print(f"错误: subject {shlex.quote(path_n)} 已存在", file=sys.stderr)
         sys.exit(1)
 
-    entry: dict[str, object] = {}
+    # 展开 ~/ 变绝对路径检查 .git
+    full = os.path.expanduser(path_n)
+    is_git = os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
+
+    entry: dict[str, object] = {"is_git": is_git}
     if desc:
         entry["description"] = desc
-    if type:
-        entry["type"] = type
     subjects[path_n] = entry
     save_state(data)
 
