@@ -231,17 +231,19 @@ def _run_blocks(
                     ai += 1
                     continue
                 found = False
-                while ai < len(actual_lines):
-                    if _line_matches(el, actual_lines[ai]):
+                cursor = ai
+                first_candidate = actual_lines[ai] if ai < len(actual_lines) else "(无更多行)"
+                while cursor < len(actual_lines):
+                    if _line_matches(el, actual_lines[cursor]):
                         found = True
-                        ai += 1
+                        ai = cursor + 1
                         break
-                    ai += 1
+                    cursor += 1
                 if not found:
                     raise IntentAssertionError(
                         f"! {cmd}\n"
                         f"期望: {el}\n"
-                        f"实际: {actual_lines[min(ai, len(actual_lines)-1)]!r}"
+                        f"实际: {first_candidate!r}"
                     )
     finally:
         proc.stdin.close()
