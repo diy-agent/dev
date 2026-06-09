@@ -283,6 +283,216 @@ def tree(
 
 
 # ════════════════════════════════════════════════════════════════
+# dai subject
+# ════════════════════════════════════════════════════════════════
+
+subject_app = App(name="subject", help="Subject 树管理")
+
+_HOME = os.path.expanduser("~")
+
+
+def _norm(path: str) -> str:
+    """把路径统一为 ~/... 格式存储。"""
+    expanded = os.path.abspath(os.path.expanduser(path))
+    if expanded.startswith(_HOME + "/"):
+        return "~" + expanded[len(_HOME):]
+    if expanded == _HOME:
+        return "~"
+    return expanded
+
+
+@subject_app.command(name="add")
+def subject_add(
+    path: Annotated[str, Parameter(help="subject 路径（如 ~/git/diy/_diy）")],
+    desc: Annotated[str | None, Parameter(name="--desc", help="描述")] = None,
+    type: Annotated[str | None, Parameter(name="--type", help="类型（workspace/group/...）")] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """注册 subject。路径自带层级关系。"""
+    path_n = _norm(path)
+    data = load_state()
+    subjects = data.setdefault("subjects", {})
+
+    if path_n in subjects:
+        print(f"错误: subject {shlex.quote(path_n)} 已存在", file=sys.stderr)
+        sys.exit(1)
+
+    entry: dict[str, object] = {}
+    if desc:
+        entry["description"] = desc
+    if type:
+        entry["type"] = type
+    subjects[path_n] = entry
+    save_state(data)
+
+    result = {"status": "success", "data": {"path": path_n, **entry}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@subject_app.command(name="list")
+def subject_list(
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """扁平列表。"""
+    data = load_state()
+    subjects = data.get("subjects", {})
+    if json_output:
+        print(json.dumps(subjects, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(subjects, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@subject_app.command(name="tree")
+def subject_tree(
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """树状展示。"""
+    data = load_state()
+    subjects = data.get("subjects", {})
+
+    tree = _build_subject_tree(subjects)
+    if json_output:
+        print(json.dumps(tree, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(tree, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@subject_app.command(name="show")
+def subject_show(
+    path: Annotated[str, Parameter(help="subject 路径")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """查看单个 subject。"""
+    path_n = _norm(path)
+    data = load_state()
+    subjects = data.get("subjects", {})
+    if path_n not in subjects:
+        print(f"subject {shlex.quote(path_n)} 不存在", file=sys.stderr)
+        sys.exit(1)
+    entry = subjects[path_n]
+    if json_output:
+        print(json.dumps(entry, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(entry, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@subject_app.command(name="remove")
+def subject_remove(
+    path: Annotated[str, Parameter(help="subject 路径")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """删除 subject。同时删除子 subject。"""
+    path_n = _norm(path)
+    data = load_state()
+    subjects = data.get("subjects", {})
+
+    if path_n not in subjects:
+        print(f"错误: subject {shlex.quote(path_n)} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    # 删除自身及子节点
+    to_delete = [p for p in subjects if p == path_n or p.startswith(path_n + "/")]
+    for p in to_delete:
+        del subjects[p]
+    save_state(data)
+
+    result = {"status": "success", "data": {"path": path_n, "removed": len(to_delete)}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@subject_app.command(name="scan")
+def subject_scan(
+    root: Annotated[str, Parameter(help="扫描根目录")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """扫描文件系统，发现 git 仓库作为 subject。"""
+    root_path = os.path.abspath(os.path.expanduser(root))
+    if not os.path.isdir(root_path):
+        print(f"错误: 目录不存在 {shlex.quote(root)}", file=sys.stderr)
+        sys.exit(1)
+
+    found: dict[str, dict[str, object]] = {}
+    for dirpath, dirs, _ in os.walk(root_path):
+        if os.path.isdir(os.path.join(dirpath, ".git")) or os.path.isfile(os.path.join(dirpath, ".git")):
+            found[_norm(dirpath)] = {}
+            dirs.clear()  # 不深入 git 仓库内部
+
+    # 写入 state.yaml
+    data = load_state()
+    subjects = data.setdefault("subjects", {})
+    subjects.update(found)
+    save_state(data)
+
+    result = {"status": "success", "data": {"found": len(found)}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _build_subject_tree(subjects: dict[str, dict]) -> dict[str, object]:
+    """从扁平 subject 字典构建嵌套树。"""
+    sorted_paths = sorted(subjects.keys(), key=lambda p: (p.count("/"), p))
+    tree: dict[str, object] = {}
+    for path in sorted_paths:
+        _place_in_tree(tree, path, dict(subjects[path]))
+    return tree
+
+
+def _place_in_tree(tree: dict[str, object], path: str, entry: dict) -> None:
+    """递归在树中找 path 的父级并插入。"""
+    # 找 path 的父级路径
+    parent = "/".join(path.lstrip("~/").split("/")[:-1])
+    if not parent:
+        # 根级节点，直接挂 tree
+        tree[path] = entry
+        return
+    parent_key = "~/" + parent
+
+    # 在 tree 中找 parent_key（递归搜索所有层级）
+    def _find(node: dict, target: str) -> dict | None:
+        for k, v in node.items():
+            if k == target and isinstance(v, dict):
+                return v
+            if isinstance(v, dict):
+                children = v.get("children")
+                if children:
+                    result = _find(children, target)
+                    if result:
+                        return result
+        return None
+
+    parent_node = _find(tree, parent_key)
+    if parent_node is not None:
+        children = parent_node.setdefault("children", {})
+        children[path] = entry
+    else:
+        # 父级不存在，挂在根
+        tree[path] = entry
+
+
+app.command(subject_app)
+
+
+# ════════════════════════════════════════════════════════════════
 # 辅助
 # ════════════════════════════════════════════════════════════════
 
