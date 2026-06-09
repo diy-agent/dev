@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import os
-from _assert_intent import assert_intent
+from _assert_intent import IntentAssertionError, assert_intent
 
 
 def test_intent_ls_basic():
@@ -62,7 +62,7 @@ def test_intent_exit_code_nonzero():
 ! false
 """)
         assert False, "应抛异常"
-    except AssertionError:
+    except (AssertionError, IntentAssertionError):
         pass
 
 

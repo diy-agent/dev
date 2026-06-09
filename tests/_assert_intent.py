@@ -23,13 +23,17 @@ Sentinel：
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import re
 import subprocess
 import uuid
 from typing import Any
+
+
+class IntentAssertionError(AssertionError):
+    """自定义异常，防止 pytest 展开周边源码。"""
+    pass
 
 
 # ── Sentinel ──
@@ -173,10 +177,11 @@ def _run_blocks(
                 out.append(line.rstrip("\n"))
 
             actual = "\n".join(out).strip()
-            assert exit_code == 0, (
-                f"! {cmd}\nexit={exit_code}\n"
-                f"stderr: {proc.stderr.read() if proc.poll() is not None else '(进程仍存活)'}"
-            )
+            if exit_code != 0:
+                stderr = proc.stderr.read() if proc.poll() is not None else "(进程仍存活)"
+                raise IntentAssertionError(
+                    f"! {cmd}\n退出码 {exit_code}\nstderr: {stderr}"
+                )
 
             # 过滤注释和空行
             check = [
@@ -195,15 +200,10 @@ def _run_blocks(
             if ej is not None and aj is not None:
                 ok = _json_contains(ej, aj)
                 if not ok:
-                    exp_str = json.dumps(ej, indent=2, ensure_ascii=False)
-                    act_str = json.dumps(aj, indent=2, ensure_ascii=False)
-                    diff = "\n".join(difflib.unified_diff(
-                        exp_str.splitlines(), act_str.splitlines(),
-                        fromfile="期望", tofile="实际",
-                        lineterm="",
-                    ))
-                    raise AssertionError(
-                        f"! {cmd}\nJSON 结构不匹配\n{diff}"
+                    raise IntentAssertionError(
+                        f"! {cmd}\n"
+                        f"期望: {json.dumps(ej, ensure_ascii=False)}\n"
+                        f"实际: {json.dumps(aj, ensure_ascii=False)}"
                     )
                 continue
 
@@ -213,15 +213,10 @@ def _run_blocks(
             if ey is not None and ay is not None:
                 ok = _json_contains(ey, ay)
                 if not ok:
-                    exp_str = json.dumps(ey, indent=2, ensure_ascii=False)
-                    act_str = json.dumps(ay, indent=2, ensure_ascii=False)
-                    diff = "\n".join(difflib.unified_diff(
-                        exp_str.splitlines(), act_str.splitlines(),
-                        fromfile="期望", tofile="实际",
-                        lineterm="",
-                    ))
-                    raise AssertionError(
-                        f"! {cmd}\nYAML 结构不匹配\n{diff}"
+                    raise IntentAssertionError(
+                        f"! {cmd}\n"
+                        f"期望: {json.dumps(ey, ensure_ascii=False)}\n"
+                        f"实际: {json.dumps(ay, ensure_ascii=False)}"
                     )
                 continue
 
@@ -243,14 +238,10 @@ def _run_blocks(
                         break
                     ai += 1
                 if not found:
-                    exp_lines = [ln for ln in check if ln.strip()]
-                    diff = "\n".join(difflib.unified_diff(
-                        exp_lines, actual_lines,
-                        fromfile="期望", tofile="实际",
-                        lineterm="",
-                    ))
-                    raise AssertionError(
-                        f"! {cmd}\n行不匹配 — 第 {check.index(el)+1} 行\n{diff}"
+                    raise IntentAssertionError(
+                        f"! {cmd}\n"
+                        f"期望: {el}\n"
+                        f"实际: {actual_lines[min(ai, len(actual_lines)-1)]!r}"
                     )
     finally:
         proc.stdin.close()
