@@ -12,7 +12,7 @@ diy 生态的**开发工具元项目**。
 | `dai profile list/show` | ✅ | profile 预设 |
 | `dai tree --sync` | ✅ | 注入 AGENTS.md |
 | `dai subject add/list/tree/show/remove/scan` | ✅ | subject 树管理，路径自带层级，is_git 实时检测 |
-| `dai task` | — | 待开发 |
+| `dai task` | ✅ | 任务 CRUD：create/list/show/edit/delete |
 
 ## 测试体系
 
