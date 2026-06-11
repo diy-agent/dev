@@ -30,17 +30,23 @@ _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @pytest.fixture(autouse=True)
-def _isolate_state(monkeypatch):
-    """每个测试获得独立 DIY_HOME 目录，隔离 ~/.diy。"""
-    tmp = tempfile.mkdtemp(prefix="diy-test-state-")
+def fake_home(monkeypatch):
+    """每个测试获得独立 $HOME，隔离 ~/.diy。
+
+    $HOME 设为临时目录，子进程 bash ∼ 展开到此目录。
+    DIY_HOME 同步设置，dai 数据也存于此。
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="diy-test-state-"))
+    monkeypatch.setenv("HOME", str(tmp))
     monkeypatch.setenv("DIY_HOME", str(tmp))
+    return tmp
 
 
 @pytest.fixture
-def sh():
-    """ShellTest 实例，已激活项目 .venv，dai 命令直接可用。
+def sh(fake_home: Path):
+    """ShellTest 实例，已激活项目 .venv，dai 直接可用。
 
-    DIY_HOME 由 _isolate_state fixture 自动注入。
+    $HOME/DIY_HOME 由 fake_home fixture 自动隔离。
     """
     return ShellTest(
         cwd=_PROJECT,

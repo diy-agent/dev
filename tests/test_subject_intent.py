@@ -1,119 +1,107 @@
 """dai subject — Subject 树管理意图测试。
 
-sh fixture 已激活 .venv（dai 直接可用）+ DIY_HOME 已隔离。
-* 在预期行中作为 glob 通配符（匹配任意字符序列）。
+sh fixture 已激活 .venv（dai 直接可用）。
+fake_home fixture 将 $HOME 隔离到临时目录，~/ 路径在子进程内有效。
 """
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from _shelltest import ShellTest
 
 
-def test_intent_subject_add_and_list(sh: ShellTest):
+def test_intent_subject_add_and_list(sh: ShellTest, fake_home: Path):
     """添加 subject → 列表 → 树状。"""
-    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
-    root = tmp / "git"
-    root.mkdir()
-    (root / ".git").touch()
-    diy = root / "diy"
-    diy.mkdir()
-    (diy / ".git").touch()
-    sub = diy / "_diy"
-    sub.mkdir()
+    (fake_home / "git").mkdir()
+    (fake_home / "git" / ".git").touch()
+    (fake_home / "git" / "diy").mkdir()
+    (fake_home / "git" / "diy" / ".git").touch()
+    (fake_home / "git" / "diy" / "_diy").mkdir()
 
-    sh.assert_session(f"""
-        $ dai subject add {root} --desc "根目录"
+    sh.assert_session("""
+        $ dai subject add ~/git --desc "根目录"
         status: success
 
-        $ dai subject add {diy} --desc "diy 生态根"
+        $ dai subject add ~/git/diy --desc "diy 生态根"
         status: success
 
-        $ dai subject add {sub} --desc "核心工具"
+        $ dai subject add ~/git/diy/_diy --desc "核心工具"
         status: success
 
         $ dai subject list
-        *{diy}*
+        *~/git/diy*
         *is_git*
-        *{root}*
+        *~/git*
         *is_git*
-        *{sub}*
+        *~/git/diy/_diy*
         *is_git*
 
         $ dai subject tree
-        *{root}*
+        *~/git*
         *is_git*
-        *{diy}*
+        *~/git/diy*
         *is_git*
-        *{sub}*
+        *~/git/diy/_diy*
         *is_git*
     """)
 
 
-def test_intent_subject_remove(sh: ShellTest):
+def test_intent_subject_remove(sh: ShellTest, fake_home: Path):
     """删除 subject。"""
-    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
-    root = tmp / "git"
-    root.mkdir()
-    (root / ".git").touch()
-    sub = root / "sub"
-    sub.mkdir()
+    (fake_home / "git").mkdir()
+    (fake_home / "git" / ".git").touch()
+    (fake_home / "git" / "sub").mkdir()
 
-    sh.assert_session(f"""
-        $ dai subject add {root}
+    sh.assert_session("""
+        $ dai subject add ~/git
         status: success
 
-        $ dai subject add {sub}
+        $ dai subject add ~/git/sub
         status: success
 
-        $ dai subject remove {sub}
+        $ dai subject remove ~/git/sub
         status: success
 
         $ dai subject list
-        *{root}*
+        *~/git*
 
-        $ dai subject show {sub} 2>&1; echo $?
+        $ dai subject show ~/git/sub 2>&1; echo $?
         *
         1
     """)
 
 
-def test_intent_subject_duplicate(sh: ShellTest):
+def test_intent_subject_duplicate(sh: ShellTest, fake_home: Path):
     """重复添加 → 报错。"""
-    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
-    root = tmp / "x"
-    root.mkdir()
+    (fake_home / "x").mkdir()
 
-    sh.assert_session(f"""
-        $ dai subject add {root}
+    sh.assert_session("""
+        $ dai subject add ~/x
         status: success
 
-        $ dai subject add {root} 2>&1; echo $?
+        $ dai subject add ~/x 2>&1; echo $?
         *
         1
     """)
 
 
-def test_intent_subject_scan(sh: ShellTest):
+def test_intent_subject_scan(sh: ShellTest, fake_home: Path):
     """scan 扫描文件系统发现 subject。"""
-    tmp = Path(tempfile.mkdtemp(prefix="dai-"))
-    repo = tmp / "repos"
-    (repo / "alpha").mkdir(parents=True)
-    (repo / "beta").mkdir()
-    (repo / "alpha" / ".git").touch()
-    (repo / "beta" / ".git").touch()
+    (fake_home / "repos" / "alpha").mkdir(parents=True)
+    (fake_home / "repos" / "beta").mkdir()
+    (fake_home / "repos" / "alpha" / ".git").touch()
+    (fake_home / "repos" / "beta" / ".git").touch()
 
-    sh.assert_session(f"""
-        $ dai subject scan --root {repo}
+    sh.assert_session("""
+        $ dai subject scan --root ~/repos
         status: success
         data:
         *found*
 
         $ dai subject tree
-        *{repo / 'alpha'}*
+        *alpha*
         *is_git*
-        *{repo / 'beta'}*
+        *beta*
         *is_git*
     """)
