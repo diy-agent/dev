@@ -14,6 +14,7 @@
 """
 
 import json
+import os
 import subprocess
 import tempfile
 import uuid
@@ -22,20 +23,32 @@ from pathlib import Path
 import pytest
 import yaml
 
+from _shelltest import ShellTest
 
-# ════════════════════════════════════════════════════════════════
-# 全局安全机制：所有测试强制隔离 state.yaml
-# ════════════════════════════════════════════════════════════════
+
+_PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 @pytest.fixture(autouse=True)
 def _isolate_state(monkeypatch):
     """强制 state.yaml 隔离——测试绝不可能触碰真实 ~/.diy/state.yaml。
 
     每个测试函数获得独立临时目录，通过 DIY_STATE_PATH 环境变量注入。
-    不设此 fixture = 直接读写用户家目录 state.yaml，不可接受。
     """
     tmp = tempfile.mkdtemp(prefix="diy-test-state-")
     monkeypatch.setenv("DIY_STATE_PATH", str(Path(tmp) / "state.yaml"))
+
+
+@pytest.fixture
+def sh():
+    """ShellTest 实例，已激活项目 .venv，dai 命令直接可用。
+
+    DIY_STATE_PATH 由 _isolate_state fixture 自动注入。
+    """
+    return ShellTest(
+        cwd=_PROJECT,
+        init_commands=["source .venv/bin/activate"],
+    )
 
 
 def _try_parse_json(text: str) -> object | None:
