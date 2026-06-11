@@ -1,6 +1,7 @@
 """dai subject — Subject 树管理意图测试。
 
 sh fixture 已激活 .venv（dai 直接可用）+ DIY_HOME 已隔离。
+* 在预期行中作为 glob 通配符（匹配任意字符序列）。
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ def test_intent_subject_add_and_list(sh: ShellTest):
     sub = diy / "_diy"
     sub.mkdir()
 
-    S = "{{*}}"
     sh.assert_session(
         f"$ dai subject add {root} --desc \"根目录\"\n"
         "status: success\n"
@@ -35,20 +35,20 @@ def test_intent_subject_add_and_list(sh: ShellTest):
         "status: success\n"
         "\n"
         "$ dai subject list\n"
-        f"{S}{diy}{S}\n"
-        f"{S}is_git{S}\n"
-        f"{S}{root}{S}\n"
-        f"{S}is_git{S}\n"
-        f"{S}{sub}{S}\n"
-        f"{S}is_git{S}\n"
+        f"*{diy}*\n"
+        f"*is_git*\n"
+        f"*{root}*\n"
+        f"*is_git*\n"
+        f"*{sub}*\n"
+        f"*is_git*\n"
         "\n"
         "$ dai subject tree\n"
-        f"{S}{root}{S}\n"
-        f"{S}is_git{S}\n"
-        f"{S}{diy}{S}\n"
-        f"{S}is_git{S}\n"
-        f"{S}{sub}{S}\n"
-        f"{S}is_git{S}\n"
+        f"*{root}*\n"
+        f"*is_git*\n"
+        f"*{diy}*\n"
+        f"*is_git*\n"
+        f"*{sub}*\n"
+        f"*is_git*\n"
     )
 
 
@@ -60,7 +60,6 @@ def test_intent_subject_remove(sh: ShellTest):
     (root / ".git").touch()
     sub = root / "sub"
     sub.mkdir()
-    S = "{{*}}"
 
     sh.assert_session(
         f"$ dai subject add {root}\n"
@@ -73,7 +72,7 @@ def test_intent_subject_remove(sh: ShellTest):
         "status: success\n"
         "\n"
         "$ dai subject list\n"
-        f"{S}{root}{S}\n"
+        f"*{root}*\n"
         "\n"
         f"$ dai subject show {sub} 2>&1; echo $?\n"
         "{{regex:.*}}\n"
@@ -105,17 +104,16 @@ def test_intent_subject_scan(sh: ShellTest):
     (repo / "beta").mkdir()
     (repo / "alpha" / ".git").touch()
     (repo / "beta" / ".git").touch()
-    S = "{{*}}"
 
     sh.assert_session(
         f"$ dai subject scan --root {repo}\n"
         "status: success\n"
         "data:\n"
-        f"{S}found{S}\n"
+        "*found*\n"
         "\n"
         "$ dai subject tree\n"
-        f"{S}{repo / 'alpha'}{S}\n"
-        f"{S}is_git{S}\n"
-        f"{S}{repo / 'beta'}{S}\n"
-        f"{S}is_git{S}\n"
+        f"*{repo / 'alpha'}*\n"
+        f"*is_git*\n"
+        f"*{repo / 'beta'}*\n"
+        f"*is_git*\n"
     )

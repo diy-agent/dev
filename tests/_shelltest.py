@@ -220,21 +220,33 @@ class Session:
     def _line_matches(self, expected: str, actual: str) -> bool:
         if expected == actual:
             return True
-        if "{{" not in expected:
-            return False
 
-        parts: list[str] = []
-        for text, is_sentinel in self._tokenize(expected):
-            if is_sentinel:
-                if text == "{{*}}":
-                    parts.append("(?s:.*?)")
-                elif text.startswith("{{regex:") and text.endswith("}}"):
-                    parts.append("(?:" + text[8:-2] + ")")
-            else:
-                parts.append(re.escape(text))
+        # {{*}} / {{regex:...}} 标记（向后兼容）
+        if "{{" in expected:
+            parts: list[str] = []
+            for text, is_sentinel in self._tokenize(expected):
+                if is_sentinel:
+                    if text == "{{*}}":
+                        parts.append("(?s:.*?)")
+                    elif text.startswith("{{regex:") and text.endswith("}}"):
+                        parts.append("(?:" + text[8:-2] + ")")
+                else:
+                    # 非标记段: * 作为 glob 通配符
+                    if "*" in text:
+                        segs = [re.escape(s) for s in text.split("*")]
+                        parts.append("(?s:" + ".*?".join(segs) + ")")
+                    else:
+                        parts.append(re.escape(text))
+            pat = "^" + "".join(parts) + "$"
+            return bool(re.fullmatch(pat, actual))
 
-        pat = "^" + "".join(parts) + "$"
-        return bool(re.fullmatch(pat, actual))
+        # glob 式 * 通配符（推荐，无 f-string 冲突）
+        if "*" in expected:
+            parts = [re.escape(seg) for seg in expected.split("*")]
+            pat = "^(?s:" + ".*?".join(parts) + ")$"
+            return bool(re.fullmatch(pat, actual))
+
+        return False
 
     def _match_block(self, expected: list[str], actual: str, label: str) -> None:
         actual_lines = actual.split("\n") if actual else []
