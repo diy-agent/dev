@@ -1,0 +1,373 @@
+"""ShellTest — PTY-based shell session factory and session engine.
+
+ShellTest is a factory/builder — it holds configuration but does NOT
+open a bash process until you call .session() or .assert_session().
+
+Usage:
+    # One-shot intent test (auto open/close)
+    sh = ShellTest(cwd="/tmp")
+    sh.assert_session("! echo hello\\nhello")
+
+    # Stateful multi-command session
+    with ShellTest(cwd="/tmp").session() as s:
+        s.run("export X=1")
+        s.run("echo $X")
+
+    # Fixture pattern
+    #   @pytest.fixture
+    #   def sh():
+    #       return ShellTest(cwd="/tmp")
+    #   def test_xxx(sh):
+    #       sh.assert_session("...")
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import select
+import subprocess
+import time
+
+
+# ── Session: the actual bash process ──
+
+
+class Session:
+    """持久 bash 进程（PTY + stderr pipe），退出码捕获，实时 cwd 查询。
+
+    不要直接构造——通过 ShellTest().session() 获取。
+
+    >>> s = ShellTest(cwd="/tmp").session()
+    >>> s.cwd
+    '/private/tmp'
+    >>> code, out, err = s.run("echo hello")
+    >>> code
+    0
+    >>> out
+    'hello'
+    >>> s.close()
+    """
+
+    def __init__(self, shell: str = "bash", cwd: str | None = None):
+        self._marker = f"__ST_{os.urandom(4).hex()}__"
+        self._pat = re.compile(rf"^{re.escape(self._marker)}\((\d+)\)__\s*$")
+
+        master_fd, slave_fd = os.openpty()
+        self._master_fd = master_fd
+
+        err_r, err_w = os.pipe()
+        self._err_fd = err_r
+
+        # --norc: 不加载 ~/.bashrc，防止用户密钥/env 泄露到测试输出
+        args = [shell]
+        if os.path.basename(shell) in ("bash", "sh"):
+            args.append("--norc")
+        args.append("-i")
+
+        self._proc = subprocess.Popen(
+            args,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=err_w,
+            cwd=cwd,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        os.close(err_w)
+
+        # 吃 bash 启动输出 + 注入 PS1（含 $?）+ 关 bracketed paste
+        self._read()
+        self._write(f"PS1='{self._marker}($?)__ '")
+        self._write('bind "set enable-bracketed-paste off" 2>/dev/null')
+        self._read()
+
+    # ── 底层 IO ──
+
+    def _write(self, cmd: str) -> None:
+        try:
+            os.write(self._master_fd, (cmd + "\n").encode())
+        except (OSError, ValueError):
+            pass
+
+    def _read(self, timeout: float = 12.0, quiet: float = 2.0) -> tuple[str, str]:
+        out_buf = b""
+        err_buf = b""
+        last_data = time.time()
+        end = time.time() + timeout
+        fds = [self._master_fd, self._err_fd]
+
+        while time.time() < end:
+            r, _, _ = select.select(fds, [], [], 0.1)
+            if r:
+                got_data = False
+                for fd in r:
+                    try:
+                        data = os.read(fd, 4096)
+                    except OSError:
+                        continue
+                    if not data:
+                        continue
+                    if fd == self._master_fd:
+                        out_buf += data
+                    else:
+                        err_buf += data
+                    got_data = True
+                if got_data:
+                    last_data = time.time()
+            elif time.time() - last_data >= quiet:
+                break
+
+        return (
+            out_buf.decode("utf-8", errors="replace"),
+            err_buf.decode("utf-8", errors="replace"),
+        )
+
+    # ── 命令执行 ──
+
+    def run(self, cmd: str, timeout: float = 12.0, quiet: float = 2.0) -> tuple[int, str, str]:
+        self._write(cmd)
+        stdout_raw, stderr_raw = self._read(timeout=timeout, quiet=quiet)
+
+        out = stdout_raw.replace("\r\n", "\n").replace("\r", "").strip()
+
+        err_lines = stderr_raw.split("\n")
+        err_parts: list[str] = []
+        exit_code = -1
+        found_marker = False
+
+        for line in err_lines[1:]:
+            stripped = line.strip()
+            m = self._pat.match(stripped)
+            if m:
+                exit_code = int(m.group(1))
+                found_marker = True
+                break
+            err_parts.append(line.rstrip("\r"))
+
+        proc_exit = self._proc.poll()
+        if not found_marker and proc_exit is not None:
+            exit_code = proc_exit
+
+        err = "\n".join(err_parts).strip()
+        return exit_code, out, err
+
+    @property
+    def cwd(self) -> str:
+        _, out, _ = self.run("pwd")
+        return out
+
+    # ── 多行意图测试 transcript ──
+
+    _RE_ANY = re.compile(r"\{\{\*\}\}")
+    _RE_REGEX = re.compile(r"\{\{regex:(.*?)\}\}")
+
+    def _find_regex_closing(self, line: str, start: int) -> int:
+        i = start
+        while i < len(line):
+            if line[i : i + 2] == "}}":
+                if i >= 2 and line[i - 1].isdigit():
+                    j = i - 1
+                    while j >= start and line[j].isdigit():
+                        j -= 1
+                    if j >= start and line[j] == "{":
+                        i += 1
+                        continue
+                return i
+            i += 1
+        raise ValueError(f"未闭合的 {{regex: 标记: {line!r}")
+
+    def _tokenize(self, line: str) -> list[tuple[str, bool]]:
+        tokens: list[tuple[str, bool]] = []
+        i = 0
+        while i < len(line):
+            if line[i : i + 5] == "{{*}}":
+                tokens.append(("{{*}}", True))
+                i += 5
+            elif line[i : i + 8] == "{{regex:":
+                end = self._find_regex_closing(line, i + 8)
+                tokens.append((line[i : end + 2], True))
+                i = end + 2
+            else:
+                j = i
+                while j < len(line) and not (
+                    line[j : j + 5] == "{{*}}" or line[j : j + 8] == "{{regex:"
+                ):
+                    j += 1
+                tokens.append((line[i:j], False))
+                i = j
+        return tokens
+
+    def _line_matches(self, expected: str, actual: str) -> bool:
+        if expected == actual:
+            return True
+        if "{{" not in expected:
+            return False
+
+        parts: list[str] = []
+        for text, is_sentinel in self._tokenize(expected):
+            if is_sentinel:
+                if text == "{{*}}":
+                    parts.append("(?s:.*?)")
+                elif text.startswith("{{regex:") and text.endswith("}}"):
+                    parts.append("(?:" + text[8:-2] + ")")
+            else:
+                parts.append(re.escape(text))
+
+        pat = "^" + "".join(parts) + "$"
+        return bool(re.fullmatch(pat, actual))
+
+    def _match_block(self, expected: list[str], actual: str, label: str) -> None:
+        actual_lines = actual.split("\n") if actual else []
+        expected_clean = [l for l in expected if l.strip()]
+
+        max_lines = max(len(expected_clean), len(actual_lines))
+        for i in range(max_lines):
+            if i >= len(expected_clean):
+                break
+            if i >= len(actual_lines):
+                raise AssertionError(
+                    f"[{label}] 第 {i+1} 行: 期望 {expected_clean[i]!r}，但命令只有 {len(actual_lines)} 行输出"
+                )
+            if not self._line_matches(expected_clean[i], actual_lines[i]):
+                raise AssertionError(
+                    f"[{label}] 第 {i+1} 行: 期望 {expected_clean[i]!r}，实际 {actual_lines[i]!r}"
+                )
+
+    def _parse_session(self, session: str) -> list[tuple[str, list[str], list[str]]]:
+        blocks: list[tuple[str, list[str], list[str]]] = []
+        lines = session.split("\n")
+
+        cmd = ""
+        stdout_expected: list[str] = []
+        stderr_expected: list[str] = []
+        target = stdout_expected
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("!"):
+                if cmd:
+                    blocks.append((cmd, stdout_expected, stderr_expected))
+                cmd = stripped[1:].strip()
+                stdout_expected = []
+                stderr_expected = []
+                target = stdout_expected
+                continue
+            if stripped == "---":
+                target = stderr_expected
+                continue
+            if not stripped or stripped.startswith("#"):
+                continue
+            target.append(stripped)
+
+        if cmd:
+            blocks.append((cmd, stdout_expected, stderr_expected))
+        return blocks
+
+    def assert_session(self, session: str) -> None:
+        blocks = self._parse_session(session)
+        for cmd, stdout_exp, stderr_exp in blocks:
+            _, out, err = self.run(cmd)
+            self._match_block(stdout_exp, out, f"stdout: ! {cmd}")
+            if stderr_exp:
+                self._match_block(stderr_exp, err, f"stderr: ! {cmd}")
+
+    # ── 资源管理 ──
+
+    def close(self) -> None:
+        if not hasattr(self, "_master_fd") or self._master_fd < 0:
+            return
+        try:
+            self._write("exit")
+            self._read(timeout=1.0)
+        finally:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = -1
+            if self._err_fd is not None:
+                try:
+                    os.close(self._err_fd)
+                except OSError:
+                    pass
+                self._err_fd = -1
+            try:
+                self._proc.wait(timeout=3)
+            except (subprocess.TimeoutExpired, AttributeError):
+                try:
+                    self._proc.kill()
+                    self._proc.wait()
+                except Exception:
+                    pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+# ── ShellTest: factory / builder ──
+
+
+class ShellTest:
+    """Shell 会话工厂。不开进程，只记配置。
+
+    通过 .session() 获取 Session，或 .assert_session() 一锤子交易。
+    .with_options() 返回新实例，不影响原配置。
+    """
+
+    def __init__(
+        self,
+        shell: str = "bash",
+        cwd: str | None = None,
+        init_commands: list[str] | None = None,
+    ):
+        self._shell = shell
+        self._cwd = cwd
+        self._init_commands = list(init_commands or [])
+
+    @property
+    def cwd(self) -> str | None:
+        return self._cwd
+
+    def with_options(
+        self,
+        shell: str | None = None,
+        cwd: str | None = None,
+        init_commands: list[str] | None = None,
+    ) -> ShellTest:
+        """返回新实例，覆盖部分参数，原实例不变。
+
+        适合 fixture 中微调：
+            shared = ShellTest(cwd="/tmp")
+            shared.with_options(cwd="/var").assert_session("...")
+        """
+        return ShellTest(
+            shell=shell if shell is not None else self._shell,
+            cwd=cwd if cwd is not None else self._cwd,
+            init_commands=init_commands if init_commands is not None else self._init_commands.copy()
+            if self._init_commands
+            else None,
+        )
+
+    def session(self) -> Session:
+        s = Session(shell=self._shell, cwd=self._cwd)
+        for cmd in self._init_commands:
+            s.run(cmd)
+        return s
+
+    def run(self, cmd: str, **kwargs) -> tuple[int, str, str]:
+        with self.session() as s:
+            return s.run(cmd, **kwargs)
+
+    def assert_session(self, session: str) -> None:
+        with self.session() as s:
+            s.assert_session(session)
