@@ -135,47 +135,65 @@ def get_task(task_num: int) -> dict[str, Any] | None:
     return state["tasks"].get(str(task_num))
 
 
+def _next_task_id(data: dict[str, Any]) -> int:
+    """自动递增任务 ID。"""
+    nums = [int(k) for k in data.get("tasks", {})]
+    return max(nums) + 1 if nums else 1
+
+
+def create_task(
+    title: str,
+    subject: str,
+    parent: int | None = None,
+    state_val: str = "pending",
+) -> int:
+    """创建任务，返回新 ID。"""
+    state_data = load_state()
+    tid = _next_task_id(state_data)
+    key = str(tid)
+
+    entry: dict[str, Any] = {
+        "id": tid,
+        "title": title,
+        "state": state_val,
+        "subject": subject,
+    }
+    if parent is not None:
+        entry["parent"] = parent
+
+    state_data["tasks"][key] = entry
+    save_state(state_data)
+    return tid
+
+
+def update_task_field(task_num: int, **fields: Any) -> dict[str, Any]:
+    """更新任务字段，返回更新后的完整任务。"""
+    state_data = load_state()
+    key = str(task_num)
+    if key not in state_data["tasks"]:
+        raise KeyError(f"Task #{task_num} 不存在")
+    state_data["tasks"][key].update(fields)
+    save_state(state_data)
+    return dict(state_data["tasks"][key])
+
+
+def delete_task(task_num: int) -> None:
+    """删除任务。不存在时静默成功。"""
+    state_data = load_state()
+    key = str(task_num)
+    if key in state_data["tasks"]:
+        del state_data["tasks"][key]
+        save_state(state_data)
+
+
+def list_tasks() -> dict[str, Any]:
+    """列出所有任务。"""
+    return load_state()["tasks"]
+
+
 def get_task_spaces(task_num: int) -> list[str]:
     """获取任务声明的 spaces。"""
     task = get_task(task_num)
     if not task:
         return []
     return task.get("spaces", [])
-
-
-def register_task(
-    task_num: int,
-    title: str,
-    spaces: list[str] | None = None,
-    parent: int | None = None,
-    state_val: str = "pending",
-) -> None:
-    """注册或更新任务。"""
-    state_data = load_state()
-    key = str(task_num)
-    entry: dict[str, Any] = {"title": title, "state": state_val}
-    if parent is not None:
-        entry["parent"] = parent
-    if spaces:
-        entry["spaces"] = spaces
-
-    # 保留已有字段
-    existing = state_data["tasks"].get(key, {})
-    existing.update(entry)
-    state_data["tasks"][key] = existing
-    save_state(state_data)
-
-
-def update_task_state(task_num: int, new_state: str) -> None:
-    """更新任务状态字段。"""
-    state_data = load_state()
-    key = str(task_num)
-    if key not in state_data["tasks"]:
-        raise KeyError(f"Task #{task_num} 未注册")
-    state_data["tasks"][key]["state"] = new_state
-    save_state(state_data)
-
-
-def list_tasks() -> dict[str, Any]:
-    """列出所有任务。"""
-    return load_state()["tasks"]

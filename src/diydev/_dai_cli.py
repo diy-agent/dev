@@ -20,7 +20,7 @@ import yaml
 from cyclopts import App, Parameter
 
 from ._log import VerboseFlag, set_verbosity
-from ._state import load_state, save_state
+from ._state import create_task, delete_task, get_task, list_tasks, load_state, save_state, update_task_field
 
 app = App(
     name="dai",
@@ -502,6 +502,141 @@ def _place_in_tree(tree: dict[str, object], path: str, entry: dict) -> None:
 
 
 app.command(subject_app)
+
+
+# ════════════════════════════════════════════════════════════════
+# dai task
+# ════════════════════════════════════════════════════════════════
+
+task_app = App(name="task", help="任务管理")
+
+
+@task_app.command(name="create")
+def task_create(
+    title: Annotated[str, Parameter(name="--title", help="任务标题")],
+    subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
+    parent: Annotated[int | None, Parameter(name="--parent", help="父任务ID")] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """创建任务。subject 必须已注册。"""
+    subject_n = _norm(subject)
+    data = load_state()
+    subjects = data.get("subjects", {})
+
+    if subject_n not in subjects:
+        print(f"错误: subject {shlex.quote(subject_n)} 未注册", file=sys.stderr)
+        sys.exit(1)
+
+    if parent is not None and get_task(parent) is None:
+        print(f"错误: parent #{parent} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    tid = create_task(title=title, subject=subject_n, parent=parent)
+    task = get_task(tid) or {}
+    result = {"status": "success", "data": task}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="list")
+def task_list(
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """列出所有任务。"""
+    tasks_out: dict[int, Any] = {}
+    for k, v in list_tasks().items():
+        entry = dict(v)
+        entry.pop("id", None)  # id 已在 key 中，不重复
+        tasks_out[int(k)] = entry
+    output = {"tasks": tasks_out}
+    if json_output:
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(output, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="show")
+def task_show(
+    task_id: Annotated[int, Parameter(help="任务 ID")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """查看单个任务。"""
+    task = get_task(task_id)
+    if task is None:
+        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        sys.exit(1)
+    if json_output:
+        print(json.dumps(task, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(task, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="edit")
+def task_edit(
+    task_id: Annotated[int, Parameter(help="任务 ID")],
+    title: Annotated[str | None, Parameter(name="--title", help="新标题")] = None,
+    state: Annotated[str | None, Parameter(name="--state", help="新状态")] = None,
+    subject: Annotated[str | None, Parameter(name="--subject", help="新 subject")] = None,
+    parent: Annotated[int | None, Parameter(name="--parent", help="新父任务ID")] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """编辑任务。返回编辑后的完整字段。"""
+    if get_task(task_id) is None:
+        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    fields: dict[str, Any] = {}
+    if title is not None:
+        fields["title"] = title
+    if state is not None:
+        fields["state"] = state
+    if subject is not None:
+        fields["subject"] = _norm(subject)
+    if parent is not None:
+        if get_task(parent) is None:
+            print(f"错误: parent #{parent} 不存在", file=sys.stderr)
+            sys.exit(1)
+        fields["parent"] = parent
+
+    task = update_task_field(task_id, **fields)
+    result = {"status": "success", "data": task}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="delete")
+def task_delete(
+    task_id: Annotated[int, Parameter(help="任务 ID")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """删除任务。"""
+    if get_task(task_id) is None:
+        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    delete_task(task_id)
+    result = {"status": "success"}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+app.command(task_app)
 
 
 # ════════════════════════════════════════════════════════════════

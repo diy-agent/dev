@@ -57,7 +57,7 @@ def test_intent_task_create_and_list(sh: ShellTest, fake_home: Path):
     """)
 
 
-def test_intent_task_list_empty(sh: ShellTest):
+def test_intent_task_list_empty(sh: ShellTest, fake_home: Path):
     """无任务时列表为空。"""
     sh.assert_session("""
         $ dai task list
