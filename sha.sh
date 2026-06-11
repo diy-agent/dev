@@ -87,7 +87,7 @@ unlink() {
 
 
 
-test() { run uv run pytest "${@:-tests/}" -m "not browser";}
+test() { run uv run python -m pytest "${@:-tests/}" -m "not browser";}
 # CI: check + test, 供 CI 流水线使用
 ci() { check; test; }
 #  ./sha.sh test-headless
