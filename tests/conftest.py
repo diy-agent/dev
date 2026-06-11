@@ -31,19 +31,16 @@ _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @pytest.fixture(autouse=True)
 def _isolate_state(monkeypatch):
-    """强制 state.yaml 隔离——测试绝不可能触碰真实 ~/.diy/state.yaml。
-
-    每个测试函数获得独立临时目录，通过 DIY_STATE_PATH 环境变量注入。
-    """
+    """每个测试获得独立 DIY_HOME 目录，隔离 ~/.diy。"""
     tmp = tempfile.mkdtemp(prefix="diy-test-state-")
-    monkeypatch.setenv("DIY_STATE_PATH", str(Path(tmp) / "state.yaml"))
+    monkeypatch.setenv("DIY_HOME", str(tmp))
 
 
 @pytest.fixture
 def sh():
     """ShellTest 实例，已激活项目 .venv，dai 命令直接可用。
 
-    DIY_STATE_PATH 由 _isolate_state fixture 自动注入。
+    DIY_HOME 由 _isolate_state fixture 自动注入。
     """
     return ShellTest(
         cwd=_PROJECT,

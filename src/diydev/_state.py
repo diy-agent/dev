@@ -34,9 +34,9 @@ DEFAULT_STATE: dict[str, Any] = {
 
 
 def _state_path() -> Path:
-    """~/.diy/state.yaml（可通过 DIY_STATE_PATH 环境变量覆盖，供测试用）"""
-    if env_path := os.environ.get("DIY_STATE_PATH"):
-        return Path(env_path)
+    """~/.diy/state.yaml（可通过 DIY_HOME 环境变量覆盖目录，供测试用）"""
+    if home := os.environ.get("DIY_HOME"):
+        return Path(home) / "state.yaml"
     return Path(os.path.expanduser("~/.diy/state.yaml"))
 
 

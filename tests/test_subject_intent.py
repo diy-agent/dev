@@ -1,6 +1,6 @@
 """dai subject — Subject 树管理意图测试。
 
-sh fixture 已激活 .venv（dai 直接可用）+ DIY_STATE_PATH 已隔离。
+sh fixture 已激活 .venv（dai 直接可用）+ DIY_HOME 已隔离。
 """
 
 from __future__ import annotations
