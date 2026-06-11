@@ -29,12 +29,12 @@ from _shelltest import ShellTest
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def fake_home(monkeypatch):
-    """每个测试获得独立 $HOME，隔离 ~/.diy。
+    """独立 $HOME 目录——需要隔离的测试显式声明。
 
-    $HOME 设为临时目录，子进程 bash ∼ 展开到此目录。
-    DIY_HOME 同步设置，dai 数据也存于此。
+    子进程 bash 中 ∼ 展开到此目录，dai 数据也存在这里。
+    注意：此 fixture 会导致 gh 等依赖 ~/.config 的工具失效。
     """
     tmp = Path(tempfile.mkdtemp(prefix="diy-test-state-"))
     monkeypatch.setenv("HOME", str(tmp))
@@ -43,11 +43,8 @@ def fake_home(monkeypatch):
 
 
 @pytest.fixture
-def sh(fake_home: Path):
-    """ShellTest 实例，已激活项目 .venv，dai 直接可用。
-
-    $HOME/DIY_HOME 由 fake_home fixture 自动隔离。
-    """
+def sh():
+    """ShellTest 实例，已激活项目 .venv，dai 直接可用。"""
     return ShellTest(
         cwd=_PROJECT,
         init_commands=["source .venv/bin/activate"],
