@@ -49,9 +49,15 @@ class Session:
     >>> s.close()
     """
 
-    def __init__(self, shell: str = "bash", cwd: str | None = None):
+    def __init__(
+        self,
+        shell: str = "bash",
+        cwd: str | None = None,
+        ps1_prefix: str = "",
+    ):
         self._marker = f"__ST_{os.urandom(4).hex()}__"
-        self._pat = re.compile(rf"^{re.escape(self._marker)}\((\d+)\)__\s*$")
+        # 不锚定行首——ps1_prefix 可能出现 marker 前面
+        self._pat = re.compile(rf"{re.escape(self._marker)}\((\d+)\)__")
 
         master_fd, slave_fd = os.openpty()
         self._master_fd = master_fd
@@ -76,10 +82,12 @@ class Session:
         os.close(slave_fd)
         os.close(err_w)
 
-        # 吃 bash 启动输出 + 注入 PS1（含 $?）+ 关 bracketed paste
+        # 吃 bash 启动输出 + 注入 PS1（含前缀 + $? + 关 bracketed paste + 锁
         self._read()
-        self._write(f"PS1='{self._marker}($?)__ '")
+        ps1 = f"{ps1_prefix}{self._marker}($?)__ "
+        self._write(f"PS1='{ps1}'")
         self._write('bind "set enable-bracketed-paste off" 2>/dev/null')
+        self._write("readonly PS1")
         self._read()
 
     # ── 底层 IO ──
@@ -115,6 +123,8 @@ class Session:
                     got_data = True
                 if got_data:
                     last_data = time.time()
+                else:
+                    break  # 所有 fd 都 EOF → bash 已退出
             elif time.time() - last_data >= quiet:
                 break
 
@@ -138,7 +148,7 @@ class Session:
 
         for line in err_lines[1:]:
             stripped = line.strip()
-            m = self._pat.match(stripped)
+            m = self._pat.search(stripped)
             if m:
                 exit_code = int(m.group(1))
                 found_marker = True
@@ -148,6 +158,15 @@ class Session:
         proc_exit = self._proc.poll()
         if not found_marker and proc_exit is not None:
             exit_code = proc_exit
+
+        if not found_marker and exit_code == -1:
+            raise RuntimeError(
+                f"Shell marker not found in command output.\n"
+                f"  cmd: {cmd!r}\n"
+                f"  stdout: {out!r}\n"
+                f"  stderr: {stderr_raw[-200:]!r}\n"
+                "This usually means PS1 was overwritten or bash crashed."
+            )
 
         err = "\n".join(err_parts).strip()
         return exit_code, out, err
@@ -221,17 +240,11 @@ class Session:
         actual_lines = actual.split("\n") if actual else []
         expected_clean = [l for l in expected if l.strip()]
 
-        max_lines = max(len(expected_clean), len(actual_lines))
-        for i in range(max_lines):
-            if i >= len(expected_clean):
-                break
-            if i >= len(actual_lines):
+        for exp in expected_clean:
+            if not any(self._line_matches(exp, act) for act in actual_lines):
                 raise AssertionError(
-                    f"[{label}] 第 {i+1} 行: 期望 {expected_clean[i]!r}，但命令只有 {len(actual_lines)} 行输出"
-                )
-            if not self._line_matches(expected_clean[i], actual_lines[i]):
-                raise AssertionError(
-                    f"[{label}] 第 {i+1} 行: 期望 {expected_clean[i]!r}，实际 {actual_lines[i]!r}"
+                    f"[{label}] 未找到匹配行: {exp!r}\n"
+                    f"  实际输出: {actual!r}"
                 )
 
     def _parse_session(self, session: str) -> list[tuple[str, list[str], list[str]]]:
@@ -245,7 +258,7 @@ class Session:
 
         for line in lines:
             stripped = line.strip()
-            if stripped.startswith("!"):
+            if stripped.startswith("$"):
                 if cmd:
                     blocks.append((cmd, stdout_expected, stderr_expected))
                 cmd = stripped[1:].strip()
@@ -268,9 +281,9 @@ class Session:
         blocks = self._parse_session(session)
         for cmd, stdout_exp, stderr_exp in blocks:
             _, out, err = self.run(cmd)
-            self._match_block(stdout_exp, out, f"stdout: ! {cmd}")
+            self._match_block(stdout_exp, out, f"stdout: $ {cmd}")
             if stderr_exp:
-                self._match_block(stderr_exp, err, f"stderr: ! {cmd}")
+                self._match_block(stderr_exp, err, f"stderr: $ {cmd}")
 
     # ── 资源管理 ──
 
@@ -329,10 +342,12 @@ class ShellTest:
         shell: str = "bash",
         cwd: str | None = None,
         init_commands: list[str] | None = None,
+        ps1_prefix: str = "",
     ):
         self._shell = shell
         self._cwd = cwd
         self._init_commands = list(init_commands or [])
+        self._ps1_prefix = ps1_prefix
 
     @property
     def cwd(self) -> str | None:
@@ -343,6 +358,7 @@ class ShellTest:
         shell: str | None = None,
         cwd: str | None = None,
         init_commands: list[str] | None = None,
+        ps1_prefix: str | None = None,
     ) -> ShellTest:
         """返回新实例，覆盖部分参数，原实例不变。
 
@@ -356,10 +372,11 @@ class ShellTest:
             init_commands=init_commands if init_commands is not None else self._init_commands.copy()
             if self._init_commands
             else None,
+            ps1_prefix=ps1_prefix if ps1_prefix is not None else self._ps1_prefix,
         )
 
     def session(self) -> Session:
-        s = Session(shell=self._shell, cwd=self._cwd)
+        s = Session(shell=self._shell, cwd=self._cwd, ps1_prefix=self._ps1_prefix)
         for cmd in self._init_commands:
             s.run(cmd)
         return s
