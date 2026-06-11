@@ -249,7 +249,7 @@ class Session:
         return False
 
     def _match_block(self, expected: list[str], actual: str, label: str) -> None:
-        actual_lines = actual.split("\n") if actual else []
+        actual_lines = [l.strip() for l in actual.split("\n")] if actual else []
         expected_clean = [l for l in expected if l.strip()]
 
         for exp in expected_clean:

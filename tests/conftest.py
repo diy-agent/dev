@@ -33,12 +33,34 @@ _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def fake_home(monkeypatch):
     """独立 $HOME 目录——需要隔离的测试显式声明。
 
-    子进程 bash 中 ∼ 展开到此目录，dai 数据也存在这里。
-    注意：此 fixture 会导致 gh 等依赖 ~/.config 的工具失效。
+    ∼ 展开到此目录，dai 数据也存于此。
+    自动 symlink .config/.local/.ssh/.cache/.gitconfig 并设 GH_TOKEN。
     """
     tmp = Path(tempfile.mkdtemp(prefix="diy-test-state-"))
+    real = Path.home()
+
+    # symlink 系统目录
+    for d in [".config", ".local", ".ssh", ".cache"]:
+        src = real / d
+        if src.exists():
+            (tmp / d).symlink_to(src)
+    for f in [".gitconfig"]:
+        src = real / f
+        if src.exists():
+            (tmp / f).symlink_to(src)
+
+    # gh token: 必须设 HOME 之前拿（Keychain 依赖真实 HOME）
+    try:
+        import subprocess as _sp
+        r = _sp.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            monkeypatch.setenv("GH_TOKEN", r.stdout.strip())
+    except Exception:
+        pass
+
     monkeypatch.setenv("HOME", str(tmp))
     monkeypatch.setenv("DIY_HOME", str(tmp))
+
     return tmp
 
 

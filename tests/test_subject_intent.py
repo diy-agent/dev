@@ -22,28 +22,45 @@ def test_intent_subject_add_and_list(sh: ShellTest, fake_home: Path):
     sh.assert_session("""
         $ dai subject add ~/git --desc "根目录"
         status: success
+        data:
+          path: ~/git
+          description: 根目录
 
         $ dai subject add ~/git/diy --desc "diy 生态根"
         status: success
+        data:
+          path: ~/git/diy
+          description: diy 生态根
 
         $ dai subject add ~/git/diy/_diy --desc "核心工具"
         status: success
+        data:
+          path: ~/git/diy/_diy
+          description: 核心工具
 
         $ dai subject list
-        *~/git/diy*
-        *is_git*
-        *~/git*
-        *is_git*
-        *~/git/diy/_diy*
-        *is_git*
+        ~/git:
+          description: 根目录
+          is_git: true
+        ~/git/diy:
+          description: diy 生态根
+          is_git: true
+        ~/git/diy/_diy:
+          description: 核心工具
+          is_git: false
 
         $ dai subject tree
-        *~/git*
-        *is_git*
-        *~/git/diy*
-        *is_git*
-        *~/git/diy/_diy*
-        *is_git*
+        ~/git:
+          description: 根目录
+          is_git: true
+          children:
+            ~/git/diy:
+              description: diy 生态根
+              is_git: true
+              children:
+                ~/git/diy/_diy:
+                  description: 核心工具
+                  is_git: false
     """)
 
 
@@ -54,17 +71,25 @@ def test_intent_subject_remove(sh: ShellTest, fake_home: Path):
     (fake_home / "git" / "sub").mkdir()
 
     sh.assert_session("""
-        $ dai subject add ~/git
+        $ dai subject add ~/git --desc git
         status: success
+        data:
+          path: ~/git
+          description: git
 
-        $ dai subject add ~/git/sub
+        $ dai subject add ~/git/sub --desc sub
         status: success
+        data:
+          path: ~/git/sub
+          description: sub
 
         $ dai subject remove ~/git/sub
         status: success
 
         $ dai subject list
-        *~/git*
+        ~/git:
+          description: git
+          is_git: true
 
         $ dai subject show ~/git/sub 2>&1; echo $?
         *
@@ -77,8 +102,11 @@ def test_intent_subject_duplicate(sh: ShellTest, fake_home: Path):
     (fake_home / "x").mkdir()
 
     sh.assert_session("""
-        $ dai subject add ~/x
+        $ dai subject add ~/x --desc x
         status: success
+        data:
+          path: ~/x
+          description: x
 
         $ dai subject add ~/x 2>&1; echo $?
         *
@@ -97,11 +125,11 @@ def test_intent_subject_scan(sh: ShellTest, fake_home: Path):
         $ dai subject scan --root ~/repos
         status: success
         data:
-        *found*
+          found: 2
 
         $ dai subject tree
-        *alpha*
-        *is_git*
-        *beta*
-        *is_git*
+        ~/repos/alpha:
+          is_git: true
+        ~/repos/beta:
+          is_git: true
     """)
