@@ -24,32 +24,32 @@ def test_intent_subject_add_and_list(sh: ShellTest):
     sub = diy / "_diy"
     sub.mkdir()
 
-    sh.assert_session(
-        f"$ dai subject add {root} --desc \"根目录\"\n"
-        "status: success\n"
-        "\n"
-        f"$ dai subject add {diy} --desc \"diy 生态根\"\n"
-        "status: success\n"
-        "\n"
-        f"$ dai subject add {sub} --desc \"核心工具\"\n"
-        "status: success\n"
-        "\n"
-        "$ dai subject list\n"
-        f"*{diy}*\n"
-        f"*is_git*\n"
-        f"*{root}*\n"
-        f"*is_git*\n"
-        f"*{sub}*\n"
-        f"*is_git*\n"
-        "\n"
-        "$ dai subject tree\n"
-        f"*{root}*\n"
-        f"*is_git*\n"
-        f"*{diy}*\n"
-        f"*is_git*\n"
-        f"*{sub}*\n"
-        f"*is_git*\n"
-    )
+    sh.assert_session(f"""
+        $ dai subject add {root} --desc "根目录"
+        status: success
+
+        $ dai subject add {diy} --desc "diy 生态根"
+        status: success
+
+        $ dai subject add {sub} --desc "核心工具"
+        status: success
+
+        $ dai subject list
+        *{diy}*
+        *is_git*
+        *{root}*
+        *is_git*
+        *{sub}*
+        *is_git*
+
+        $ dai subject tree
+        *{root}*
+        *is_git*
+        *{diy}*
+        *is_git*
+        *{sub}*
+        *is_git*
+    """)
 
 
 def test_intent_subject_remove(sh: ShellTest):
@@ -61,23 +61,23 @@ def test_intent_subject_remove(sh: ShellTest):
     sub = root / "sub"
     sub.mkdir()
 
-    sh.assert_session(
-        f"$ dai subject add {root}\n"
-        "status: success\n"
-        "\n"
-        f"$ dai subject add {sub}\n"
-        "status: success\n"
-        "\n"
-        f"$ dai subject remove {sub}\n"
-        "status: success\n"
-        "\n"
-        "$ dai subject list\n"
-        f"*{root}*\n"
-        "\n"
-        f"$ dai subject show {sub} 2>&1; echo $?\n"
-        "{{regex:.*}}\n"
-        "1\n"
-    )
+    sh.assert_session(f"""
+        $ dai subject add {root}
+        status: success
+
+        $ dai subject add {sub}
+        status: success
+
+        $ dai subject remove {sub}
+        status: success
+
+        $ dai subject list
+        *{root}*
+
+        $ dai subject show {sub} 2>&1; echo $?
+        *
+        1
+    """)
 
 
 def test_intent_subject_duplicate(sh: ShellTest):
@@ -86,14 +86,14 @@ def test_intent_subject_duplicate(sh: ShellTest):
     root = tmp / "x"
     root.mkdir()
 
-    sh.assert_session(
-        f"$ dai subject add {root}\n"
-        "status: success\n"
-        "\n"
-        f"$ dai subject add {root} 2>&1; echo $?\n"
-        "{{regex:.*}}\n"
-        "1\n"
-    )
+    sh.assert_session(f"""
+        $ dai subject add {root}
+        status: success
+
+        $ dai subject add {root} 2>&1; echo $?
+        *
+        1
+    """)
 
 
 def test_intent_subject_scan(sh: ShellTest):
@@ -105,15 +105,15 @@ def test_intent_subject_scan(sh: ShellTest):
     (repo / "alpha" / ".git").touch()
     (repo / "beta" / ".git").touch()
 
-    sh.assert_session(
-        f"$ dai subject scan --root {repo}\n"
-        "status: success\n"
-        "data:\n"
-        "*found*\n"
-        "\n"
-        "$ dai subject tree\n"
-        f"*{repo / 'alpha'}*\n"
-        f"*is_git*\n"
-        f"*{repo / 'beta'}*\n"
-        f"*is_git*\n"
-    )
+    sh.assert_session(f"""
+        $ dai subject scan --root {repo}
+        status: success
+        data:
+        *found*
+
+        $ dai subject tree
+        *{repo / 'alpha'}*
+        *is_git*
+        *{repo / 'beta'}*
+        *is_git*
+    """)

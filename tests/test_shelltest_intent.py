@@ -15,7 +15,10 @@ def test_intent_exit_code_direct():
     """
     sh = ShellTest()
     sh.assert_session("$ true")
-    sh.assert_session("$ false; echo $?\n1")
+    sh.assert_session("""
+        $ false; echo $?
+        1
+    """)
 
 
 def test_intent_separate_channels():
@@ -29,11 +32,7 @@ def test_intent_separate_channels():
 
 
 def test_intent_stateful_session():
-    """环境变量跨 run() 持久。
-
-    用显式 session() 而非 assert_session() 来展示状态保持。
-    ShellTest 不开进程，.session() 才开。
-    """
+    """环境变量跨 run() 持久。"""
     with ShellTest().session() as s:
         s.run("export MSG=world")
         code, out, _ = s.run("echo $MSG")
@@ -42,10 +41,7 @@ def test_intent_stateful_session():
 
 
 def test_intent_error_output_separate():
-    """命令失败时 stderr 有内容，stdout 空，后续命令不受影响。
-
-    assert_session 内部自动开/关 session。
-    """
+    """命令失败时 stderr 有内容，stdout 空，后续命令不受影响。"""
     ShellTest().assert_session("""
         $ cat /nonexistent_file_xyz
         ---
@@ -57,7 +53,7 @@ def test_intent_error_output_separate():
 
 
 def test_intent_sentinel():
-    """{{*}} 匹配任意内容，{{regex:...}} 匹配正则。"""
+    """* 通配符和 {{regex:...}} 匹配。"""
     ShellTest().assert_session("""
         $ echo '任务 #42 创建成功'
         任务 * 创建成功
@@ -68,12 +64,7 @@ def test_intent_sentinel():
 
 
 def test_intent_ps1_readonly():
-    """PS1 被 readonly 保护，用户写入报错，marker 不受影响。
-
-    实现: Session.__init__ 在设置 PS1 后调用 readonly PS1。
-    bash 尝试改 readonly variable 会报错到 stderr 并返回 1，
-    但 prompt marker 保留，后续命令正常解析。
-    """
+    """PS1 被 readonly 保护，用户写入报错，marker 不受影响。"""
     with ShellTest().session() as s:
         code, _, err = s.run("PS1=HAHA")
         assert code == 1
@@ -85,20 +76,13 @@ def test_intent_ps1_readonly():
 
 
 def test_intent_ps1_prefix_readable():
-    """ps1_prefix 让 prompt 可读，marker 仍在行中可解析。
-
-    \\w 展开为 cwd，\\$ 展开为 $。
-    默认 prefix="" 时 marker 在行首（旧行为）。
-    """
+    """ps1_prefix 让 prompt 可读，marker 仍在行中可解析。"""
     with ShellTest(ps1_prefix=r"\w\$ ").session() as s:
-        # 正常命令 — marker 可解析
         code, out, _ = s.run("echo hello")
         assert code == 0
         assert out == "hello"
 
-        # stderr 最后一行包含 prefix + marker
         _, _, err = s.run("true")
         last_line_lines = [l for l in err.strip().split("\n") if l.strip()]
         if last_line_lines:
-            # prefix 展开后含路径（如 /var/...），marker 在同一行
             assert "__ST_" in last_line_lines[-1]
