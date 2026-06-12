@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import sys
@@ -637,6 +638,31 @@ def task_delete(
 
 
 app.command(task_app)
+
+
+# ════════════════════════════════════════════════════════════════
+# dai app — Panel 管控台
+# ════════════════════════════════════════════════════════════════
+
+
+@app.command
+def launch_app(
+    port: Annotated[
+        int, Parameter(name=["--port", "-p"], help="监听端口")
+    ] = 5006,
+    dev: Annotated[
+        bool,
+        Parameter(name=["--dev"], help="dev 模式（autoreload）"),
+    ] = True,
+):
+    """启动 diy 管控台（Panel GUI）。"""
+    from ._state import _state_path as _  # noqa: F401 — verify state.yaml access
+
+    cmd = ["panel", "serve", "--show", str(Path(__file__).parent / "app.py")]
+    if dev:
+        cmd.append("--dev")
+    cmd.extend(["--port", str(port), "--session-history", "0"])
+    os.execvp("panel", cmd)
 
 
 # ════════════════════════════════════════════════════════════════
