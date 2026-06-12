@@ -86,7 +86,6 @@ unlink() {
 }
 
 
-
 test() { run uv run python -m pytest "${@:-tests/}" -m "not browser";}
 # CI: check + test, 供 CI 流水线使用
 ci() { check; test; }
@@ -102,6 +101,5 @@ test-all() { test; test-headless;}
 ####################################################################################
 
 panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
-
 
 sha "$@"
