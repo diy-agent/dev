@@ -28,6 +28,7 @@ import re
 import select
 import subprocess
 import time
+from collections.abc import Callable
 
 
 # ── Session: the actual bash process ──
@@ -54,11 +55,13 @@ class Session:
         shell: str = "bash",
         cwd: str | None = None,
         ps1_prefix: str = "",
+        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]] | None = None,
     ):
         self._marker = f"__ST_{os.urandom(4).hex()}__"
         # 不锚定行首——ps1_prefix 可能出现 marker 前面
         self._pat = re.compile(rf"{re.escape(self._marker)}\((\d+)\)__")
-
+        self._fast_commands = fast_commands or {}
+        self._cwd_init = cwd
         master_fd, slave_fd = os.openpty()
         self._master_fd = master_fd
 
@@ -82,12 +85,14 @@ class Session:
         os.close(slave_fd)
         os.close(err_w)
 
-        # 吃 bash 启动输出 + 注入 PS1（含前缀 + $? + 关 bracketed paste + 锁
-        self._read()
+        # Write setup commands immediately, so the first _read sees the PS1 marker.
+        # This avoids a quiet-timeout fallback — marker detection exits in ~0.05 s.
         ps1 = f"{ps1_prefix}{self._marker}($?)__ "
         self._write(f"PS1='{ps1}'")
         self._write('bind "set enable-bracketed-paste off" 2>/dev/null')
         self._write("readonly PS1")
+
+        # Single _read: eats bash startup output + setup echo + first PS1 (marker)
         self._read()
 
     # ── 底层 IO ──
@@ -98,35 +103,51 @@ class Session:
         except (OSError, ValueError):
             pass
 
-    def _read(self, timeout: float = 12.0, quiet: float = 2.0) -> tuple[str, str]:
+    def _read(self, timeout: float = 12.0, quiet: float = 0.3) -> tuple[str, str]:
         out_buf = b""
         err_buf = b""
         last_data = time.time()
         end = time.time() + timeout
         fds = [self._master_fd, self._err_fd]
+        marker_found = False
 
         while time.time() < end:
-            r, _, _ = select.select(fds, [], [], 0.1)
-            if r:
-                got_data = False
-                for fd in r:
-                    try:
-                        data = os.read(fd, 4096)
-                    except OSError:
-                        continue
-                    if not data:
-                        continue
-                    if fd == self._master_fd:
-                        out_buf += data
-                    else:
-                        err_buf += data
-                    got_data = True
-                if got_data:
-                    last_data = time.time()
-                else:
-                    break  # 所有 fd 都 EOF → bash 已退出
-            elif time.time() - last_data >= quiet:
+            now = time.time()
+
+            # Marker in stderr (PS1) → command done, drain remaining stdout
+            if marker_found and now - last_data >= 0.05:
                 break
+            # No marker → wait for quiet silence, then give up
+            if not marker_found and now - last_data >= quiet:
+                break
+
+            r, _, _ = select.select(fds, [], [], 0.02)
+
+            if not r:
+                continue
+
+            got_data = False
+            for fd in r:
+                try:
+                    data = os.read(fd, 4096)
+                except OSError:
+                    continue
+                if not data:
+                    continue
+                got_data = True
+                if fd == self._master_fd:
+                    out_buf += data
+                else:
+                    err_buf += data
+                    if not marker_found and self._pat.search(
+                        err_buf.decode("utf-8", errors="replace")
+                    ):
+                        marker_found = True
+
+            if got_data:
+                last_data = time.time()
+            else:
+                break  # all fds EOF → bash 已退出
 
         return (
             out_buf.decode("utf-8", errors="replace"),
@@ -135,7 +156,20 @@ class Session:
 
     # ── 命令执行 ──
 
-    def run(self, cmd: str, timeout: float = 12.0, quiet: float = 2.0) -> tuple[int, str, str]:
+    # Shell syntax that disqualifies fast-path execution
+    _SHELL_SYNTAX = re.compile(r'[;&|<>]|\$\(|`')
+
+    def run(self, cmd: str, timeout: float = 12.0, quiet: float = 0.3) -> tuple[int, str, str]:
+        # Try registered fast commands before spawning a process
+        for prefix, handler in self._fast_commands.items():
+            if cmd == prefix or cmd.startswith(prefix + " "):
+                args_str = cmd[len(prefix):].strip()
+                if not self._SHELL_SYNTAX.search(args_str):
+                    result = handler(args_str)
+                    if result is not None:
+                        return result
+                break  # prefix matched; cannot fast-path (shell syntax or None)
+
         self._write(cmd)
         stdout_raw, stderr_raw = self._read(timeout=timeout, quiet=quiet)
 
@@ -355,11 +389,13 @@ class ShellTest:
         cwd: str | None = None,
         init_commands: list[str] | None = None,
         ps1_prefix: str = "",
+        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]] | None = None,
     ):
         self._shell = shell
         self._cwd = cwd
         self._init_commands = list(init_commands or [])
         self._ps1_prefix = ps1_prefix
+        self._fast_commands = fast_commands or {}
 
     @property
     def cwd(self) -> str | None:
@@ -388,7 +424,7 @@ class ShellTest:
         )
 
     def session(self) -> Session:
-        s = Session(shell=self._shell, cwd=self._cwd, ps1_prefix=self._ps1_prefix)
+        s = Session(shell=self._shell, cwd=self._cwd, ps1_prefix=self._ps1_prefix, fast_commands=self._fast_commands)
         for cmd in self._init_commands:
             s.run(cmd)
         return s

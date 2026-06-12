@@ -16,6 +16,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -64,12 +65,48 @@ def fake_home(monkeypatch):
     return tmp
 
 
+def _dai_runner(args_str: str) -> tuple[int, str, str]:
+    """Execute dai CLI in-process, avoiding subprocess overhead.
+
+    Captures stdout/stderr via sys redirection.
+    Falls back through ShellTest.run() for shell-syntax commands (2>&1 etc).
+    """
+    import io
+    import shlex
+
+    from diydev._dai_cli import app as _dai_app
+    import diydev._dai_cli as _dai_mod
+
+    # Refresh module-level _HOME so _norm() converts paths to ~ form correctly
+    # even when monkeypatch changes $HOME between tests.
+    _dai_mod._HOME = os.path.expanduser("~")
+
+    args = shlex.split(args_str)
+    # ~ expansion is handled by bash (when run in subprocess).
+    # When called in-process, pass args as-is — diydev normalizes paths for display.
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out_buf, err_buf
+    exit_code = 0
+    try:
+        _dai_app(args)
+    except SystemExit as e:
+        code = e.code
+        exit_code = code if isinstance(code, int) else (0 if code is None else 1)
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+    return exit_code, out_buf.getvalue(), err_buf.getvalue()
+
+
 @pytest.fixture
 def sh():
     """ShellTest 实例，已激活项目 .venv，dai 直接可用。"""
     return ShellTest(
         cwd=_PROJECT,
         init_commands=["source .venv/bin/activate"],
+        fast_commands={"dai": _dai_runner},
     )
 
 

@@ -55,7 +55,6 @@ profiles:
 tasks:
   '73':
     title: 测试任务
-spaces: {{}}
 """.format(dai=_DAI))
 
 
