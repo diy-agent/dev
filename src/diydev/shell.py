@@ -31,9 +31,12 @@ def _panel_up(url: str) -> bool:
 
 
 def main(dev: bool = False) -> None:
-    # 启动 panel serve
     # panel 在 venv bin 里，从 sys.executable 反推路径
     panel_path = Path(sys.executable).parent / "panel"
+
+    print(f"▶ panel: {panel_path}")
+    print(f"▶ app: {_APP_PATH}")
+
     cmd = [
         str(panel_path),
         "serve",
@@ -44,23 +47,37 @@ def main(dev: bool = False) -> None:
     if dev:
         cmd.append("--dev")
 
+    print(f"▶ 启动: {' '.join(cmd)}")
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         preexec_fn=os.setsid if hasattr(os, "setsid") else None,
     )
 
     url = f"http://localhost:{_PANEL_PORT}/app"
 
     # 等待 panel 就绪
+    print(f"▶ 等待 {url} ...")
     deadline = time.time() + _POLL_TIMEOUT
     while time.time() < deadline:
         if _panel_up(url):
+            print("▶ panel 就绪")
             break
         time.sleep(_POLL_INTERVAL)
     else:
-        print("错误: panel 启动超时", file=sys.stderr)
+        # 读 panel stderr 诊断（非阻塞）
+        stderr_lines = "(non-blocking read)"
+        try:
+            import select as _sel
+            if _sel.select([proc.stderr], [], [], 0.5)[0]:
+                data = proc.stderr.read(4096)
+                stderr_lines = data.decode(errors="replace") if data else ""
+        except Exception:
+            pass
+        print(f"[✗] 超时 ({_POLL_TIMEOUT}s): {url}", file=sys.stderr)
+        print(f"[✗] panel stderr: {stderr_lines}", file=sys.stderr)
         proc.kill()
         sys.exit(1)
 
