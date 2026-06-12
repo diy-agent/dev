@@ -33,8 +33,6 @@ def _panel_up(url: str) -> bool:
 def main(dev: bool = False) -> None:
     # 启动 panel serve
     cmd = [
-        sys.executable or "uv",
-        "run",
         "panel",
         "serve",
         str(_APP_PATH),
