@@ -1,5 +1,5 @@
-"""diydev — diy 开发流程 CLI。"""
+"""diydev — diy 开发工具。"""
 
-from ._cli import main
+from ._dai_cli import main
 
 __all__ = ["main"]

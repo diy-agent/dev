@@ -11,6 +11,7 @@ import os
 import time
 from pathlib import Path
 
+import pandas as pd
 import panel as pn
 
 from diydev._state import load_state
@@ -37,8 +38,8 @@ def _refresh() -> None:
         return
     _last_mtime = mtime
     data = load_state()
-    _subject_tabulator.value = _build_subject_rows(data)
-    _task_tabulator.value = _build_task_rows(data)
+    _subject_tabulator.value = pd.DataFrame(_build_subject_rows(data))
+    _task_tabulator.value = pd.DataFrame(_build_task_rows(data))
 
 
 def _build_subject_rows(data: dict) -> list[dict]:
@@ -48,7 +49,7 @@ def _build_subject_rows(data: dict) -> list[dict]:
         rows.append({
             "path": path,
             "description": info.get("description", ""),
-            "is_git": "✓" if is_git else "",
+            "is_git": is_git,
         })
     return rows
 
@@ -68,15 +69,14 @@ def _build_task_rows(data: dict) -> list[dict]:
 # ── widgets ──
 
 _subject_tabulator = pn.widgets.Tabulator(
-    value=_build_subject_rows(load_state()),
+    value=pd.DataFrame(_build_subject_rows(load_state())),
     pagination=None,
     sizing_mode="stretch_width",
     height=400,
-    formatters={"is_git": {"type": "tickcross"}},
 )
 
 _task_tabulator = pn.widgets.Tabulator(
-    value=_build_task_rows(load_state()),
+    value=pd.DataFrame(_build_task_rows(load_state())),
     pagination=None,
     sizing_mode="stretch_width",
     height=400,
