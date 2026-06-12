@@ -645,7 +645,7 @@ app.command(task_app)
 # ════════════════════════════════════════════════════════════════
 
 
-@app.command
+@app.command(name="app")
 def launch_app(
     port: Annotated[
         int, Parameter(name=["--port", "-p"], help="监听端口")
