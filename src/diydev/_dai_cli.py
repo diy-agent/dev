@@ -655,14 +655,10 @@ def launch_app(
         Parameter(name=["--dev"], help="dev 模式（autoreload）"),
     ] = True,
 ):
-    """启动 diy 管控台（Panel GUI）。"""
-    from ._state import _state_path as _  # noqa: F401 — verify state.yaml access
+    """启动 diy 管控台（原生窗口）。"""
+    from .shell import main as _run_app
 
-    cmd = ["panel", "serve", "--show", str(Path(__file__).parent / "app.py")]
-    if dev:
-        cmd.append("--dev")
-    cmd.extend(["--port", str(port), "--session-history", "0"])
-    os.execvp("panel", cmd)
+    _run_app(dev=dev)
 
 
 # ════════════════════════════════════════════════════════════════
