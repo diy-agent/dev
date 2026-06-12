@@ -32,8 +32,10 @@ def _panel_up(url: str) -> bool:
 
 def main(dev: bool = False) -> None:
     # 启动 panel serve
+    # panel 在 venv bin 里，从 sys.executable 反推路径
+    panel_path = Path(sys.executable).parent / "panel"
     cmd = [
-        "panel",
+        str(panel_path),
         "serve",
         str(_APP_PATH),
         "--port", str(_PANEL_PORT),
