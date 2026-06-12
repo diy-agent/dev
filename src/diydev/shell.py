@@ -43,8 +43,6 @@ def main(dev: bool = False) -> None:
     ]
     if dev:
         cmd.append("--dev")
-    else:
-        cmd.append("--no-autoreload")
 
     proc = subprocess.Popen(
         cmd,
@@ -53,7 +51,7 @@ def main(dev: bool = False) -> None:
         preexec_fn=os.setsid if hasattr(os, "setsid") else None,
     )
 
-    url = f"http://localhost:{_PANEL_PORT}/diy"
+    url = f"http://localhost:{_PANEL_PORT}/app"
 
     # 等待 panel 就绪
     deadline = time.time() + _POLL_TIMEOUT
