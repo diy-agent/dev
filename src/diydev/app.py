@@ -13,7 +13,7 @@ from pathlib import Path
 
 import panel as pn
 
-from ._state import load_state
+from diydev._state import load_state
 
 _STATE_PATH = Path(os.environ.get("DIY_HOME", Path.home() / ".diy")) / "state.yaml"
 
