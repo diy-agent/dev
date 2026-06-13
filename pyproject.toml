@@ -20,8 +20,8 @@ dependencies = [
 dai = "diydev._dai_cli:main"
 
 [tool.uv.sources]
-diy-cli = { path = "../diy/pkgs/diy-cli" }
-diy-ui = { path = "../diy/pkgs/diy-ui" }
+diy-cli = { path = "../diy/pkgs/diy-cli",editable = true }
+diy-ui = { path = "../diy/pkgs/diy-ui", editable = true }
 
 [build-system]
 requires = ["hatchling"]

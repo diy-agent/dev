@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/../diy/pkgs/diy-ui/src"
+    ]
+}
