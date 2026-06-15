@@ -71,7 +71,7 @@ def tui():
         if not msg.strip():
             redraw()
             continue
-        result = _raw_send(f"hum notify {msg}")
+        result = _raw_send(f"human notify {msg}")
         history.append(("user", msg))
         history.append(("system", "✓ 已发送" if result == "OK" else result))
         redraw()
@@ -80,11 +80,11 @@ def tui():
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] in ("help", "--help", "-h"):
-            sys.stdout.write(_raw_send("hum --help") + "\n")
+            sys.stdout.write(_raw_send("human --help") + "\n")
             return
         _check()
         msg = " ".join(sys.argv[1:])
-        result = _raw_send(f"hum notify {msg}")
+        result = _raw_send(f"human notify {msg}")
         if result == "OK":
             print(f"✓ 已发送: {msg}")
         else:

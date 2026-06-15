@@ -628,7 +628,7 @@ class ProbeCLI:
         self._app.command(ai)
 
         # ── 人类子应用 ──
-        hum = CycloptsApp(name="hum", help="人类接口")
+        hum = CycloptsApp(name="human", help="人类接口")
         @hum.command
         def notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
@@ -645,7 +645,7 @@ class ProbeCLI:
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: hum title <文本...>"
+                return "错误: 缺少参数，用法: human title <文本...>"
             from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
