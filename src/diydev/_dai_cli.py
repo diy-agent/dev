@@ -696,35 +696,69 @@ app.command(task_app)
 
 
 def _app_probe(args: list[str]) -> None:
-    """透传任意参数到 app socket（dai app 自动加 ai 前缀）。"""
+    """透传参数到 app socket，连不上自动启动 app。"""
     import socket as sock
+    import subprocess
+    import time as _time
 
     socket_path = os.path.expanduser("~/.diy/app.sock")
     # dai app 是 AI 接口，自动加 ai 前缀
     if not args or args[0] in ("--help", "-h", "--version", "ai"):
-        pass  # 透传原样
+        pass
     else:
         args = ["ai"] + args
-    try:
-        s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
-        s.settimeout(3)
-        s.connect(socket_path)
-        s.sendall((" ".join(args) + "\n").encode("utf-8"))
-        s.shutdown(sock.SHUT_WR)
-        buf = []
-        while True:
-            data = s.recv(4096)
-            if not data:
-                break
-            buf.append(data.decode("utf-8"))
-        s.close()
-        sys.stdout.write("".join(buf))
-    except FileNotFoundError:
-        print("错误: app 未运行（socket 不存在）", file=sys.stderr)
+
+    def _send() -> int:
+        """发送命令到 socket，返回 exit code（0=成功，1=失败）。"""
+        try:
+            s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+            s.settimeout(5)
+            s.connect(socket_path)
+            s.sendall((" ".join(args) + "\n").encode("utf-8"))
+            s.shutdown(sock.SHUT_WR)
+            buf = []
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                buf.append(data.decode("utf-8"))
+            s.close()
+            sys.stdout.write("".join(buf))
+            return 0
+        except (FileNotFoundError, ConnectionRefusedError, OSError):
+            return 1
+
+    if _send() == 0:
+        return
+
+    # 连不上 → 启动 app
+    # __file__ = src/diydev/_dai_cli.py, repo = _diy/
+    srcdir = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(os.path.dirname(srcdir))
+    sha_sh = os.path.join(repo, "sha.sh")
+    if not os.path.exists(sha_sh):
+        print("错误: 找不到 sha.sh，无法启动 app", file=sys.stderr)
         sys.exit(1)
-    except (ConnectionRefusedError, OSError) as e:
-        print(f"错误: 无法连接 app — {e}", file=sys.stderr)
-        sys.exit(1)
+
+    print("⏳ 正在启动 diy 管控台...", file=sys.stderr)
+    subprocess.Popen(
+        ["bash", sha_sh, "app"],
+        cwd=repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 等待 socket 就绪（最多 10 秒）
+    deadline = _time.time() + 10
+    while _time.time() < deadline:
+        if os.path.exists(socket_path):
+            _time.sleep(0.5)  # 让 app 初始化完
+            if _send() == 0:
+                return
+        _time.sleep(0.3)
+
+    print("错误: app 启动超时，请检查日志", file=sys.stderr)
+    sys.exit(1)
 
 
 # ════════════════════════════════════════════════════════════════
