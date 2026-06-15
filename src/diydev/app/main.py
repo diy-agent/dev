@@ -590,21 +590,19 @@ class ProbeCLI:
             return f"未知命令: {' '.join(tokens)!r}  试试 --help"
 
     def dispatch(self, line: str) -> str:
+        import io
+        from rich.console import Console
+
         tokens = line.split() if line else ["--help"]
 
-        # --help / -h → 手动构建帮助（避免 cyclopts console 兼容问题）
-        if set(tokens) & {"--help", "-h"} or not tokens:
-            lines = ["命令:"]
-            for name, sub in sorted(self._app.meta._registered_commands.items()):
-                help_text = (sub.default_command.__doc__ or "").strip()
-                lines.append(f"  {name:<10s} {help_text}")
-            return "\n".join(lines)
-
+        # 全部走 cyclopts 原生渲染（包括 --help）
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, width=80)
         try:
-            command, bound, _ = self._app.parse_args(tokens)
-            return str(command(*bound.args, **bound.kwargs))
+            self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
-            return "错误: 命令解析失败"
+            pass
+        return buf.getvalue().strip() or "OK"
 
 
 class AppProbe(QObject):
