@@ -660,19 +660,29 @@ class ProbeCLI:
             return f"未知命令: {' '.join(tokens)!r}  试试 --help"
 
     def dispatch(self, line: str, out) -> None:
-        """流式输出 — 直接写 out，不缓冲。异常也写到 out。"""
+        """流式输出 — 直接写 out，不缓冲。"""
+        import io
         from rich.console import Console
 
         tokens = line.split() if line else ["--help"]
         console = Console(file=out, force_terminal=True, width=80)
+
+        # cyclopts 错误写入 stderr，重定向到 out
+        old_stderr = sys.stderr
+        err_buf = io.StringIO()
+        sys.stderr = err_buf
         try:
             self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
             pass
-        except Exception as exc:
-            import traceback
-            console.print(f"\n[red]错误: {exc}[/red]")
-            traceback.print_exc(file=sys.stderr)
+        except Exception:
+            pass  # cyclopts 错误已写入 stderr → err_buf
+        finally:
+            sys.stderr = old_stderr
+
+        err_text = err_buf.getvalue()
+        if err_text:
+            out.write(err_text)
         out.flush()
 
 
