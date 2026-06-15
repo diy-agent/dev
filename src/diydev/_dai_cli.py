@@ -695,6 +695,82 @@ app.command(task_app)
 # ════════════════════════════════════════════════════════════════
 
 
+def _app_chat() -> None:
+    """TUI 对话模式 — 输入消息 → app 弹通知，实时刷新终端。"""
+    import socket as sock
+    import shutil
+
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    if not os.path.exists(socket_path):
+        print("错误: app 未运行", file=sys.stderr)
+        sys.exit(1)
+
+    width = min(shutil.get_terminal_size().columns, 80)
+    history: list[tuple[str, str]] = []  # (role, text)
+
+    def _redraw():
+        """重绘整个 TUI。"""
+        term_h = shutil.get_terminal_size().lines
+        # 清屏
+        sys.stdout.write("\033[2J\033[H")
+        # 标题栏
+        bar = "━" * width
+        sys.stdout.write(f"\033[36m╭{bar}╮\033[0m\n")
+        title = " TUI → diy 管控台 Chat "
+        sys.stdout.write(f"\033[36m│\033[1m{title:^{width}}\033[0m\033[36m│\033[0m\n")
+        sys.stdout.write(f"\033[36m╰{bar}╯\033[0m\n")
+
+        # 对话区（最多显示最近 N 条）
+        chat_area = min(term_h - 5, 20)
+        visible = history[-chat_area:] if history else []
+        for role, text in visible:
+            prefix = "\033[33m🖥 \033[0m" if role == "system" else "\033[32m> \033[0m"
+            sys.stdout.write(f"{prefix}{text}\n")
+
+        # 分隔线
+        sys.stdout.write(f"\033[36m{'─' * width}\033[0m\n")
+        # 输入提示
+        sys.stdout.write(f"\033[36m│\033[0m 输入消息回车发送，Ctrl+D 退出 \033[36m│\033[0m\n")
+
+    def _send(msg: str) -> str:
+        """发送 notify 命令到 socket。"""
+        try:
+            s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+            s.settimeout(3)
+            s.connect(socket_path)
+            s.sendall(f"notify {msg}\n".encode("utf-8"))
+            s.shutdown(sock.SHUT_WR)
+            buf = []
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                buf.append(data.decode("utf-8"))
+            s.close()
+            return "".join(buf).strip()
+        except OSError as e:
+            return f"\033[31m发送失败: {e}\033[0m"
+
+    _redraw()
+    while True:
+        try:
+            msg = input("\033[36m📝 \033[0m")
+        except (EOFError, KeyboardInterrupt):
+            sys.stdout.write("\n\033[2J\033[H退出\n")
+            break
+        if not msg.strip():
+            _redraw()
+            continue
+
+        result = _send(msg)
+        history.append(("user", msg))
+        if result == "OK":
+            history.append(("system", "✓ 已发送到 app"))
+        else:
+            history.append(("system", result))
+        _redraw()
+
+
 def _app_probe(args: list[str]) -> None:
     """连接 app socket，透传参数，打印响应。"""
     import socket as sock
@@ -762,6 +838,10 @@ def _parse_value(raw: str) -> object:
 
 
 def main():
+    # dai app chat → TUI 对话模式
+    if len(sys.argv) > 2 and sys.argv[1] == "app" and sys.argv[2] == "chat":
+        _app_chat()
+        return
     # dai app → 透传到 socket，不经过 cyclopts
     if len(sys.argv) > 1 and sys.argv[1] == "app":
         _app_probe(sys.argv[2:] if len(sys.argv) > 2 else ["--help"])
