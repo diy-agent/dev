@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer  # type: ignore[import-untyped]
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Slot  # type: ignore[import-untyped]
 from PySide6.QtGui import QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QApplication,
@@ -436,6 +436,39 @@ class MainWindow(QMainWindow):
             return None
         return _search(self._nodes)
 
+    # ── 通知弹窗 ──
+
+    @Slot(str)
+    def show_notification(self, message: str) -> None:
+        """在窗口右上角弹出通知，3 秒自动消失。"""
+        from PySide6.QtCore import QPropertyAnimation  # type: ignore[import-untyped]
+
+        popup = QLabel(message, self)
+        popup.setStyleSheet("""
+            QLabel {
+                background: #1e1e2e; color: #cdd6f4;
+                border: 1px solid #45475a; border-radius: 8px;
+                padding: 10px 16px; font-size: 13px;
+            }
+        """)
+        popup.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.ToolTip)
+        popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        popup.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        popup.adjustSize()
+
+        # 定位：窗口右上角
+        geom = self.geometry()
+        popup.move(geom.right() - popup.width() - 20, geom.top() + 40)
+        popup.show()
+
+        # 3 秒后淡出
+        anim = QPropertyAnimation(popup, b"windowOpacity")
+        anim.setDuration(800)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.finished.connect(popup.deleteLater)
+        QTimer.singleShot(3000, anim.start)
+
     # ── AppProbe 序列化 ──
 
     def format_tree(self) -> str:
@@ -584,6 +617,23 @@ class ProbeCLI:
         def node(task_id: int):
             """<id> 任务节点详情"""
             return self._window.format_node(task_id)
+
+        @self._app.command
+        def notify(*message: str):
+            """<消息...> 弹通知 — 窗口右上角弹出"""
+            text = " ".join(message)
+            from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
+            QMetaObject.invokeMethod(
+                self._window, "show_notification",
+                QtCore.ConnectionType.QueuedConnection,
+                Q_ARG(str, text))
+            return "OK"
+
+        @self._app.command
+        def title(*text: str):
+            """<文本...> 改窗口标题"""
+            self._window.setWindowTitle(" ".join(text))
+            return f"标题已改为: {' '.join(text)}"
 
         @self._app.default
         def unknown(*tokens: str):
