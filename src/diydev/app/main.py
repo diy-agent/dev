@@ -589,20 +589,17 @@ class ProbeCLI:
         def unknown(*tokens: str):
             return f"未知命令: {' '.join(tokens)!r}  试试 --help"
 
-    def dispatch(self, line: str) -> str:
-        import io
+    def dispatch(self, line: str, out) -> None:
+        """流式输出 — 直接写 out，不缓冲。"""
         from rich.console import Console
 
         tokens = line.split() if line else ["--help"]
-
-        # 全部走 cyclopts 原生渲染（包括 --help）
-        buf = io.StringIO()
-        console = Console(file=buf, force_terminal=True, width=80)
+        console = Console(file=out, force_terminal=True, width=80)
         try:
             self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
             pass
-        return buf.getvalue().strip() or "OK"
+        out.flush()
 
 
 class AppProbe(QObject):
@@ -656,18 +653,21 @@ class AppProbe(QObject):
 
 
 def _make_handler(probe: AppProbe):
+    import io as _io
+
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             data = self.rfile.readline()
             if not data:
                 return
             cmd = data.decode("utf-8").strip()
-            result = safe_call(
-                probe._cli.dispatch, cmd,
+            # wfile 是 binary，包成 text mode 给 rich
+            text_out = _io.TextIOWrapper(self.wfile, encoding="utf-8", write_through=True)
+            safe_call(
+                probe._cli.dispatch, cmd, text_out,
                 _context="socket",
-                _on_error="return",
+                _on_error="silent",
             )
-            self.wfile.write((result + "\n").encode("utf-8"))
     return Handler
 
 
