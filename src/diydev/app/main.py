@@ -632,8 +632,13 @@ class ProbeCLI:
         @self._app.command
         def title(*text: str):
             """<文本...> 改窗口标题"""
-            self._window.setWindowTitle(" ".join(text))
-            return f"标题已改为: {' '.join(text)}"
+            title_text = " ".join(text)
+            from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
+            QMetaObject.invokeMethod(
+                self._window, "setWindowTitle",
+                QtCore.ConnectionType.QueuedConnection,
+                Q_ARG(str, title_text))
+            return f"标题已改为: {title_text}"
 
         @self._app.default
         def unknown(*tokens: str):
