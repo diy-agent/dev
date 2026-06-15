@@ -26,7 +26,7 @@ from ._state import create_task, delete_task, get_task, list_tasks, load_state, 
 
 app = App(
     name="dai",
-    help="diy agent 接口 — state 查询与同步",
+    help="diy agent 接口 — state 查询与同步\n\n  子命令 dai app ... → 管控台探针（透传到 app socket）",
     version_flags=[],
 )
 
