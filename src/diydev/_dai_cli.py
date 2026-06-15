@@ -696,10 +696,15 @@ app.command(task_app)
 
 
 def _app_probe(args: list[str]) -> None:
-    """连接 app socket，透传参数，打印响应。"""
+    """透传任意参数到 app socket（dai app 自动加 ai 前缀）。"""
     import socket as sock
 
     socket_path = os.path.expanduser("~/.diy/app.sock")
+    # dai app 是 AI 接口，自动加 ai 前缀
+    if not args or args[0] in ("--help", "-h", "--version", "ai"):
+        pass  # 透传原样
+    else:
+        args = ["ai"] + args
     try:
         s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
         s.settimeout(3)

@@ -20,7 +20,7 @@ def _send(msg: str) -> str:
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(3)
     s.connect(SOCK)
-    s.sendall(f"notify {msg}\n".encode("utf-8"))
+    s.sendall(f"hum notify {msg}\n".encode("utf-8"))
     s.shutdown(socket.SHUT_WR)
     buf = []
     while True:

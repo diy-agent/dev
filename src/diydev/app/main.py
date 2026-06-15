@@ -584,28 +584,35 @@ from PySide6.QtCore import QObject  # type: ignore[import-untyped]
 
 
 class ProbeCLI:
-    """Socket 协议层 — 用 cyclopts 解析命令，输出为纯文本。"""
+    """Socket 协议层 — 用 cyclopts 解析命令，输出为纯文本。
+
+    命令分两组:
+      ai <cmd>    — AI/agent 接口，无交互，纯数据
+      hum <cmd>   — 人类接口，通知/操控
+    """
 
     def __init__(self, window: "MainWindow"):
         self._window = window
         self._app = CycloptsApp(name="probe")
 
-        @self._app.command
+        # ── AI 子应用 ──
+        ai = CycloptsApp(name="ai", help="AI/agent 接口")
+        @ai.command
         def tree():
             """完整任务树（和 UI 一致）"""
             return self._window.format_tree()
 
-        @self._app.command
+        @ai.command
         def status():
             """健康检查（pid/窗口/树/定时器）"""
             return self._window.format_status()
 
-        @self._app.command
+        @ai.command
         def agents():
             """agent 列表"""
             return self._window.format_agents()
 
-        @self._app.command
+        @ai.command
         def reload():
             """热重载 state.yaml"""
             from PySide6.QtCore import QMetaObject, Qt as QtCore
@@ -613,12 +620,16 @@ class ProbeCLI:
                 self._window, "_load", QtCore.ConnectionType.QueuedConnection)
             return "OK"
 
-        @self._app.command
+        @ai.command
         def node(task_id: int):
             """<id> 任务节点详情"""
             return self._window.format_node(task_id)
 
-        @self._app.command
+        self._app.command(ai)
+
+        # ── 人类子应用 ──
+        hum = CycloptsApp(name="hum", help="人类接口")
+        @hum.command
         def notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
@@ -629,18 +640,20 @@ class ProbeCLI:
                 Q_ARG(str, text))
             return "OK"
 
-        @self._app.command
+        @hum.command
         def title(*text: str):
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: title <文本...>"
+                return "错误: 缺少参数，用法: hum title <文本...>"
             from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
+
+        self._app.command(hum)
 
         @self._app.default
         def unknown(*tokens: str):
