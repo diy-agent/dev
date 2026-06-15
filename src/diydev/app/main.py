@@ -633,6 +633,8 @@ class ProbeCLI:
         def title(*text: str):
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
+            if not title_text:
+                return "错误: 缺少参数，用法: title <文本...>"
             from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
@@ -645,7 +647,7 @@ class ProbeCLI:
             return f"未知命令: {' '.join(tokens)!r}  试试 --help"
 
     def dispatch(self, line: str, out) -> None:
-        """流式输出 — 直接写 out，不缓冲。"""
+        """流式输出 — 直接写 out，不缓冲。异常也写到 out。"""
         from rich.console import Console
 
         tokens = line.split() if line else ["--help"]
@@ -654,6 +656,10 @@ class ProbeCLI:
             self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
             pass
+        except Exception as exc:
+            import traceback
+            console.print(f"\n[red]错误: {exc}[/red]")
+            traceback.print_exc(file=sys.stderr)
         out.flush()
 
 
@@ -718,11 +724,12 @@ def _make_handler(probe: AppProbe):
             cmd = data.decode("utf-8").strip()
             # wfile 是 binary，包成 text mode 给 rich
             text_out = _io.TextIOWrapper(self.wfile, encoding="utf-8", write_through=True)
-            safe_call(
-                probe._cli.dispatch, cmd, text_out,
-                _context="socket",
-                _on_error="silent",
-            )
+            try:
+                probe._cli.dispatch(cmd, text_out)
+            except Exception:
+                import traceback
+                text_out.write(f"\n内部错误: {traceback.format_exc()}")
+                text_out.flush()
     return Handler
 
 
