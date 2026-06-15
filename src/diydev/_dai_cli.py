@@ -690,21 +690,36 @@ app.command(task_app)
 # ════════════════════════════════════════════════════════════════
 
 
-@app.command(name="app")
-def launch_app(
-    panel: Annotated[
-        bool,
-        Parameter(name=["--panel"], help="启动旧 Panel GUI（已废弃）"),
-    ] = False,
-):
-    """启动 diy 管控台（PySide6 原生窗口）。"""
-    if panel:
-        from .shell import main as _run_app
-        _run_app(dev=True)
-        return
+# ════════════════════════════════════════════════════════════════
+# dai app → socket 透传
+# ════════════════════════════════════════════════════════════════
 
-    from diydev.app.main import main as _run_pyside6
-    _run_pyside6()
+
+def _app_probe(args: list[str]) -> None:
+    """连接 app socket，透传参数，打印响应。"""
+    import socket as sock
+
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    try:
+        s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+        s.settimeout(3)
+        s.connect(socket_path)
+        s.sendall((" ".join(args) + "\n").encode("utf-8"))
+        s.shutdown(sock.SHUT_WR)
+        buf = []
+        while True:
+            data = s.recv(4096)
+            if not data:
+                break
+            buf.append(data.decode("utf-8"))
+        s.close()
+        sys.stdout.write("".join(buf))
+    except FileNotFoundError:
+        print("错误: app 未运行（socket 不存在）", file=sys.stderr)
+        sys.exit(1)
+    except (ConnectionRefusedError, OSError) as e:
+        print(f"错误: 无法连接 app — {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -747,6 +762,11 @@ def _parse_value(raw: str) -> object:
 
 
 def main():
+    # dai app → 透传到 socket，不经过 cyclopts
+    if len(sys.argv) > 1 and sys.argv[1] == "app":
+        _app_probe(sys.argv[2:] if len(sys.argv) > 2 else ["--help"])
+        return
+
     try:
         app(sys.argv[1:] if len(sys.argv) > 1 else ["--help"])
     except SystemExit:

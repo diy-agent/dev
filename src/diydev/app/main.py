@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer  # type: ignore[import-untyped]
@@ -95,6 +96,39 @@ def _add_node(
 
 
 # ═══════════════════════════════════════════════════════
+# 边界防护 — 所有外部入口统一兜底
+# ═══════════════════════════════════════════════════════
+
+
+def safe_call(fn, *args, _context="", _on_error="return", **kwargs):
+    """所有边界调用的防护层。
+
+    _on_error="return" → 返回错误字符串（socket 边界）
+    _on_error="silent" → 吞异常，返回 None（定时器/监控回调）
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[diy] 边界异常 [{_context}]\n{tb}", file=sys.stderr, flush=True)
+        if _on_error == "return":
+            return f"内部错误 (context={_context})"
+        return None
+
+
+def guarded(context: str):
+    """装饰器：为 Qt slot / 回调加防护边界。"""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            return safe_call(fn, *args, _context=context, _on_error="silent", **kwargs)
+        return wrapper
+    return deco
+
+
+# ═══════════════════════════════════════════════════════
 # Steer Panel
 # ═══════════════════════════════════════════════════════
 
@@ -137,6 +171,7 @@ class SteerPanel(QDockWidget):
         self.setWindowTitle(f"Agent 通信 — #{task_id}")
         self._refresh_log()
 
+    @guarded("steer.send")
     def _send(self) -> None:
         text = self._input.text().strip()
         if not text or self._task_id is None:
@@ -145,6 +180,7 @@ class SteerPanel(QDockWidget):
         self._input.clear()
         self._refresh_log()
 
+    @guarded("steer.timer")
     def _refresh_log(self) -> None:
         if self._task_id is None:
             return
@@ -231,6 +267,7 @@ class MainWindow(QMainWindow):
         self._tree.setModel(model)
         self._tree.expandAll()
 
+    @guarded("timer.refresh")
     def _refresh_agents(self) -> None:
         """从文件系统读取 agent 状态并挂到任务节点上。"""
         agents = list_agents()
@@ -263,9 +300,11 @@ class MainWindow(QMainWindow):
         if agents_dir not in self._watcher.directories():
             self._watcher.addPath(agents_dir)
 
+    @guarded("watcher.agent")
     def _on_agent_dir_changed(self, _path: str) -> None:
         self._refresh_agents()
 
+    @guarded("watcher.file")
     def _on_file_changed(self, path: str) -> None:
         if path.endswith("state.yaml"):
             # macOS: yaml 写入可能换 inode，重新 watch
@@ -276,6 +315,7 @@ class MainWindow(QMainWindow):
             self._refresh_agents()
 
     # ── 右键菜单 ──
+    @guarded("ctxmenu")
     def _on_context_menu(self, pos):
         from PySide6.QtWidgets import QMenu  # type: ignore[import-untyped]
 
@@ -316,6 +356,7 @@ class MainWindow(QMainWindow):
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     # ── 操作 ──
+    @guarded("action.state")
     def _set_state(self, task_id: int, new_state: str) -> None:
         import subprocess
         subprocess.run(
@@ -324,6 +365,7 @@ class MainWindow(QMainWindow):
         )
         self._load()
 
+    @guarded("action.delete")
     def _delete_task(self, task_id: int) -> None:
         import subprocess
         subprocess.run(
@@ -332,11 +374,13 @@ class MainWindow(QMainWindow):
         )
         self._load()
 
+    @guarded("action.steer")
     def _open_steer(self, task_id: int) -> None:
         self._steer.set_task(task_id)
         self._steer.show()
 
     # ── 选中 / 双击 ──
+    @guarded("tree.select")
     def _on_select(self):
         indexes = self._tree.selectionModel().selectedIndexes()
         if not indexes:
@@ -375,6 +419,7 @@ class MainWindow(QMainWindow):
 
         self._detail_label.setText("\n".join(lines) if lines else "选择任务查看详情")
 
+    @guarded("tree.double")
     def _on_double_click(self, index):
         task_id = index.data(ROLE_TASK_ID)
         if task_id:
@@ -501,21 +546,78 @@ import socket
 import socketserver
 import threading
 
-from PySide6.QtCore import QObject, Signal  # type: ignore[import-untyped]
+from cyclopts import App as CycloptsApp
+from PySide6.QtCore import QObject  # type: ignore[import-untyped]
+
+
+class ProbeCLI:
+    """Socket 协议层 — 用 cyclopts 解析命令，输出为纯文本。"""
+
+    def __init__(self, window: "MainWindow"):
+        self._window = window
+        self._app = CycloptsApp(name="probe")
+
+        @self._app.command
+        def tree():
+            """完整任务树（和 UI 一致）"""
+            return self._window.format_tree()
+
+        @self._app.command
+        def status():
+            """健康检查（pid/窗口/树/定时器）"""
+            return self._window.format_status()
+
+        @self._app.command
+        def agents():
+            """agent 列表"""
+            return self._window.format_agents()
+
+        @self._app.command
+        def reload():
+            """热重载 state.yaml"""
+            from PySide6.QtCore import QMetaObject, Qt as QtCore
+            QMetaObject.invokeMethod(
+                self._window, "_load", QtCore.ConnectionType.QueuedConnection)
+            return "OK"
+
+        @self._app.command
+        def node(task_id: int):
+            """<id> 任务节点详情"""
+            return self._window.format_node(task_id)
+
+        @self._app.default
+        def unknown(*tokens: str):
+            return f"未知命令: {' '.join(tokens)!r}  试试 --help"
+
+    def dispatch(self, line: str) -> str:
+        tokens = line.split() if line else ["--help"]
+
+        # --help / -h → 手动构建帮助（避免 cyclopts console 兼容问题）
+        if set(tokens) & {"--help", "-h"} or not tokens:
+            lines = ["命令:"]
+            for name, sub in sorted(self._app.meta._registered_commands.items()):
+                help_text = (sub.default_command.__doc__ or "").strip()
+                lines.append(f"  {name:<10s} {help_text}")
+            return "\n".join(lines)
+
+        try:
+            command, bound, _ = self._app.parse_args(tokens)
+            return str(command(*bound.args, **bound.kwargs))
+        except SystemExit:
+            return "错误: 命令解析失败"
 
 
 class AppProbe(QObject):
     """Unix domain socket server，允许外部进程查询/操纵 app 运行状态。
 
-    命令（一行一个，换行结束）:
-      tree         → 完整任务树（和 UI 看到的一致）
-      node <id>    → 指定任务节点详情
+    协议: 纯文本，cyclopts 解析:
+      tree         → 完整任务树
+      node <id>    → 任务详情
+      status       → 健康检查
       agents       → agent 列表
-      reload       → 触发重新加载 state.yaml
-      help         → 命令列表
+      reload       → 重载 state.yaml
+      --help       → 帮助
     """
-
-    _reload_requested = Signal()
 
     def __init__(self, window: "MainWindow", socket_path: str = "~/.diy/app.sock"):
         super().__init__(window)
@@ -523,7 +625,7 @@ class AppProbe(QObject):
         self._path = os.path.expanduser(socket_path)
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
-        self._reload_requested.connect(self._window._load)
+        self._cli = ProbeCLI(window)
 
     def start(self) -> None:
         # 检查是否有活实例
@@ -554,26 +656,6 @@ class AppProbe(QObject):
         except OSError:
             pass
 
-    def _dispatch(self, cmd: str) -> str:
-        if cmd == "tree":
-            return self._window.format_tree()
-        if cmd == "status":
-            return self._window.format_status()
-        if cmd == "agents":
-            return self._window.format_agents()
-        if cmd == "reload":
-            self._reload_requested.emit()
-            return "OK — state.yaml 已重新加载"
-        if cmd == "help":
-            return "tree | status | node <id> | agents | reload | help"
-        if cmd.startswith("node "):
-            try:
-                tid = int(cmd.split()[1])
-            except (IndexError, ValueError):
-                return "用法: node <task_id>"
-            return self._window.format_node(tid)
-        return f"未知命令: {cmd!r}  试试 help"
-
 
 def _make_handler(probe: AppProbe):
     class Handler(socketserver.StreamRequestHandler):
@@ -582,7 +664,11 @@ def _make_handler(probe: AppProbe):
             if not data:
                 return
             cmd = data.decode("utf-8").strip()
-            result = probe._dispatch(cmd)
+            result = safe_call(
+                probe._cli.dispatch, cmd,
+                _context="socket",
+                _on_error="return",
+            )
             self.wfile.write((result + "\n").encode("utf-8"))
     return Handler
 
