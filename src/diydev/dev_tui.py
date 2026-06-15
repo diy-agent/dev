@@ -16,11 +16,12 @@ import sys
 SOCK = os.path.expanduser("~/.diy/app.sock")
 
 
-def _send(msg: str) -> str:
+def _raw_send(line: str) -> str:
+    """发送任意命令到 socket。"""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(3)
     s.connect(SOCK)
-    s.sendall(f"hum notify {msg}\n".encode("utf-8"))
+    s.sendall((line + "\n").encode("utf-8"))
     s.shutdown(socket.SHUT_WR)
     buf = []
     while True:
@@ -70,7 +71,7 @@ def tui():
         if not msg.strip():
             redraw()
             continue
-        result = _send(msg)
+        result = _raw_send(f"hum notify {msg}")
         history.append(("user", msg))
         history.append(("system", "✓ 已发送" if result == "OK" else result))
         redraw()
@@ -79,11 +80,11 @@ def tui():
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] in ("help", "--help", "-h"):
-            print(__doc__)
+            sys.stdout.write(_raw_send("hum --help") + "\n")
             return
         _check()
         msg = " ".join(sys.argv[1:])
-        result = _send(msg)
+        result = _raw_send(f"hum notify {msg}")
         if result == "OK":
             print(f"✓ 已发送: {msg}")
         else:

@@ -702,10 +702,14 @@ def _app_probe(args: list[str]) -> None:
     import time as _time
 
     socket_path = os.path.expanduser("~/.diy/app.sock")
-    # dai app 是 AI 接口，自动加 ai 前缀
-    if not args or args[0] in ("--help", "-h", "--version", "ai"):
-        pass
-    else:
+    # dai app 是 AI 原生接口，所有命令加 ai 前缀
+    if not args:
+        args = ["ai", "--help"]
+    elif args[0] in ("--help", "-h"):
+        args = ["ai"] + args  # ai --help
+    elif args[0] == "ai":
+        pass  # 已有前缀
+    elif args[0] != "--version":
         args = ["ai"] + args
 
     def _send() -> int:
