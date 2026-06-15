@@ -102,4 +102,7 @@ test-all() { test; test-headless;}
 
 panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
+# PySide6 管控台
+app() {  run uv run python -m diydev.app.main; }
+
 sha "$@"

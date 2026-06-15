@@ -1,8 +1,6 @@
-"""dai 管控台 — diy UI app.
+"""diy 管控台 — 纯观察面板。
 
-Usage:
-    uv run python -m diydev.app       # dev mode (autoreload)
-    uv run panel serve --dev src/diydev/app.py
+展示 state.yaml 全部数据：subject 树、任务列表（状态色）、profile、spaces/locks。
 """
 
 from __future__ import annotations
@@ -16,12 +14,29 @@ import panel as pn
 
 pn.extension("tabulator")
 
-import diy.ui.providers.panel as diypn
-
-from diydev._state import load_state, save_state
+from diydev._state import load_state
 
 _STATE_PATH = Path(os.environ.get("DIY_HOME", Path.home() / ".diy")) / "state.yaml"
 
+# ── 状态图标映射 ──
+_STATE_ICON = {
+    "pending":   "⏳",
+    "active":    "🔄",
+    "open":      "🔄",
+    "done":      "✅",
+    "closed":    "✅",
+    "cancelled": "❌",
+    "blocked":   "🚫",
+    "shelved":   "⏸",
+    "new":       "🆕",
+}
+
+_STATE_ORDER = {"done": 1, "active": 2, "open": 3, "pending": 4, "blocked": 5, "cancelled": 6, "shelved": 7, "new": 8}
+
+
+# ═══════════════════════════════════════════════════════
+# 数据构建
+# ═══════════════════════════════════════════════════════
 
 def _state_mtime() -> float:
     try:
@@ -34,7 +49,8 @@ def _build_subject_rows(data: dict) -> list[dict]:
     rows: list[dict] = []
     for path, info in sorted(data.get("subjects", {}).items()):
         depth = path.count("/")
-        is_git = os.path.isdir(os.path.join(os.path.expanduser(path), ".git"))
+        expanded = os.path.expanduser(path)
+        is_git = os.path.isdir(os.path.join(expanded, ".git")) or os.path.isfile(os.path.join(expanded, ".git"))
         icon = "📦" if is_git else "📁"
         rows.append({
             "_path": path,
@@ -47,180 +63,179 @@ def _build_subject_rows(data: dict) -> list[dict]:
 def _build_task_rows(data: dict) -> list[dict]:
     rows: list[dict] = []
     for tid_str, info in sorted(data.get("tasks", {}).items(), key=lambda x: int(x[0])):
+        state = info.get("state", "pending")
+        icon = _STATE_ICON.get(state, "⏳")
+        parent = info.get("parent", "")
+        parent_str = f" ← #{parent}" if parent else ""
         rows.append({
             "id": int(tid_str),
-            "title": info.get("title", ""),
-            "state": info.get("state", ""),
+            "title": f"{icon}\u00a0{info.get('title', '')}{parent_str}",
+            "state": state,
             "subject": info.get("subject", ""),
+            "_sort": _STATE_ORDER.get(state, 99),
+        })
+    rows.sort(key=lambda r: r["_sort"])
+    return rows
+
+
+def _build_space_rows(data: dict) -> list[dict]:
+    rows: list[dict] = []
+    for path, cfg in sorted(data.get("spaces", {}).items()):
+        lock = cfg.get("lock") if cfg else None
+        if lock:
+            status = f"🔒 #{lock.get('by', '?')}"
+        else:
+            status = "🟢 空闲"
+        rows.append({"path": path, "status": status})
+    return rows
+
+
+def _build_profile_rows(data: dict) -> list[dict]:
+    rows: list[dict] = []
+    for name, cfg in data.get("profiles", {}).items():
+        rows.append({
+            "name": name,
+            "area": cfg.get("area", "?"),
+            "merge": cfg.get("merge", "?"),
+            "approval": str(cfg.get("approval", "—")),
         })
     return rows
 
 
-def _delete_subject(subject_path: str) -> None:
-    """删除 subject 及其关联 tasks。"""
-    data = load_state()
-    data["subjects"].pop(subject_path, None)
-    data["tasks"] = {
-        tid: t for tid, t in data["tasks"].items()
-        if t.get("subject") != subject_path
-    }
-    save_state(data)
+# ═══════════════════════════════════════════════════════
+# 组件
+# ═══════════════════════════════════════════════════════
 
+initial_state = load_state()
 
-def _refresh_tables() -> None:
-    """刷新两个表格。"""
-    data = load_state()
-    _subject_tabulator.value = pd.DataFrame(_build_subject_rows(data))
-    _task_tabulator.value = pd.DataFrame(_build_task_rows(data))
-
-
-# ── app ──
-
-app = diypn.PanelApp()
-
-# ── tick 驱动周期刷新 ──
-
-tick = app.signal(0)
-
-# ── 删除确认弹窗 ──
-
-_pending_delete: str = ""
-
-_subject_path_text = pn.pane.Markdown("")
-_confirm_btn = pn.widgets.Button(name="确认删除", button_type="danger")
-_cancel_btn = pn.widgets.Button(name="取消", button_type="default")
-
-_confirm_modal = pn.Modal(
-    pn.pane.Markdown("## 确认删除"),
-    _subject_path_text,
-    pn.pane.Markdown("删除 subject 后，关联的 tasks 也会一并删除。**此操作不可撤销。**"),
-    pn.Row(_confirm_btn, _cancel_btn),
-    show_close_button=False,
-    background_close=False,
-    margin=20,
+# ── Subject 树表 ──
+_subject_tab = pn.widgets.Tabulator(
+    value=pd.DataFrame(_build_subject_rows(initial_state)),
+    pagination=None,
+    sizing_mode="stretch_width",
+    height=300,
+    show_index=False,
+    hidden_columns=["_path"],
+    selectable=True,
 )
 
+_subject_info = pn.pane.Markdown("*选中一行查看详情*")
+_subject_desc = pn.pane.Markdown("")
 
-def _on_confirm_delete(event):
-    global _pending_delete
-    if _pending_delete:
-        _delete_subject(_pending_delete)
-        _pending_delete = ""
-        _refresh_tables()
-    _confirm_modal.hide()
+def _on_subject_select(event):
+    if not event.new:
+        _subject_info.object = "*选中一行查看详情*"
+        _subject_desc.object = ""
+        return
+    row = event.new[0]
+    df = _subject_tab.value
+    path = df.iloc[row]["_path"]
+    desc = df.iloc[row].get("description", "")
+    _subject_info.object = f"**{path}**"
+    _subject_desc.object = desc if desc else "*无描述*"
 
+_subject_tab.param.watch(_on_subject_select, "selection")
 
-def _on_cancel_delete(event):
-    global _pending_delete
-    _pending_delete = ""
-    _confirm_modal.hide()
+# ── 任务列表表 ──
+_task_tab = pn.widgets.Tabulator(
+    value=pd.DataFrame(_build_task_rows(initial_state)),
+    pagination=None,
+    sizing_mode="stretch_width",
+    height=300,
+    show_index=False,
+    hidden_columns=["_sort"],
+    selectable=True,
+)
 
+_task_info = pn.pane.Markdown("*选中一行查看详情*")
 
-_confirm_btn.on_click(_on_confirm_delete)
-_cancel_btn.on_click(_on_cancel_delete)
+def _on_task_select(event):
+    if not event.new:
+        _task_info.object = "*选中一行查看详情*"
+        return
+    row = event.new[0]
+    df = _task_tab.value
+    tid = df.iloc[row]["id"]
+    state = df.iloc[row]["state"]
+    subject = df.iloc[row].get("subject", "")
+    _task_info.object = f"**#{tid}** — {state} — subject: `{subject}`"
 
-# ── 布局 ──
+_task_tab.param.watch(_on_task_select, "selection")
 
-app.pane.markdown("# diy 管控台")
+# ── Profiles 表 ──
+_profile_tab = pn.widgets.Tabulator(
+    value=pd.DataFrame(_build_profile_rows(initial_state)),
+    pagination=None,
+    sizing_mode="stretch_width",
+    height=160,
+    show_index=False,
+)
 
-with app.layout.row():
-    # ── 左栏：Subject 树 ──
-    with app.layout.column(sizing_mode="stretch_width"):
-        app.pane.markdown("## Subject 树")
+# ── Spaces 表 ──
+_space_tab = pn.widgets.Tabulator(
+    value=pd.DataFrame(_build_space_rows(initial_state)),
+    pagination=None,
+    sizing_mode="stretch_width",
+    height=160,
+    show_index=False,
+)
 
-        _subject_tabulator = app.widgets.tabulator(
-            value=pd.DataFrame(_build_subject_rows(load_state())),
-            pagination=None,
-            sizing_mode="stretch_width",
-            height=360,
-            show_index=False,
-            hidden_columns=["_path"],
-            selectable=True,
-        )
+# ── 刷新 ──
+def _refresh_all(data: dict) -> None:
+    _subject_tab.value = pd.DataFrame(_build_subject_rows(data))
+    _task_tab.value = pd.DataFrame(_build_task_rows(data))
+    _profile_tab.value = pd.DataFrame(_build_profile_rows(data))
+    _space_tab.value = pd.DataFrame(_build_space_rows(data))
 
-        _selected_info = app.pane.markdown("选中一行后点击删除")
-
-        def _on_select(event):
-            if not event.new:
-                _selected_info.object = "选中一行后点击删除"
-                return
-            row = event.new[0]
-            df = _subject_tabulator.value
-            path = df.iloc[row]["_path"]
-            _selected_info.object = f"已选中: **{path}**"
-
-        _subject_tabulator.param.watch(_on_select, "selection")
-
-        def _on_delete_click(event):
-            sel = _subject_tabulator.selection
-            if not sel:
-                _selected_info.object = "⚠️ 请先选中一行"
-                return
-            global _pending_delete
-            df = _subject_tabulator.value
-            _pending_delete = df.iloc[sel[0]]["_path"]
-            _subject_path_text.object = f"**{_pending_delete}**"
-            _confirm_modal.show()
-
-        _delete_btn = app.widgets.button(name="🗑 删除选中", button_type="danger")
-        _delete_btn.on_click(_on_delete_click)
-
-    # ── 右栏：任务列表 ──
-    with app.layout.column(sizing_mode="stretch_width"):
-        app.pane.markdown("## 任务列表")
-
-        _task_tabulator = app.widgets.tabulator(
-            value=pd.DataFrame(_build_task_rows(load_state())),
-            pagination=None,
-            sizing_mode="stretch_width",
-            height=400,
-            show_index=False,
-        )
-
-# ── 后台轮询 cell ──
 
 _last_mtime = _state_mtime()
 
-
-@app.layout.column().cell()
-async def _(node: diypn.layout.Column):
-    """轮询 state.yaml mtime，变化时更新表格。"""
+async def _poll():
     global _last_mtime
-    while True:
-        yield pn.indicators.LoadingSpinner(
-            value=True, width=20, height=20, visible=False
-        )
-        await asyncio.sleep(2.0)
-        mtime = _state_mtime()
-        if mtime != _last_mtime:
-            _last_mtime = mtime
-            _refresh_tables()
+    mtime = _state_mtime()
+    if mtime != _last_mtime:
+        _last_mtime = mtime
+        _refresh_all(load_state())
 
+pn.state.add_periodic_callback(_poll, period=2000)
 
-# ── 注入 CSS：允许文字选择 ──
-# Bokeh 3.x 用 shadow DOM 渲染，外部 CSS 穿透不了
-# 在 session 创建后注入 JS 到所有 shadow root
+# ═══════════════════════════════════════════════════════
+# 布局
+# ═══════════════════════════════════════════════════════
 
+layout = pn.Column(
+    pn.pane.Markdown("# diy 管控台"),
+    pn.Row(
+        pn.Column(
+            pn.pane.Markdown("## Subject 树"),
+            _subject_tab,
+            _subject_info,
+            _subject_desc,
+            sizing_mode="stretch_width",
+        ),
+        pn.Column(
+            pn.pane.Markdown("## 任务列表"),
+            _task_tab,
+            _task_info,
+            sizing_mode="stretch_width",
+        ),
+    ),
+    pn.Row(
+        pn.Column(
+            pn.pane.Markdown("## Profiles"),
+            _profile_tab,
+            sizing_mode="stretch_width",
+        ),
+        pn.Column(
+            pn.pane.Markdown("## Spaces / Locks"),
+            _space_tab,
+            sizing_mode="stretch_width",
+        ),
+    ),
+    sizing_mode="stretch_width",
+)
 
-def _inject_selectable():
-    """浏览器端 JS: 向所有 shadow root 写入 :host { user-select: text }"""
-    code = """document.querySelectorAll('[data-root-id]').forEach(function(el){
-if(el.shadowRoot&&!el.shadowRoot.querySelector('.diy-sel')){
-var s=document.createElement('style');s.className='diy-sel';
-s.textContent=':host{user-select:text!important;-webkit-user-select:text!important}';
-el.shadowRoot.appendChild(s);}});"""
-    pn.state.execute(code)
-
-
-def _on_session_created(_event):
-    """session 创建后注入 CSS，并定时重试（后续 shadow root）"""
-    _inject_selectable()
-    pn.state.add_periodic_callback(_inject_selectable, period=5000)
-
-
-pn.state.on_session_created(_on_session_created)
-
-app.servable()
+layout.servable()
 
 if __name__ == "__main__":
     pn.serve(__file__, autoreload=True, port=5006)

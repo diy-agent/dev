@@ -686,24 +686,25 @@ app.command(task_app)
 
 
 # ════════════════════════════════════════════════════════════════
-# dai app — Panel 管控台
+# dai app — PySide6 管控台
 # ════════════════════════════════════════════════════════════════
 
 
 @app.command(name="app")
 def launch_app(
-    port: Annotated[
-        int, Parameter(name=["--port", "-p"], help="监听端口")
-    ] = 5006,
-    dev: Annotated[
+    panel: Annotated[
         bool,
-        Parameter(name=["--dev"], help="dev 模式（autoreload）"),
-    ] = True,
+        Parameter(name=["--panel"], help="启动旧 Panel GUI（已废弃）"),
+    ] = False,
 ):
-    """启动 diy 管控台（原生窗口）。"""
-    from .shell import main as _run_app
+    """启动 diy 管控台（PySide6 原生窗口）。"""
+    if panel:
+        from .shell import main as _run_app
+        _run_app(dev=True)
+        return
 
-    _run_app(dev=dev)
+    from diydev.app.main import main as _run_pyside6
+    _run_pyside6()
 
 
 # ════════════════════════════════════════════════════════════════

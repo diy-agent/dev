@@ -1,0 +1,275 @@
+"""任务树数据解析 — 纯 Python，无 Qt 依赖。
+
+数据流: state.yaml → TaskNode 树
+加任务用 `dai task create --subject <path>`。
+AGENTS.md 是渲染输出，不解析。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from diydev._state import load_state
+
+
+@dataclass
+class AgentInfo:
+    agent_id: str
+    state: str = "unknown"
+    pid: int | None = None
+
+
+@dataclass
+class TaskNode:
+    key: str
+    label: str = ""
+    kind: str = "subject"
+    depth: int = 0
+    task_id: int | None = None
+    title: str = ""
+    state: str = "pending"
+    parent_id: int | None = None
+    subject_path: str = ""
+    agents: list[AgentInfo] = field(default_factory=list)
+    children: list[TaskNode] = field(default_factory=list)
+
+    @property
+    def is_task(self) -> bool:
+        return self.kind in ("task", "epic")
+
+    @property
+    def state_icon(self) -> str:
+        icons = {
+            "pending": "⏳", "active": "🔄", "open": "🔄",
+            "done": "✅", "closed": "✅", "cancelled": "❌",
+            "blocked": "🚫", "shelved": "⏸", "new": "🆕",
+        }
+        return icons.get(self.state, "⏳")
+
+
+# ═══════════════════════════════════════════════════════
+# 公共入口
+# ═══════════════════════════════════════════════════════
+
+def load_task_tree(agents_path: str | None = None) -> list[TaskNode]:
+    """加载任务树 — 纯 state.yaml 驱动。
+
+    subject 字段决定任务挂载位置。parent 字段决定层级。
+    """
+    return _build_nodes_from_state(load_state())
+
+
+# ═══════════════════════════════════════════════════════
+# state.yaml → nodes
+# ═══════════════════════════════════════════════════════
+
+def _build_nodes_from_state(state_data: dict) -> list[TaskNode]:
+    subjects = state_data.get("subjects", {})
+    tasks = state_data.get("tasks", {})
+
+    # ── subject 节点：按路径层级嵌套 ──
+    subject_nodes: dict[str, TaskNode] = {}
+    for spath, info in sorted(subjects.items()):
+        node = TaskNode(
+            key=spath, kind="subject",
+            title=info.get("description", ""),
+        )
+        subject_nodes[spath] = node
+
+    # 找到每个 subject 的最邻近父 subject
+    roots: list[TaskNode] = []
+    for spath, node in sorted(subject_nodes.items()):
+        parent = _find_parent_subject(spath, subject_nodes)
+        if parent:
+            parent.children.append(node)
+        else:
+            roots.append(node)
+
+    # ── task 节点 ──
+    task_nodes: dict[int, TaskNode] = {}
+    for tid_str, info in sorted(tasks.items(), key=lambda x: int(x[0])):
+        tid = int(tid_str)
+        tn = TaskNode(
+            key=f"#{tid}", kind="task", task_id=tid,
+            title=info.get("title", ""),
+            state=info.get("state", "pending"),
+            subject_path=info.get("subject", ""),
+            parent_id=info.get("parent"),
+        )
+        task_nodes[tid] = tn
+
+    # 第二遍：按 parent 建立层级
+    for tid, tn in task_nodes.items():
+        if tn.parent_id and tn.parent_id in task_nodes:
+            task_nodes[tn.parent_id].children.append(tn)
+        elif tn.subject_path:
+            # 挂在 subject 下
+            parent = subject_nodes.get(tn.subject_path)
+            if parent:
+                parent.children.append(tn)
+            else:
+                roots.append(tn)
+        else:
+            roots.append(tn)
+
+    return roots
+
+
+def _find_parent_subject(spath: str, subject_nodes: dict[str, TaskNode]) -> TaskNode | None:
+    """找最邻近的父 subject。例如 ~/git/diy/_diy → ~/git。"""
+    parent_path = os.path.dirname(spath)
+    while parent_path and parent_path != "/" and parent_path != spath:
+        if parent_path in subject_nodes:
+            return subject_nodes[parent_path]
+        parent_path = os.path.dirname(parent_path)
+    return None
+
+
+# ═══════════════════════════════════════════════════════
+# 旧解析器（仅测试用 — 不用于主加载路径）
+# ═══════════════════════════════════════════════════════
+
+def _find_agents_md() -> str | None:
+    local = os.path.join(os.getcwd(), "AGENTS.md")
+    if os.path.isfile(local):
+        return local
+    p = os.path.expanduser("~/git/diy/_diy-work/AGENTS.md")
+    return p if os.path.isfile(p) else None
+
+
+def parse_agents_md_tree(agents_path: str | None = None) -> list[TaskNode]:
+    path = agents_path or _find_agents_md()
+    if not path or not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        content = fh.read()
+    nodes = _parse_json_block(content)
+    if nodes:
+        return nodes
+    return _parse_md_tree(content)
+
+
+def _parse_json_block(content: str) -> list[TaskNode] | None:
+    m = re.search(
+        r"<!-- diy:tree:begin -->\s*```json\s*\n(.*?)\n```\s*<!-- diy:tree:end -->",
+        content, re.DOTALL,
+    )
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+    nodes: list[TaskNode] = []
+    for t in data.get("tasks", []):
+        num = t.get("number", 0)
+        state = t.get("state", "pending")
+        nodes.append(TaskNode(
+            key=f"#{num}", kind="task", task_id=num,
+            title=t.get("title", ""), state=state,
+            parent_id=t.get("parent"),
+        ))
+    return _build_hierarchy(nodes)
+
+
+def _parse_md_tree(content: str) -> list[TaskNode]:
+    nodes: list[TaskNode] = []
+    task_re = re.compile(r"^(?P<prefix>[\s├└│─]*(?:├── |└── )?)\[#(?P<num>\d+)\]\s+(?P<rest>.*)")
+    for line in content.split("\n"):
+        m = task_re.match(line)
+        if not m:
+            continue
+        num = int(m.group("num"))
+        prefix = m.group("prefix")
+        rest = m.group("rest").strip()
+        depth = len(prefix) // 4
+        state, title = _extract_state(rest)
+        nodes.append(TaskNode(
+            key=f"#{num}", kind="task", depth=depth,
+            task_id=num, title=title, state=state,
+        ))
+    return _build_hierarchy(nodes)
+
+
+def _extract_state(raw: str) -> tuple[str, str]:
+    state_map = {
+        "DONE": "done", "CLOSED": "done",
+        "OPEN": "active", "ACTIVE": "active",
+        "CANCELLED": "cancelled", "BLOCKED": "blocked",
+        "SHELVED": "shelved", "NEW": "new",
+    }
+    m = re.search(r"\s*\((?P<kw>[A-Z]+)\)\s*$", raw)
+    if m:
+        kw = m.group("kw")
+        title = raw[:m.start()].strip()
+        title = re.sub(r"[\s✅❌🔄⏳🚫⏸🆕]+$", "", title).strip()
+        return state_map.get(kw, "pending"), title
+    m2 = re.search(r"\s+(?P<kw>done|active|open|closed|cancelled|blocked|shelved|pending|new)\s*$", raw, re.I)
+    if m2:
+        kw = m2.group("kw").lower()
+        state = {"open": "active", "closed": "done"}.get(kw, kw)
+        title = raw[:m2.start()].strip()
+        title = re.sub(r"[\s✅❌🔄⏳🚫⏸🆕]+$", "", title).strip()
+        return state, title
+    return "pending", raw.strip()
+
+
+def _build_hierarchy(nodes: list[TaskNode]) -> list[TaskNode]:
+    if not nodes:
+        return []
+    if any(n.depth > 0 for n in nodes):
+        roots: list[TaskNode] = []
+        stack: list[TaskNode] = []
+        for node in nodes:
+            while stack and stack[-1].depth >= node.depth:
+                stack.pop()
+            if stack:
+                stack[-1].children.append(node)
+            else:
+                roots.append(node)
+            stack.append(node)
+        return roots
+    by_parent: dict[int | None, list[TaskNode]] = {}
+    for n in nodes:
+        by_parent.setdefault(n.parent_id, []).append(n)
+    roots = by_parent.get(None, [])
+    for n in nodes:
+        n.children = by_parent.get(n.task_id, [])
+    return roots
+
+
+def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> list[TaskNode]:
+    if state_data is None:
+        state_data = load_state()
+    tasks = state_data.get("tasks", {})
+    if not nodes:
+        nodes = _build_nodes_from_state(state_data)
+
+    task_map: dict[int, TaskNode] = {}
+    def _collect(ns):
+        for n in ns:
+            if n.task_id is not None:
+                task_map[n.task_id] = n
+            _collect(n.children)
+    _collect(nodes)
+
+    for tid_str, info in tasks.items():
+        tid = int(tid_str)
+        if tid in task_map:
+            node = task_map[tid]
+            node.title = info.get("title", node.title)
+            node.state = info.get("state", node.state)
+            node.subject_path = info.get("subject", "")
+        else:
+            nodes.append(TaskNode(
+                key=f"#{tid}", kind="task", task_id=tid,
+                title=info.get("title", ""),
+                state=info.get("state", "pending"),
+                subject_path=info.get("subject", ""),
+                parent_id=info.get("parent"),
+            ))
+    return nodes
