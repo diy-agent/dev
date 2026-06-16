@@ -578,9 +578,40 @@ class MainWindow(QMainWindow):
 import socket
 import socketserver
 import threading
+from typing import Callable, TypeVar
 
 from cyclopts import App as CycloptsApp
+from PySide6.QtCore import QMetaObject, Qt as QtCore, Q_ARG  # type: ignore[import-untyped]
 from PySide6.QtCore import QObject  # type: ignore[import-untyped]
+
+
+T = TypeVar("T")
+
+
+class MainThread:
+    """安全地在 Qt 主线程执行操作，调用者不关心线程跳转。
+
+    用法:
+        mt = MainThread(window)
+        tree = mt.invoke(window.format_tree)    # 返回 str
+        node = mt.invoke(lambda: window.format_node(42))  # 带参数
+    """
+
+    def __init__(self, window: QObject):
+        self._window = window
+
+    def invoke(self, fn: Callable[[], T]) -> T:
+        """阻塞等待 fn 在 Qt 主线程执行完毕，返回结果。
+
+        类型安全：fn 返回什么类型，invoke 就返回什么类型。
+        """
+        ret: list[T] = []
+        QMetaObject.invokeMethod(
+            self._window,
+            lambda: ret.append(fn()),
+            QtCore.ConnectionType.BlockingQueuedConnection,
+        )
+        return ret[0]
 
 
 class ProbeCLI:
@@ -593,6 +624,7 @@ class ProbeCLI:
 
     def __init__(self, window: "MainWindow"):
         self._window = window
+        self._main = MainThread(window)
         self._app = CycloptsApp(name="probe")
 
         # ── AI 子应用 ──
@@ -600,22 +632,21 @@ class ProbeCLI:
         @ai.command
         def tree():
             """完整任务树（和 UI 一致）"""
-            return self._window.format_tree()
+            return self._main.invoke(self._window.format_tree)
 
         @ai.command
         def status():
             """健康检查（pid/窗口/树/定时器）"""
-            return self._window.format_status()
+            return self._main.invoke(self._window.format_status)
 
         @ai.command
         def agents():
             """agent 列表"""
-            return self._window.format_agents()
+            return self._main.invoke(self._window.format_agents)
 
         @ai.command
         def reload():
             """热重载 state.yaml"""
-            from PySide6.QtCore import QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "_load", QtCore.ConnectionType.QueuedConnection)
             return "OK"
@@ -623,7 +654,7 @@ class ProbeCLI:
         @ai.command
         def node(task_id: int):
             """<id> 任务节点详情"""
-            return self._window.format_node(task_id)
+            return self._main.invoke(lambda: self._window.format_node(task_id))
 
         self._app.command(ai)
 
@@ -633,7 +664,6 @@ class ProbeCLI:
         def notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
-            from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "show_notification",
                 QtCore.ConnectionType.QueuedConnection,
@@ -646,7 +676,6 @@ class ProbeCLI:
             title_text = " ".join(text)
             if not title_text:
                 return "错误: 缺少参数，用法: human title <文本...>"
-            from PySide6.QtCore import Q_ARG, QMetaObject, Qt as QtCore
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
@@ -686,6 +715,10 @@ class ProbeCLI:
         out.flush()
 
 
+class AppProbeError(Exception):
+    """已有运行中的管控台实例。"""
+
+
 class AppProbe(QObject):
     """Unix domain socket server，允许外部进程查询/操纵 app 运行状态。
 
@@ -707,13 +740,15 @@ class AppProbe(QObject):
         self._cli = ProbeCLI(window)
 
     def start(self) -> None:
-        # 检查是否有活实例
+        # 检查是否有活实例 — socket 文件即锁
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(0.5)
             s.connect(self._path)
             s.close()
-            return  # 有活实例，不启动
+            raise AppProbeError(
+                f"已有运行中的管控台实例 (socket: {self._path})"
+            )
         except (OSError, socket.timeout):
             pass  # 连不上 → 残留或不存在
 
@@ -785,9 +820,13 @@ def main():
     # Ctrl+C 两次退出（调试模式下 Qt event loop 会吞 SIGINT）
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    window = MainWindow()
-    window.show()
+    try:
+        window = MainWindow()
+    except AppProbeError as e:
+        print(e, file=sys.stderr)
+        return
 
+    window.show()
     sys.exit(app.exec())
 
 
