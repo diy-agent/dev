@@ -157,7 +157,7 @@ class Session:
     # ── 命令执行 ──
 
     # Shell syntax that disqualifies fast-path execution
-    _SHELL_SYNTAX = re.compile(r'[;&|<>]|\$\(|`')
+    _SHELL_SYNTAX = re.compile(r'[;&|<>]|\$[a-zA-Z_({]|`')
 
     def run(self, cmd: str, timeout: float = 12.0, quiet: float = 0.3) -> tuple[int, str, str]:
         # Try registered fast commands before spawning a process
@@ -287,29 +287,43 @@ class Session:
         expected_clean = [l for l in expected if l.strip()]
 
         for exp in expected_clean:
+            # * 通配符：匹配任意输出（含空输出）
+            if exp == "*":
+                continue
             if not any(self._line_matches(exp, act) for act in actual_lines):
                 raise AssertionError(
                     f"[{label}] 未找到匹配行: {exp!r}\n"
                     f"  实际输出: {actual!r}"
                 )
 
-    def _parse_session(self, session: str) -> list[tuple[str, list[str], list[str]]]:
-        blocks: list[tuple[str, list[str], list[str]]] = []
+    def _parse_session(self, session: str) -> list[tuple[str, list[str], list[str], bool]]:
+        blocks: list[tuple[str, list[str], list[str], bool]] = []
         lines = session.split("\n")
 
         cmd = ""
         stdout_expected: list[str] = []
         stderr_expected: list[str] = []
+        expect_fail = False
         target = stdout_expected
 
         for line in lines:
             stripped = line.strip()
-            if stripped.startswith("$"):
+            if stripped.startswith("$! "):
                 if cmd:
-                    blocks.append((cmd, stdout_expected, stderr_expected))
-                cmd = stripped[1:].strip()
+                    blocks.append((cmd, stdout_expected, stderr_expected, expect_fail))
+                cmd = stripped[3:].strip()
                 stdout_expected = []
                 stderr_expected = []
+                expect_fail = True
+                target = stdout_expected
+                continue
+            if stripped.startswith("$ "):
+                if cmd:
+                    blocks.append((cmd, stdout_expected, stderr_expected, expect_fail))
+                cmd = stripped[2:].strip()
+                stdout_expected = []
+                stderr_expected = []
+                expect_fail = False
                 target = stdout_expected
                 continue
             if stripped == "---":
@@ -320,13 +334,19 @@ class Session:
             target.append(stripped)
 
         if cmd:
-            blocks.append((cmd, stdout_expected, stderr_expected))
+            blocks.append((cmd, stdout_expected, stderr_expected, expect_fail))
         return blocks
 
     def assert_session(self, session: str) -> None:
         blocks = self._parse_session(session)
-        for cmd, stdout_exp, stderr_exp in blocks:
-            _, out, err = self.run(cmd)
+        for cmd, stdout_exp, stderr_exp, expect_fail in blocks:
+            code, out, err = self.run(cmd)
+            if expect_fail:
+                assert code != 0, (
+                    f"$! {cmd}\nexit={code}（期望非零）\nstdout: {out}\nstderr: {err}"
+                )
+                if not stdout_exp and not stderr_exp:
+                    continue
             self._match_block(stdout_exp, out, f"stdout: $ {cmd}")
             if stderr_exp:
                 self._match_block(stderr_exp, err, f"stderr: $ {cmd}")

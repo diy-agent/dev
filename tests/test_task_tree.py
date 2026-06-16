@@ -118,7 +118,7 @@ def test_merge_state_data():
     ]
     state = {
         "tasks": {
-            "58": {"id": 58, "title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
+            "58": {"title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
         }
     }
     merged = merge_state_data(nodes, state)
@@ -131,8 +131,8 @@ def test_merge_adds_new_tasks():
     nodes: list[TaskNode] = []
     state = {
         "tasks": {
-            "58": {"id": 58, "title": "Epic", "state": "active", "subject": ""},
-            "99": {"id": 99, "title": "New", "state": "pending", "subject": ""},
+            "58": {"title": "Epic", "state": "active", "subject": ""},
+            "99": {"title": "New", "state": "pending", "subject": ""},
         }
     }
     merged = merge_state_data(nodes, state)

@@ -26,7 +26,6 @@ import yaml
 
 from _shelltest import ShellTest
 
-
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

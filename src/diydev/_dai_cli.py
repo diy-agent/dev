@@ -257,9 +257,9 @@ def _build_tree_json(state_data: dict) -> str:
 
     # 构建简化的任务树
     task_list = []
-    for num, task in sorted(tasks_data.items(), key=lambda x: int(x[0])):
+    for num_str, task in sorted(tasks_data.items(), key=lambda x: int(x[0])):
         entry = {
-            "number": int(num),
+            "number": num_str,
             "title": task.get("title", ""),
             "state": task.get("state", "pending"),
         }
@@ -576,7 +576,7 @@ def task_create(
         sys.exit(1)
 
     if parent is not None and get_task(parent) is None:
-        print(f"错误: parent #{parent} 不存在", file=sys.stderr)
+        print(f"错误: parent {parent} 不存在", file=sys.stderr)
         sys.exit(1)
 
     tid = create_task(title=title, subject=subject_n, parent=parent)
@@ -595,11 +595,9 @@ def task_list(
     ] = False,
 ):
     """列出所有任务。"""
-    tasks_out: dict[int, Any] = {}
+    tasks_out: dict[str, Any] = {}
     for k, v in list_tasks().items():
-        entry = dict(v)
-        entry.pop("id", None)  # id 已在 key 中，不重复
-        tasks_out[int(k)] = entry
+        tasks_out[k] = dict(v)
     output = {"tasks": tasks_out}
     if json_output:
         print(json.dumps(output, indent=2, ensure_ascii=False))
@@ -617,7 +615,7 @@ def task_show(
     """查看单个任务。"""
     task = get_task(task_id)
     if task is None:
-        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
         sys.exit(1)
     if json_output:
         print(json.dumps(task, indent=2, ensure_ascii=False))
@@ -638,7 +636,7 @@ def task_edit(
 ):
     """编辑任务。返回编辑后的完整字段。"""
     if get_task(task_id) is None:
-        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
         sys.exit(1)
 
     fields: dict[str, Any] = {}
@@ -650,7 +648,7 @@ def task_edit(
         fields["subject"] = _norm(subject)
     if parent is not None:
         if get_task(parent) is None:
-            print(f"错误: parent #{parent} 不存在", file=sys.stderr)
+            print(f"错误: parent {parent} 不存在", file=sys.stderr)
             sys.exit(1)
         fields["parent"] = parent
 
@@ -671,7 +669,7 @@ def task_delete(
 ):
     """删除任务。"""
     if get_task(task_id) is None:
-        print(f"错误: 任务 #{task_id} 不存在", file=sys.stderr)
+        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
         sys.exit(1)
 
     delete_task(task_id)
