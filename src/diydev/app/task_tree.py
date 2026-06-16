@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from diydev._state import load_state
+from diydev._state import list_tasks, load_state
 
 
 @dataclass
@@ -32,6 +32,7 @@ class TaskNode:
     task_id: int | None = None
     title: str = ""
     state: str = "pending"
+    detail: str = ""
     parent_id: int | None = None
     subject_path: str = ""
     agents: list[AgentInfo] = field(default_factory=list)
@@ -56,11 +57,15 @@ class TaskNode:
 # ═══════════════════════════════════════════════════════
 
 def load_task_tree(agents_path: str | None = None) -> list[TaskNode]:
-    """加载任务树 — 纯 state.yaml 驱动。
+    """加载任务树 — tasks/ 目录 + state.yaml subjects 驱动。
 
     subject 字段决定任务挂载位置。parent 字段决定层级。
     """
-    return _build_nodes_from_state(load_state())
+    state_data = load_state()
+    # 从 ~/.diy/tasks/ 目录获取任务数据，而非 state.yaml 的 tasks 分支
+    tasks_data = list_tasks()
+    state_data["tasks"] = tasks_data
+    return _build_nodes_from_state(state_data)
 
 
 # ═══════════════════════════════════════════════════════
@@ -96,6 +101,7 @@ def _build_nodes_from_state(state_data: dict) -> list[TaskNode]:
         tn = TaskNode(
             key=f"#{tid}", kind="task", task_id=tid,
             title=info.get("title", ""),
+            detail=info.get("detail", ""),
             state=info.get("state", "pending"),
             subject_path=info.get("subject", ""),
             parent_id=info.get("parent"),
@@ -263,6 +269,7 @@ def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> l
             node = task_map[tid]
             node.title = info.get("title", node.title)
             node.state = info.get("state", node.state)
+            node.detail = info.get("detail", node.detail)
             node.subject_path = info.get("subject", "")
         else:
             nodes.append(TaskNode(

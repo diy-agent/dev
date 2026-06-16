@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _AGENTS_DIR = Path.home() / ".diy" / "agents"
+_TASKS_DIR = Path.home() / ".diy" / "tasks"
 
 
 # ═══════════════════════════════════════════════════════
@@ -123,7 +124,7 @@ def clear_status(task_id: int) -> None:
 
 def steer_send(task_id: int, message: str) -> None:
     """GUI 发送 /steer 消息给 agent。"""
-    d = _task_dir(task_id)
+    d = _TASKS_DIR / str(task_id)
     d.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -133,7 +134,7 @@ def steer_send(task_id: int, message: str) -> None:
 
 def steer_read(task_id: int) -> str:
     """读取 steer 对话历史。"""
-    p = _task_dir(task_id) / "steer.log"
+    p = _TASKS_DIR / str(task_id) / "steer.log"
     if not p.exists():
         return ""
     with open(p) as fh:
@@ -142,7 +143,7 @@ def steer_read(task_id: int) -> str:
 
 def steer_reply(task_id: int, message: str) -> None:
     """agent 回复 /steer 消息。"""
-    d = _task_dir(task_id)
+    d = _TASKS_DIR / str(task_id)
     d.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")

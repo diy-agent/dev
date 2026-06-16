@@ -11,27 +11,32 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Slot  # type: ignore[import-untyped]
-from PySide6.QtGui import QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
+from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Slot, Signal  # type: ignore[import-untyped]
+from PySide6.QtGui import QAction, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
+    QAbstractItemView,
     QApplication,
     QDockWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
-    QSplitter,
+    QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from diydev.app._activity_bar import ActivityBar
+from diydev.app._app_log import logger, setup_app_logger
+from diydev.app._log_panel import LogPanel
 from diydev.app.agent_bridge import (
     AgentStatus,
     list_agents,
-    read_progress,
     steer_read,
     steer_send,
 )
@@ -45,6 +50,48 @@ ROLE_TASK_ID = Qt.ItemDataRole.UserRole + 1
 ROLE_KIND = Qt.ItemDataRole.UserRole + 2
 ROLE_STATE = Qt.ItemDataRole.UserRole + 3
 ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
+
+# ═══════════════════════════════════════════════════════
+# 详情面板样式
+# ═══════════════════════════════════════════════════════
+
+_STYLE = """<style>
+  .card { font-family: -apple-system, "Segoe UI", sans-serif; padding: 12px; }
+  .placeholder { font-family: -apple-system, "Segoe UI", sans-serif; color: #888; font-size: 14px; padding: 20px; }
+  .header { font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 8px; }
+  .title { font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 10px; }
+  .detail { font-size: 13px; color: #bac2de; line-height: 1.6; margin: 8px 0 12px 0; white-space: pre-wrap; }
+  .meta { margin: 8px 0 4px 0; }
+  .tag { display: inline-block; background: #313244; color: #a6adc8; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+  .section-title { font-size: 13px; font-weight: bold; color: #a6adc8; margin: 4px 0; }
+  .agent { font-size: 12px; color: #bac2de; margin: 2px 0; }
+  .agent code { background: #1e1e2e; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }
+  .hint { font-size: 12px; color: #585b70; margin-top: 4px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #fff; }
+  hr { border: none; border-top: 1px solid #313244; margin: 12px 0; }
+</style>"""
+
+
+def _esc_html(text: str) -> str:
+    """转义 HTML 特殊字符"""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+_STATE_COLORS = {
+    "pending": "#f9e2af", "active": "#89b4fa", "open": "#89b4fa",
+    "done": "#a6e3a1", "closed": "#a6e3a1", "cancelled": "#6c7086",
+    "blocked": "#f38ba8", "shelved": "#fab387", "new": "#94e2d5",
+}
+
+
+def _state_badge(state: str) -> str:
+    color = _STATE_COLORS.get(state, "#585b70")
+    return f'<span class="badge" style="background:{color};color:#1e1e2e;">{state}</span>'
 
 
 def build_model(nodes: list[TaskNode]) -> QStandardItemModel:
@@ -110,7 +157,7 @@ def safe_call(fn, *args, _context="", _on_error="return", **kwargs):
         return fn(*args, **kwargs)
     except Exception:
         tb = traceback.format_exc()
-        print(f"[diy] 边界异常 [{_context}]\n{tb}", file=sys.stderr, flush=True)
+        logger.error("[%s] 边界异常\n%s", _context, tb.rstrip())
         if _on_error == "return":
             return f"内部错误 (context={_context})"
         return None
@@ -132,15 +179,17 @@ def guarded(context: str):
 # Steer Panel
 # ═══════════════════════════════════════════════════════
 
-class SteerPanel(QDockWidget):
-    """Dock widget 用于 /steer 与 agent 通信。"""
+class SteerPanel(QWidget):
+    """用于 /steer 与 agent 通信。"""
+
+    title_changed = Signal(str)
 
     def __init__(self, parent=None):
-        super().__init__("Agent 通信", parent)
+        super().__init__(parent)
         self._task_id: int | None = None
 
-        central = QWidget()
-        layout = QVBoxLayout(central)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # 只读对话区
         self._log = QTextEdit()
@@ -159,7 +208,6 @@ class SteerPanel(QDockWidget):
         input_row.addWidget(send_btn)
 
         layout.addLayout(input_row)
-        self.setWidget(central)
 
         # 定时刷新对话
         self._timer = QTimer(self)
@@ -168,7 +216,7 @@ class SteerPanel(QDockWidget):
 
     def set_task(self, task_id: int) -> None:
         self._task_id = task_id
-        self.setWindowTitle(f"Agent 通信 — #{task_id}")
+        self.title_changed.emit(f"Agent 通信 — #{task_id}")
         self._refresh_log()
 
     @guarded("steer.send")
@@ -204,41 +252,81 @@ class MainWindow(QMainWindow):
         self._probe = AppProbe(self)
         self._probe.start()
 
-        # ── 树视图 ──
+        # ── Activity Bar（左侧活动栏） ──
+        self._activity_bar = ActivityBar(self)
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self._activity_bar)
+
+        # ── 树视图（主侧边栏） ──
         self._tree = QTreeView()
         self._tree.setHeaderHidden(True)
         self._tree.setAnimated(True)
         self._tree.setRootIsDecorated(True)
         self._tree.setExpandsOnDoubleClick(True)
+        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
-        # ── 详情面板 ──
-        self._detail = QWidget()
-        detail_layout = QVBoxLayout(self._detail)
-        self._detail_label = QLabel("选择任务查看详情")
-        self._detail_label.setWordWrap(True)
-        self._detail_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        detail_layout.addWidget(self._detail_label)
+        self._primary_sidebar = QDockWidget("任务树", self)
+        self._primary_sidebar.setObjectName("PrimarySidebar")
+        self._primary_sidebar.setWidget(self._tree)
+        self._primary_sidebar.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._primary_sidebar)
 
-        # ── Steer Panel (dock) ──
+        # ── 详情面板（中央 Editor） ──
+        self._detail = QTextBrowser()
+        self._detail.setOpenExternalLinks(True)
+        self._detail.setPlaceholderText("选择任务查看详情")
+        self.setCentralWidget(self._detail)
+
+        # ── Steer Panel（副侧边栏） ──
         self._steer = SteerPanel(self)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._steer)
-        self._steer.hide()
+        self._steer.title_changed.connect(self._on_steer_title)
 
-        # ── 布局 ──
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._tree)
-        splitter.addWidget(self._detail)
-        splitter.setSizes([400, 600])
-        self.setCentralWidget(splitter)
+        self._secondary_sidebar = QDockWidget("Agent 通信", self)
+        self._secondary_sidebar.setObjectName("SecondarySidebar")
+        self._secondary_sidebar.setWidget(self._steer)
+        self._secondary_sidebar.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._secondary_sidebar)
+        self._secondary_sidebar.hide()
+
+        # ── 底部面板（输出 / Agent 列表等） ──
+        self._log_panel = LogPanel(self)
+
+        self._agent_panel = QPlainTextEdit()
+        self._agent_panel.setReadOnly(True)
+        self._agent_panel.setPlaceholderText("运行中的 agent 将显示在这里")
+
+        self._panel_tabs = QTabWidget()
+        self._panel_tabs.addTab(self._log_panel, "输出")
+        self._panel_tabs.addTab(self._agent_panel, "Agent")
+
+        self._panel_dock = QDockWidget("面板", self)
+        self._panel_dock.setObjectName("Panel")
+        self._panel_dock.setWidget(self._panel_tabs)
+        self._panel_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._panel_dock)
+        self._panel_dock.hide()
+
+        # ── ActivityBar → Dock 绑定 ──
+        self._activity_bar.set_dock(0, self._primary_sidebar)   # 📁
+        self._activity_bar.set_dock(1, self._secondary_sidebar)  # 💬
+        self._activity_bar.set_dock(2, self._panel_dock)          # 📋
+
+        # ── 菜单栏 ──
+        self._setup_menu()
 
         # ── 数据 ──
         self._nodes: list[TaskNode] = []
         self._load()
 
         # ── 信号 ──
-        self._tree.selectionModel().selectionChanged.connect(self._on_select)
+        self._tree.clicked.connect(self._on_select)
         self._tree.doubleClicked.connect(self._on_double_click)
 
         # ── 文件监控 ──
@@ -250,22 +338,71 @@ class MainWindow(QMainWindow):
         # state.yaml 变化 → 自动 reload
         state_path = str(Path.home() / ".diy" / "state.yaml")
         self._watcher.addPath(state_path)
+        # tasks/ 目录变化（CLI 创建/删除任务）→ 自动 reload
+        tasks_path = str(Path.home() / ".diy" / "tasks")
+        os.makedirs(tasks_path, exist_ok=True)
+        self._watcher.addPath(tasks_path)
 
         # ── 定时刷新（agent 状态 5s） ──
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_agents)
         self._refresh_timer.start(5000)
 
+        logger.info("MainWindow 初始化完成, pid=%s", os.getpid())
+
+    def _setup_menu(self):
+        """构建菜单栏。"""
+        menubar = self.menuBar()
+
+        # ── 视图菜单 ──
+        view_menu = menubar.addMenu("视图")
+
+        toggle_sidebar = QAction("任务树", self, checkable=True)
+        toggle_sidebar.setChecked(True)
+        toggle_sidebar.setShortcut("Ctrl+B")
+        toggle_sidebar.triggered.connect(self._primary_sidebar.setVisible)
+        self._primary_sidebar.visibilityChanged.connect(toggle_sidebar.setChecked)
+        view_menu.addAction(toggle_sidebar)
+
+        toggle_steer = QAction("Agent 通信", self, checkable=True)
+        toggle_steer.setChecked(False)
+        toggle_steer.triggered.connect(self._secondary_sidebar.setVisible)
+        self._secondary_sidebar.visibilityChanged.connect(toggle_steer.setChecked)
+        view_menu.addAction(toggle_steer)
+
+        view_menu.addSeparator()
+
+        toggle_output = QAction("输出", self, checkable=True)
+        toggle_output.setChecked(False)
+        toggle_output.setShortcut("Ctrl+`")
+        toggle_output.triggered.connect(lambda v: self._toggle_panel(v, 0))
+        self._panel_dock.visibilityChanged.connect(toggle_output.setChecked)
+        view_menu.addAction(toggle_output)
+
+    def _toggle_panel(self, visible: bool, tab_index: int = 0) -> None:
+        self._panel_dock.setVisible(visible)
+        if visible:
+            self._panel_tabs.setCurrentIndex(tab_index)
+            self._panel_dock.raise_()
+
+    def _on_steer_title(self, title: str) -> None:
+        self._secondary_sidebar.setWindowTitle(title)
+
     def _load(self) -> None:
         self._nodes = load_task_tree()
         self._last_reload = time.time()
         self._refresh_agents()
         self._render_tree()
+        subjects = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "subject")
+        tasks = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "task")
+        logger.info("reload — %d subject(s), %d task(s), %d root(s)", subjects, tasks, len(self._nodes))
 
     def _render_tree(self) -> None:
         model = build_model(self._nodes)
         self._tree.setModel(model)
         self._tree.expandAll()
+        # setModel() 会重建 selectionModel，重新连接信号
+        self._tree.selectionModel().selectionChanged.connect(self._on_select)
 
     @guarded("timer.refresh")
     def _refresh_agents(self) -> None:
@@ -302,7 +439,15 @@ class MainWindow(QMainWindow):
 
     @guarded("watcher.agent")
     def _on_agent_dir_changed(self, _path: str) -> None:
-        self._refresh_agents()
+        # 启动 3 秒内不响应目录变化（macOS 初始化会触发一次）
+        if time.time() - self._started_at < 3.0:
+            return
+        tasks_dir = str(Path.home() / ".diy" / "tasks")
+        if _path == tasks_dir:
+            # tasks/ 目录变化（CLI 创建/删除任务）→ reload 树
+            self._load()
+        else:
+            self._refresh_agents()
 
     @guarded("watcher.file")
     def _on_file_changed(self, path: str) -> None:
@@ -377,11 +522,11 @@ class MainWindow(QMainWindow):
     @guarded("action.steer")
     def _open_steer(self, task_id: int) -> None:
         self._steer.set_task(task_id)
-        self._steer.show()
+        self._secondary_sidebar.show()
 
     # ── 选中 / 双击 ──
     @guarded("tree.select")
-    def _on_select(self):
+    def _on_select(self, _selected=None, _deselected=None):
         indexes = self._tree.selectionModel().selectedIndexes()
         if not indexes:
             return
@@ -390,34 +535,61 @@ class MainWindow(QMainWindow):
         kind = index.data(ROLE_KIND)
         task_id = index.data(ROLE_TASK_ID)
         state = index.data(ROLE_STATE)
-        subject = index.data(ROLE_SUBJECT)
 
-        lines = []
         if kind == "subject":
-            lines.append(f"**Subject:** `{subject or index.data(Qt.ItemDataRole.DisplayRole)}`")
-        elif kind == "task" and task_id:
-            lines.append(f"**#{task_id}** — {state}")
+            display = index.data(Qt.ItemDataRole.DisplayRole) or ""
+            html = f"""<div class="card">
+  <div class="header">📁 Subject</div>
+  <div class="title">{_esc_html(display)}</div>
+</div>"""
+            self._detail.setHtml(_STYLE + html)
+            return
 
-        node = self._find_node(task_id) if task_id else None
-        if node:
-            if node.title:
-                lines.append(f"标题: {node.title}")
-            if node.subject_path:
-                lines.append(f"Subject: `{node.subject_path}`")
-            if node.parent_id:
-                lines.append(f"父任务: #{node.parent_id}")
-            if node.agents:
-                lines.append("")
-                lines.append("**Agent:**")
-                for a in node.agents:
-                    icon = {"running": "🤖", "done": "✅", "blocked": "🚫"}.get(a.state, "⏳")
-                    progress = read_progress(node.task_id or 0, tail=5).strip()
-                    lines.append(f"  {icon} {a.agent_id} ({a.state})")
-                    if progress:
-                        for pline in progress.split("\n")[-3:]:
-                            lines.append(f"    {pline}")
+        if kind != "task" or not task_id:
+            self._detail.setHtml(_STYLE + """<div class="placeholder">选择任务查看详情</div>""")
+            return
 
-        self._detail_label.setText("\n".join(lines) if lines else "选择任务查看详情")
+        node = self._find_node(task_id)
+
+        # —— 拼 HTML ——
+        parts: list[str] = []
+
+        # ID + state badge
+        state_badge = _state_badge(state)
+        parts.append(f"""<div class="header">#{task_id} {state_badge}</div>""")
+
+        # Title
+        if node and node.title:
+            parts.append(f"""<div class="title">{_esc_html(node.title)}</div>""")
+
+        # Detail
+        if node and node.detail:
+            detail_html = _esc_html(node.detail).replace("\n", "<br>")
+            parts.append(f"""<div class="detail">{detail_html}</div>""")
+
+        # Metadata row
+        meta: list[str] = []
+        if node and node.subject_path:
+            meta.append(f"""<span class="tag">📂 {_esc_html(node.subject_path)}</span>""")
+        if node and node.parent_id:
+            meta.append(f"""<span class="tag">⬆ 父任务 #{node.parent_id}</span>""")
+        if meta:
+            parts.append(f"""<div class="meta">{' '.join(meta)}</div>""")
+
+        # Divider
+        parts.append("<hr>")
+
+        # Agent section
+        if node and node.agents:
+            parts.append("""<div class="section-title">🤖 Agent</div>""")
+            for a in node.agents:
+                icons = {"running": "🟢", "done": "✅", "blocked": "🔴"}
+                icon = icons.get(a.state, "⏳")
+                parts.append(f"""<div class="agent">{icon} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>""")
+        else:
+            parts.append("""<div class="hint">无运行中的 agent</div>""")
+
+        self._detail.setHtml(_STYLE + "".join(parts))
 
     @guarded("tree.double")
     def _on_double_click(self, index):
@@ -547,6 +719,8 @@ class MainWindow(QMainWindow):
             f"  depth:   {node.depth}",
             f"  children: {len(node.children)}",
         ]
+        if node.detail:
+            lines.append(f"  detail:  {node.detail}")
         if node.children:
             lines.append("  child_list:")
             for c in node.children:
@@ -581,7 +755,7 @@ import threading
 from typing import Callable, TypeVar
 
 from cyclopts import App as CycloptsApp
-from PySide6.QtCore import QMetaObject, Qt as QtCore, Q_ARG  # type: ignore[import-untyped]
+from PySide6.QtCore import QEventLoop, QMetaObject, Qt as QtCore, Q_ARG, QTimer  # type: ignore[import-untyped]
 from PySide6.QtCore import QObject  # type: ignore[import-untyped]
 
 
@@ -603,14 +777,13 @@ class MainThread:
     def invoke(self, fn: Callable[[], T]) -> T:
         """阻塞等待 fn 在 Qt 主线程执行完毕，返回结果。
 
-        类型安全：fn 返回什么类型，invoke 就返回什么类型。
+        PySide6 6.8 兼容：QTimer.singleShot + QEventLoop，
+        代替 QMetaObject.invokeMethod(obj, callable, conn_type)（6.9+ 才支持）。
         """
         ret: list[T] = []
-        QMetaObject.invokeMethod(
-            self._window,
-            lambda: ret.append(fn()),
-            QtCore.ConnectionType.BlockingQueuedConnection,
-        )
+        loop = QEventLoop()
+        QTimer.singleShot(0, lambda: [ret.append(fn()), loop.quit()])
+        loop.exec()
         return ret[0]
 
 
@@ -704,8 +877,9 @@ class ProbeCLI:
             self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
             pass
-        except Exception:
-            pass  # cyclopts 错误已写入 stderr → err_buf
+        except Exception as exc:
+            logger.error("dispatch 异常: %s\n%s", exc, traceback.format_exc())
+            out.write(f"\n内部错误: {exc}\n")
         finally:
             sys.stderr = old_stderr
 
@@ -761,6 +935,7 @@ class AppProbe(QObject):
         self._server = socketserver.UnixStreamServer(self._path, _make_handler(self))
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
+        logger.info("AppProbe socket ready → %s", self._path)
 
     def stop(self) -> None:
         if self._server:
@@ -814,6 +989,11 @@ class AgentInfo:
 def main():
     import signal
 
+    # 日志系统必须先初始化（MainWindow.__init__ 中 guarded 方法可能立即触发）
+    setup_app_logger()
+    logger.info("=" * 50)
+    logger.info("diy 管控台启动")
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -823,10 +1003,11 @@ def main():
     try:
         window = MainWindow()
     except AppProbeError as e:
-        print(e, file=sys.stderr)
+        logger.error(str(e))
         return
 
     window.show()
+    logger.info("窗口已显示")
     sys.exit(app.exec())
 
 

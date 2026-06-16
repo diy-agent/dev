@@ -562,6 +562,7 @@ def task_create(
     title: Annotated[str, Parameter(name="--title", help="任务标题")],
     subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
     parent: Annotated[int | None, Parameter(name="--parent", help="父任务ID")] = None,
+    detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -579,7 +580,7 @@ def task_create(
         print(f"错误: parent {parent} 不存在", file=sys.stderr)
         sys.exit(1)
 
-    tid = create_task(title=title, subject=subject_n, parent=parent)
+    tid = create_task(title=title, subject=subject_n, parent=parent, detail=detail)
     task = get_task(tid) or {}
     result = {"status": "success", "data": task}
     if json_output:
@@ -630,6 +631,7 @@ def task_edit(
     state: Annotated[str | None, Parameter(name="--state", help="新状态")] = None,
     subject: Annotated[str | None, Parameter(name="--subject", help="新 subject")] = None,
     parent: Annotated[int | None, Parameter(name="--parent", help="新父任务ID")] = None,
+    detail: Annotated[str | None, Parameter(name="--detail", help="新详情")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -651,6 +653,8 @@ def task_edit(
             print(f"错误: parent {parent} 不存在", file=sys.stderr)
             sys.exit(1)
         fields["parent"] = parent
+    if detail is not None:
+        fields["detail"] = detail
 
     task = update_task_field(task_id, **fields)
     result = {"status": "success", "data": task}
@@ -674,6 +678,74 @@ def task_delete(
 
     delete_task(task_id)
     result = {"status": "success"}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="import")
+def task_import(
+    source: Annotated[str | None, Parameter(help="源 state.yaml 路径（默认 ~/.diy/state.yaml.bak）")] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """从旧 state.yaml 导入任务到 ~/.diy/tasks/。"""
+    src = source or os.path.expanduser("~/.diy/state.yaml.bak")
+    if not os.path.isfile(src):
+        print(f"错误: 源文件不存在 {src}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(src, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+
+    tasks = data.get("tasks", {})
+    if not tasks:
+        print("源文件没有任务数据", file=sys.stderr)
+        sys.exit(1)
+
+    from diydev._state import _next_task_id, _write_agents_md, _tasks_root
+
+    imported = 0
+    max_id = 0
+    results: list[dict[str, Any]] = []
+
+    # 按 ID 排序导入
+    for tid_str in sorted(tasks.keys(), key=lambda x: int(x)):
+        tid = int(tid_str)
+        info = tasks[tid_str]
+        max_id = max(max_id, tid)
+
+        # 检查是否已存在
+        task_dir = _tasks_root() / tid_str
+        if task_dir.exists():
+            print(f"  ⏭ 跳过 #{tid}（目录已存在）", file=sys.stderr)
+            continue
+
+        meta: dict[str, Any] = {
+            "id": tid,
+            "title": info.get("title", ""),
+            "state": info.get("state", "pending"),
+            "subject": info.get("subject", ""),
+            "created": info.get("created", "2026-06-01T00:00:00Z"),
+            "updated": info.get("updated", "2026-06-01T00:00:00Z"),
+        }
+        if info.get("detail"):
+            meta["detail"] = info["detail"]
+        if info.get("parent"):
+            meta["parent"] = info["parent"]
+
+        _write_agents_md(tid, meta)
+        imported += 1
+        results.append(meta)
+        print(f"  ✓ #{tid} — {meta['title']}", file=sys.stderr)
+
+    # 更新 counter 到 max_id + 1
+    counter_path = _tasks_root() / ".counter"
+    counter_path.write_text(str(max_id + 1))
+
+    result = {"status": "success", "data": {"imported": imported, "next_id": max_id + 1}}
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
