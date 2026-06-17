@@ -131,11 +131,12 @@ def _find_other_instances() -> list[dict]:
             parts = line.strip().split(None, 2)
             if len(parts) < 2:
                 continue
-            pid_str, comm = parts[0], parts[1]
-            base = os.path.basename(comm)
-            if "python" not in base.lower():
+            pid_str = parts[0]
+            # 用 args 而非 comm 判断（Apple ps 截断 comm 到 15 字节）
+            args_line = parts[2] if len(parts) > 2 else parts[1]
+            if "diydev.app.main" not in args_line and "diydev.app.main" not in line:
                 continue
-            if "diydev.app.main" not in line:
+            if not any("python" in p for p in parts[1:] if p.startswith("/")):
                 continue
             try:
                 pid = int(pid_str)
@@ -239,12 +240,10 @@ def format_report(issues: list[HealthIssue]) -> str:
         if code in reported:
             i = reported[code]
             emoji = {"critical": "✗", "warning": "!"}.get(i.severity, "?")
+            lines.append(f"  {emoji} {label} — {i.message}")
             if i.detail:
-                # 只取第一行
-                detail_first = i.detail.split("\n")[0].strip()[:60]
-                lines.append(f"  {emoji} {label} — {detail_first}")
-            else:
-                lines.append(f"  {emoji} {label} — {i.message}")
+                for det_line in i.detail.strip().split("\n"):
+                    lines.append(f"    {det_line}")
         else:
             lines.append(f"  ✓ {label}")
 
