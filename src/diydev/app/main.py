@@ -820,8 +820,7 @@ class ProbeCLI:
         @ai.command
         def reload():
             """热重载 state.yaml"""
-            QMetaObject.invokeMethod(
-                self._window, "_load", QtCore.ConnectionType.QueuedConnection)
+            self._main.invoke(self._window._load)
             return "OK"
 
         @ai.command
