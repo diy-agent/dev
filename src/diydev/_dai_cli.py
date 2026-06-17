@@ -945,10 +945,58 @@ def _parse_value(raw: str) -> object:
 # ════════════════════════════════════════════════════════════════
 
 
+def dai_doctor() -> None:
+    """健康自检 — 检查 socket、多实例、state.yaml。"""
+    from diydev.app._doctor import run_check
+
+    # 优先走 socket（运行中的 app 有完整上下文）
+    import socket as _sock
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    try:
+        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+        s.settimeout(3)
+        s.connect(socket_path)
+        s.sendall(b"ai doctor\n")
+        s.shutdown(_sock.SHUT_WR)
+        buf: list[bytes] = []
+        while True:
+            data = s.recv(4096)
+            if not data:
+                break
+            buf.append(data)
+        s.close()
+        sys.stdout.write(b"".join(buf).decode("utf-8"))
+        return
+    except OSError:
+        pass  # socket 不通 → 独立检查
+
+    # socket 不通 → 独立检查
+    issues = run_check()
+    if not issues:
+        print("✅ 一切正常")
+        return
+    print(f"发现 {len(issues)} 个问题:\n")
+    for i in issues:
+        emoji = {"critical": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(i.severity, "ℹ️")
+        print(f"  {emoji} [{i.code}] {i.message}")
+        if i.detail:
+            for line in i.detail.strip().split("\n"):
+                print(f"    {line}")
+    critical = [i for i in issues if i.severity == "critical"]
+    if critical:
+        print(f"\n🚨 {len(critical)} 个严重问题需要处理")
+        sys.exit(1)
+
+
 def main():
     # dai app → 透传到 socket，不经过 cyclopts
     if len(sys.argv) > 1 and sys.argv[1] == "app":
         _app_probe(sys.argv[2:] if len(sys.argv) > 2 else ["--help"])
+        return
+
+    # dai doctor → 自检
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        dai_doctor()
         return
 
     try:
