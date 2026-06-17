@@ -229,8 +229,8 @@ def _add_node(
     item.setData(node.state, ROLE_STATE)
     item.setData(node.subject_path, ROLE_SUBJECT)
 
-    fg = QColor(Theme.state_fg(node.state))
-    item.setForeground(fg)
+    # 树节点用列表文本色，不用 badge 色
+    item.setForeground(QColor(Theme.on_surface))
 
     parent.appendRow(item)
     for child in node.children:
