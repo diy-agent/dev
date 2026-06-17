@@ -33,89 +33,129 @@ def set_locked(v: bool) -> None:
 
 
 # ═══════════════════════════════════════════════════════
-# 自检引擎
+# 自检引擎 — 分层检查
+# ═══════════════════════════════════════════════════════
+#
+# 层级：
+# L1. App 状态 — 进程活着？socket 正常？
+# L2. 运行时检查 — 仅 app 运行时：socket 完整性、多实例
+# L3. 环境检查 — 始终：state.yaml
+#
 # ═══════════════════════════════════════════════════════
 
 _SOCKET_PATH = os.path.expanduser("~/.diy/app.sock")
 
 
 def run_check(sock_dev: int | None = None, sock_ino: int | None = None) -> list[HealthIssue]:
-    """全项自检。传入 bind 时记下的 socket (dev, ino) 用于检测被抢占。"""
+    """
+    全项自检。
+    从 app 内调用：传 (sock_dev, sock_ino)
+    从 CLI 调用：不传（自动客户端模式）
+    """
     issues: list[HealthIssue] = []
-    issues += _check_socket_integrity(sock_dev, sock_ino)
-    issues += _check_multiple_instances()
+
+    # L1: App 状态
+    app_status = _check_app_status(sock_dev, sock_ino)
+    issues += app_status
+
+    # L2: 运行时检查（仅 app 活着的状态）
+    if _is_live(app_status):
+        issues += _check_runtime(sock_dev, sock_ino)
+
+    # L3: 环境检查
     issues += _check_state_file()
+
     return issues
 
 
-# ── Socket 完整性检查 ──
+def _is_live(statuses: list[HealthIssue]) -> bool:
+    """根据 L1 结果判断 app 是否活着。"""
+    for i in statuses:
+        if i.code == "app_running":
+            return True
+    return False
 
 
-def _check_socket_integrity(sock_dev: int | None = None, sock_ino: int | None = None) -> list[HealthIssue]:
-    """对比 bind 时记下的 (dev, ino) 与文件系统当前值。"""
-    results: list[HealthIssue] = []
-
-    if sock_dev is None or sock_ino is None:
-        return _check_socket_client_side()
-
-    try:
-        st = os.stat(_SOCKET_PATH)
-    except FileNotFoundError:
-        results.append(HealthIssue(
-            severity="critical",
-            code="socket_missing",
-            message="Socket 文件已被删除",
-            detail=f"路径 {_SOCKET_PATH} 不存在。进程仍在运行但无法接收外部请求。建议重启。",
-        ))
-        return results
-
-    if st.st_dev != sock_dev or st.st_ino != sock_ino:
-        results.append(HealthIssue(
-            severity="critical",
-            code="socket_hijacked",
-            message="Socket 文件已被其他进程替换",
-            detail=(
-                f"我启动时 socket (dev={sock_dev}, ino={sock_ino})，"
-                f"当前文件系统 (dev={st.st_dev}, ino={st.st_ino})。"
-                f"说明另一个进程用同一路径创建了新 socket。"
-                f"当前应用已处于孤岛状态——所有新连接都去了新进程。"
-                f"建议关闭本窗口并重启。"
-            ),
-        ))
-
-    return results
+# ═══════════════════════════════════════════════════════
+# L1 — App 状态
+# ═══════════════════════════════════════════════════════
 
 
-def _check_socket_client_side() -> list[HealthIssue]:
-    """从客户端视角检查 socket（CLI `dai doctor` 无服务端 fd 时用）。"""
-    results: list[HealthIssue] = []
+def _check_app_status(sock_dev=None, sock_ino=None) -> list[HealthIssue]:
+    """判断 app 是否在运行。有 server fd 则用 inode 对比，否则做客户端探针。"""
+    # 有 server 上下文 → app 肯定活着
+    if sock_dev is not None and sock_ino is not None:
+        return [HealthIssue(
+            severity="info",
+            code="app_running",
+            message=f"管控台运行中（pid={os.getpid()}）",
+        )]
+
+    # 客户端探针
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(0.5)
         s.connect(_SOCKET_PATH)
         s.close()
+        return [HealthIssue(severity="info", code="app_running", message="管控台运行中")]
     except FileNotFoundError:
-        results.append(HealthIssue(
-            severity="critical",
-            code="socket_missing",
-            message="Socket 文件不存在。管控台未运行。",
-        ))
+        pass
     except ConnectionRefusedError:
-        results.append(HealthIssue(
-            severity="critical",
-            code="socket_dead",
-            message="Socket 文件存在但无进程响应",
-        ))
-    except OSError as exc:
-        results.append(HealthIssue(
+        return [HealthIssue(
             severity="warning",
-            code="socket_unknown",
+            code="app_stale",
+            message="Socket 文件残留（无进程监听），建议清理后重启",
+            detail=f"文件 {_SOCKET_PATH} 存在但无进程响应。可能是进程崩溃后未清理。可用 rm {_SOCKET_PATH} 清除。",
+        )]
+    except OSError as exc:
+        return [HealthIssue(
+            severity="warning",
+            code="app_stale",
             message=f"Socket 检查异常: {exc}",
-        ))
+        )]
+
+    return [HealthIssue(severity="info", code="app_not_running", message="管控台未运行")]
+
+
+# ═══════════════════════════════════════════════════════
+# L2 — 运行时检查（仅 app 运行时）
+# ═══════════════════════════════════════════════════════
+
+
+def _check_runtime(sock_dev: int | None, sock_ino: int | None) -> list[HealthIssue]:
+    """Socket 完整性 + 多实例检测。"""
+    results: list[HealthIssue] = []
+
+    # Socket 被抢占？
+    if sock_dev is not None and sock_ino is not None:
+        try:
+            st = os.stat(_SOCKET_PATH)
+        except FileNotFoundError:
+            results.append(HealthIssue(
+                severity="critical",
+                code="socket_missing",
+                message="Socket 文件已被删除，进程已成孤岛",
+                detail="进程仍在运行但无法接收外部请求。建议重启。",
+            ))
+            return results
+
+        if st.st_dev != sock_dev or st.st_ino != sock_ino:
+            results.append(HealthIssue(
+                severity="critical",
+                code="socket_hijacked",
+                message="Socket 文件已被其他进程替换",
+                detail=(
+                    f"我启动时 socket (dev={sock_dev}, ino={sock_ino})，"
+                    f"当前文件系统 (dev={st.st_dev}, ino={st.st_ino})。"
+                ),
+            ))
+
+    # 多实例
+    results += _check_multiple_instances()
     return results
 
 
-# ── 多实例检查 ──
+# ── 多实例 ──
 
 
 def _find_other_instances() -> list[dict]:
@@ -132,11 +172,9 @@ def _find_other_instances() -> list[dict]:
             if len(parts) < 2:
                 continue
             pid_str = parts[0]
-            # 用 args 而非 comm 判断（Apple ps 截断 comm 到 15 字节）
             args_line = parts[2] if len(parts) > 2 else parts[1]
             if "diydev.app.main" not in args_line and "diydev.app.main" not in line:
                 continue
-            # 只认 args_line 第一个单词（可执行路径）包含 python 的进程
             first_word = args_line.split(None, 1)[0] if " " in args_line else args_line
             if "python" not in first_word.lower():
                 continue
@@ -160,20 +198,21 @@ def _check_multiple_instances() -> list[HealthIssue]:
 
     my_pid = os.getpid()
     others_str = "\n".join(f"  pid={o['pid']} {o['cmdline']}" for o in others)
-
     results.append(HealthIssue(
         severity="warning",
         code="multiple_instances",
-        message=f"发现 {len(others)} 个其他 diy 管控台进程",
+        message=f"发现 {len(others)} 个其他管控台进程",
         detail=(
             f"当前 pid={my_pid}。其他实例:\n{others_str}\n\n"
-            f"只有一个管控台应有正常运行。建议检查各窗口，保留一个，kill 其他进程。"
+            f"建议检查各窗口，保留一个，kill 其他进程。"
         ),
     ))
     return results
 
 
-# ── state.yaml 检查 ──
+# ═══════════════════════════════════════════════════════
+# L3 — 环境检查
+# ═══════════════════════════════════════════════════════
 
 
 def _check_state_file() -> list[HealthIssue]:
@@ -182,10 +221,10 @@ def _check_state_file() -> list[HealthIssue]:
 
     if not os.path.exists(state_path):
         results.append(HealthIssue(
-            severity="critical",
+            severity="info" if not _in_lockdown else "critical",
             code="state_missing",
             message="state.yaml 不存在",
-            detail=f"预期路径: {state_path}。应用无法正常运行。",
+            detail=f"预期路径: {state_path}。应用可能未初始化。",
         ))
         return results
 
@@ -214,58 +253,66 @@ def _check_state_file() -> list[HealthIssue]:
 # 格式化输出
 # ═══════════════════════════════════════════════════════
 
-_CHECK_LABELS: dict[str, str] = {
-    "socket_integrity":  "Socket 健康",
-    "socket_missing":    "Socket 健康",
-    "socket_dead":       "Socket 健康",
-    "socket_hijacked":   "Socket 健康",
-    "multiple_instances":"多实例检测",
-    "state_missing":     "state.yaml",
-    "state_empty":       "state.yaml",
-    "state_parse_error": "state.yaml",
-}
-
 
 def format_report(issues: list[HealthIssue]) -> str:
-    """格式化所有检查项结果。无 issues 的不报错，列出 ✅ 通过。"""
-    # 按组列出检查项（一组内互斥，只显示实际命中的那个）
-    check_groups = [
-        ("socket_integrity", "socket_missing", "socket_dead", "socket_hijacked"),
-        ("multiple_instances",),
-        ("state_missing", "state_empty", "state_parse_error"),
-    ]
-    reported = {i.code: i for i in issues}
+    """按层级输出检查报告。"""
+    # 分组
+    l1 = [i for i in issues if i.code in ("app_running", "app_stale", "app_not_running")]
+    l2 = [i for i in issues if i.code in ("socket_missing", "socket_hijacked", "multiple_instances")]
+    l3 = [i for i in issues if i.code in ("state_missing", "state_empty", "state_parse_error")]
+
     lines: list[str] = []
 
-    for group in check_groups:
-        # 找组内第一个实际命中的
-        matched = None
-        for code in group:
-            if code in reported:
-                matched = reported[code]
-                break
-        if matched:
-            i = matched
-            emoji = {"critical": "✗", "warning": "!"}.get(i.severity, "?")
-            label = _CHECK_LABELS.get(i.code, i.code)
-            lines.append(f"  {emoji} {label} — {i.message}")
-            if i.detail:
-                for det_line in i.detail.strip().split("\n"):
-                    lines.append(f"    {det_line}")
-        else:
-            # 组内都不命中 → 显示第一个的 ✓
-            label = _CHECK_LABELS.get(group[0], group[0])
-            lines.append(f"  ✓ {label}")
+    # L1: App 状态
+    app_issue = l1[0] if l1 else None
+    if app_issue:
+        emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(app_issue.severity, "?")
+        lines.append(f"  {emoji} App 状态 — {app_issue.message}")
+        if app_issue.detail:
+            for dl in app_issue.detail.strip().split("\n"):
+                lines.append(f"    {dl}")
+    else:
+        lines.append("  ✓ App 状态")
 
+    # L2: 运行时（缩进一层）
+    if l2:
+        for issue in l2:
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            lines.append(f"    {emoji} {issue.message}")
+            if issue.detail:
+                for dl in issue.detail.strip().split("\n"):
+                    lines.append(f"      {dl}")
+    else:
+        # app 运行时才显示 ✓
+        if app_issue and app_issue.code == "app_running":
+            lines.append("    ✓ Socket 健康")
+            lines.append("    ✓ 单实例")
+
+    # L3: 环境
+    if l3:
+        for issue in l3:
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            lines.append(f"  {emoji} state.yaml — {issue.message}")
+            if issue.detail:
+                for dl in issue.detail.strip().split("\n"):
+                    lines.append(f"    {dl}")
+    else:
+        lines.append("  ✓ state.yaml")
+
+    # 摘要
     critical = [i for i in issues if i.severity == "critical"]
+    warnings = [i for i in issues if i.severity == "warning"]
     if not issues:
         lines.append("")
         lines.append("所有检查通过 ✓")
     elif critical:
         lines.append("")
         lines.append(f"🚨 {len(critical)} 个严重问题需要处理")
+    elif warnings:
+        lines.append("")
+        lines.append(f"⚠️ {len(warnings)} 个警告")
     else:
         lines.append("")
-        lines.append(f"⚠️ {len(issues)} 个警告")
+        lines.append("所有检查通过 ✓")
 
     return "\n".join(lines)
