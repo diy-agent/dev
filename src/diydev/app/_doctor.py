@@ -1,4 +1,15 @@
-"""健康自检 — 应用完整性检查 + 故障锁定。"""
+"""健康自检 — 应用完整性检查 + 故障锁定。
+
+分层检查体系：
+  L1: App 状态 — Socket 存活 / 残留 / 未运行
+  L2: 运行时 — Socket 完整性（dev/ino 对比）、多实例检测
+  L3: 环境 — state.yaml 存在性与内容
+
+锁定机制：
+  - critical 问题触发 _in_lockdown → GUI 显示故障告示面板
+  - 非 running 状态不检查运行时项
+  - CLI `dai doctor` 和 app 内定时自检共用同一套引擎
+"""
 
 from __future__ import annotations
 

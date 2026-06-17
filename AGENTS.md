@@ -13,10 +13,11 @@ diy 生态的**开发工具元项目**。
 | `dai tree --sync` | ✅ | 注入 AGENTS.md |
 | `dai subject add/list/tree/show/remove/scan` | ✅ | subject 树管理，路径自带层级，is_git 实时检测 |
 | `dai task` | ✅ | 任务 CRUD：create/list/show/edit/delete。URI 标识（local/task/1），数据存 ~/.diy/d/ |
+| `dai doctor` | ✅ | 健康自检：分层检查（L1 App 状态 / L2 运行时 / L3 环境） |
 | `dai app` | ✅ | 管控台探针 — 透传到 app socket（连不上自动启动 app） |
 
 `dai app` 子命令：
-- `tree` / `status` / `node <uri>` / `agents` / `reload` — AI 接口
+- `tree` / `status` / `node <uri>` / `agents` / `reload` / `doctor` — AI 接口
 - 支持 `--help` 查看完整列表
 
 人类 TUI 通过独立 `dev` 命令访问：
@@ -27,7 +28,7 @@ diy 生态的**开发工具元项目**。
 ## GUI
 
 - `sha.sh app` — 启动 PySide6 桌面 app（`python -m diydev.app.main`）
-- 源码：`src/diydev/app/{main,task_tree,agent_bridge,_app_log,_log_panel,_activity_bar}.py`
+|- 源码：`src/diydev/app/{main,task_tree,agent_bridge,_app_log,_log_panel,_activity_bar,_doctor}.py`
 - Unix socket 探针：`~/.diy/app.sock`
 - 命令路由：`ai.*` (agent) / `human.*` (人类)
 - `dai app <cmd>` 自动加 `ai` 前缀，`dev` 自动加 `human` 前缀
@@ -38,6 +39,13 @@ diy 生态的**开发工具元项目**。
 - `tests/test_assert_intent_unit.py` — 引擎单元测试 17 条
 - `tests/test_assert_intent_intent.py` — 引擎意图测试 14 条（边界/外观）
 - `tests/test_subject_intent.py` — subject 命令意图测试 4 条
+- `tests/test_dai_task_intent.py` — dai task 意图测试 17 条
+- `tests/test_dai_state_intent.py` — dai state 意图测试
+- `tests/test_dai_scan_intent.py` — dai scan 意图测试
+- `tests/test_task_tree.py` — 任务树单元测试
+- `tests/test_62_intent.py` — task 62 关联测试
+- `tests/test_shelltest.py` + `test_shelltest_intent.py` — ShellTest 单元/意图测试
+- 共 94 条，全量通过
 
 ## 开发流程
 

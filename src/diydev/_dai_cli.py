@@ -4,6 +4,7 @@
   dai state          全量输出 state.yaml（YAML，默认）
   dai state --json   全量输出 state.yaml（JSON）
   dai tree --sync    注入 AGENTS.md json block
+  dai doctor         健康自检（Socket/多实例/state.yaml）
 """
 
 from __future__ import annotations
@@ -946,7 +947,11 @@ def _parse_value(raw: str) -> object:
 
 
 def dai_doctor() -> None:
-    """健康自检 — 检查 socket、多实例、state.yaml。"""
+    """健康自检 — 分层检查 Socket 状态、多实例、state.yaml。
+    
+    有 app 运行时走 socket 获取完整上下文（含 inode 对比），
+    无 app 运行时降级为客户端探针（检测 sock 残留/缺失）。
+    """
     from diydev.app._doctor import format_report, run_check
 
     # 优先走 socket（运行中的 app 有完整上下文）
