@@ -215,38 +215,46 @@ def _check_state_file() -> list[HealthIssue]:
 # ═══════════════════════════════════════════════════════
 
 _CHECK_LABELS: dict[str, str] = {
-    "socket_integrity":  "Socket 完整性",
-    "socket_missing":    "Socket 存在性",
-    "socket_dead":       "Socket 活跃性",
-    "socket_hijacked":   "Socket 独占性",
+    "socket_integrity":  "Socket 健康",
+    "socket_missing":    "Socket 健康",
+    "socket_dead":       "Socket 健康",
+    "socket_hijacked":   "Socket 健康",
     "multiple_instances":"多实例检测",
-    "state_missing":     "state.yaml 存在性",
-    "state_empty":       "state.yaml 内容",
-    "state_parse_error": "state.yaml 内容",
+    "state_missing":     "state.yaml",
+    "state_empty":       "state.yaml",
+    "state_parse_error": "state.yaml",
 }
 
 
 def format_report(issues: list[HealthIssue]) -> str:
     """格式化所有检查项结果。无 issues 的不报错，列出 ✅ 通过。"""
-    # 按固定顺序列出检查项
-    check_order = [
-        "socket_integrity", "socket_missing", "socket_dead",
-        "socket_hijacked", "multiple_instances",
-        "state_missing", "state_empty", "state_parse_error",
+    # 按组列出检查项（一组内互斥，只显示实际命中的那个）
+    check_groups = [
+        ("socket_integrity", "socket_missing", "socket_dead", "socket_hijacked"),
+        ("multiple_instances",),
+        ("state_missing", "state_empty", "state_parse_error"),
     ]
     reported = {i.code: i for i in issues}
     lines: list[str] = []
 
-    for code in check_order:
-        label = _CHECK_LABELS.get(code, code)
-        if code in reported:
-            i = reported[code]
+    for group in check_groups:
+        # 找组内第一个实际命中的
+        matched = None
+        for code in group:
+            if code in reported:
+                matched = reported[code]
+                break
+        if matched:
+            i = matched
             emoji = {"critical": "✗", "warning": "!"}.get(i.severity, "?")
+            label = _CHECK_LABELS.get(i.code, i.code)
             lines.append(f"  {emoji} {label} — {i.message}")
             if i.detail:
                 for det_line in i.detail.strip().split("\n"):
                     lines.append(f"    {det_line}")
         else:
+            # 组内都不命中 → 显示第一个的 ✓
+            label = _CHECK_LABELS.get(group[0], group[0])
             lines.append(f"  ✓ {label}")
 
     critical = [i for i in issues if i.severity == "critical"]
