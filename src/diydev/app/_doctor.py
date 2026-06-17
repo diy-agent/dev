@@ -136,7 +136,9 @@ def _find_other_instances() -> list[dict]:
             args_line = parts[2] if len(parts) > 2 else parts[1]
             if "diydev.app.main" not in args_line and "diydev.app.main" not in line:
                 continue
-            if not any("python" in p for p in parts[1:] if p.startswith("/")):
+            # 只认 args_line 第一个单词（可执行路径）包含 python 的进程
+            first_word = args_line.split(None, 1)[0] if " " in args_line else args_line
+            if "python" not in first_word.lower():
                 continue
             try:
                 pid = int(pid_str)
