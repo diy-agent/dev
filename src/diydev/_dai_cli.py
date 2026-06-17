@@ -947,7 +947,7 @@ def _parse_value(raw: str) -> object:
 
 def dai_doctor() -> None:
     """健康自检 — 检查 socket、多实例、state.yaml。"""
-    from diydev.app._doctor import run_check
+    from diydev.app._doctor import format_report, run_check
 
     # 优先走 socket（运行中的 app 有完整上下文）
     import socket as _sock
@@ -972,19 +972,8 @@ def dai_doctor() -> None:
 
     # socket 不通 → 独立检查
     issues = run_check()
-    if not issues:
-        print("✅ 一切正常")
-        return
-    print(f"发现 {len(issues)} 个问题:\n")
-    for i in issues:
-        emoji = {"critical": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(i.severity, "ℹ️")
-        print(f"  {emoji} [{i.code}] {i.message}")
-        if i.detail:
-            for line in i.detail.strip().split("\n"):
-                print(f"    {line}")
-    critical = [i for i in issues if i.severity == "critical"]
-    if critical:
-        print(f"\n🚨 {len(critical)} 个严重问题需要处理")
+    print(format_report(issues))
+    if any(i.severity == "critical" for i in issues):
         sys.exit(1)
 
 

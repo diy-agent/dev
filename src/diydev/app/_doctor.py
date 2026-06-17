@@ -205,3 +205,58 @@ def _check_state_file() -> list[HealthIssue]:
         ))
 
     return results
+
+
+# ═══════════════════════════════════════════════════════
+# 格式化输出
+# ═══════════════════════════════════════════════════════
+
+_CHECK_LABELS: dict[str, str] = {
+    "socket_integrity":  "Socket 完整性",
+    "socket_missing":    "Socket 存在性",
+    "socket_dead":       "Socket 活跃性",
+    "socket_hijacked":   "Socket 独占性",
+    "multiple_instances":"多实例检测",
+    "state_missing":     "state.yaml 存在性",
+    "state_empty":       "state.yaml 内容",
+    "state_parse_error": "state.yaml 内容",
+}
+
+
+def format_report(issues: list[HealthIssue]) -> str:
+    """格式化所有检查项结果。无 issues 的不报错，列出 ✅ 通过。"""
+    # 按固定顺序列出检查项
+    check_order = [
+        "socket_integrity", "socket_missing", "socket_dead",
+        "socket_hijacked", "multiple_instances",
+        "state_missing", "state_empty", "state_parse_error",
+    ]
+    reported = {i.code: i for i in issues}
+    lines: list[str] = []
+
+    for code in check_order:
+        label = _CHECK_LABELS.get(code, code)
+        if code in reported:
+            i = reported[code]
+            emoji = {"critical": "✗", "warning": "!"}.get(i.severity, "?")
+            if i.detail:
+                # 只取第一行
+                detail_first = i.detail.split("\n")[0].strip()[:60]
+                lines.append(f"  {emoji} {label} — {detail_first}")
+            else:
+                lines.append(f"  {emoji} {label} — {i.message}")
+        else:
+            lines.append(f"  ✓ {label}")
+
+    critical = [i for i in issues if i.severity == "critical"]
+    if not issues:
+        lines.append("")
+        lines.append("所有检查通过 ✓")
+    elif critical:
+        lines.append("")
+        lines.append(f"🚨 {len(critical)} 个严重问题需要处理")
+    else:
+        lines.append("")
+        lines.append(f"⚠️ {len(issues)} 个警告")
+
+    return "\n".join(lines)

@@ -1016,22 +1016,12 @@ class ProbeCLI:
 
         @ai.command
         def doctor():
-            """健康自检 — 列出所有问题"""
-            from diydev.app._doctor import HealthIssue, run_check
+            """健康自检 — 列出所有检查项结果"""
+            from diydev.app._doctor import format_report, run_check
             probe = self._window._probe
             sock_dev = getattr(probe, '_sock_dev', None)
             sock_ino = getattr(probe, '_sock_ino', None)
-            issues = run_check(sock_dev, sock_ino)
-            if not issues:
-                return "✅ 一切正常"
-            lines = [f"发现 {len(issues)} 个问题:", ""]
-            for i in issues:
-                emoji = {"critical": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(i.severity, "ℹ️")
-                lines.append(f"  {emoji} [{i.code}] {i.message}")
-                if i.detail:
-                    for line in i.detail.strip().split("\n"):
-                        lines.append(f"    {line}")
-            return "\n".join(lines)
+            return format_report(run_check(sock_dev, sock_ino))
 
         self._app.command(ai)
 
