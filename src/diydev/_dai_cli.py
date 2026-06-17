@@ -15,7 +15,7 @@ import re
 import shlex
 import sys
 from contextlib import suppress
-from typing import Annotated
+from typing import Annotated, Any
 
 import yaml
 from cyclopts import App, Parameter
@@ -251,22 +251,24 @@ def _find_agents_md() -> str | None:
 
 
 def _build_tree_json(state_data: dict) -> str:
-    """从 state.yaml 构建注入到 AGENTS.md 的 JSON block。"""
-    tasks_data = state_data.get("tasks", {})
+    """从 state.yaml + ~/.diy/d/ 任务数据构建注入到 AGENTS.md 的 JSON block。"""
+    # 从任务目录加载，而非 state.yaml
+    tasks_data = list_tasks()
     spaces_data = state_data.get("spaces", {})
 
     # 构建简化的任务树
     task_list = []
-    for num_str, task in sorted(tasks_data.items(), key=lambda x: int(x[0])):
+    # local task 先按编号排，再按 URI 排
+    for uri, task in sorted(tasks_data.items()):
         entry = {
-            "number": num_str,
+            "uri": uri,
             "title": task.get("title", ""),
             "state": task.get("state", "pending"),
         }
+        src = task.get("source", {})
+        entry["source"] = src
         if task.get("parent"):
             entry["parent"] = task["parent"]
-        if task.get("spaces"):
-            entry["spaces"] = task["spaces"]
         task_list.append(entry)
 
     # 构建空间锁状态
@@ -551,7 +553,7 @@ app.command(subject_app)
 
 
 # ════════════════════════════════════════════════════════════════
-# dai task
+# dai task — 任务管理
 # ════════════════════════════════════════════════════════════════
 
 task_app = App(name="task", help="任务管理")
@@ -561,8 +563,10 @@ task_app = App(name="task", help="任务管理")
 def task_create(
     title: Annotated[str, Parameter(name="--title", help="任务标题")],
     subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
-    parent: Annotated[int | None, Parameter(name="--parent", help="父任务ID")] = None,
+    parent: Annotated[str | None, Parameter(name="--parent", help="父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
+    source_type: Annotated[str, Parameter(name="--source-type", help="任务来源类型")] = "local",
+    source_uri: Annotated[str | None, Parameter(name="--source-uri", help="外部任务 URI（非 local 必填）")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -580,8 +584,16 @@ def task_create(
         print(f"错误: parent {parent} 不存在", file=sys.stderr)
         sys.exit(1)
 
-    tid = create_task(title=title, subject=subject_n, parent=parent, detail=detail)
-    task = get_task(tid) or {}
+    try:
+        uri = create_task(
+            title=title, subject=subject_n, parent=parent, detail=detail,
+            source_type=source_type, source_uri=source_uri,
+        )
+    except ValueError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    task = get_task(uri) or {}
     result = {"status": "success", "data": task}
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -608,15 +620,15 @@ def task_list(
 
 @task_app.command(name="show")
 def task_show(
-    task_id: Annotated[int, Parameter(help="任务 ID")],
+    uri: Annotated[str, Parameter(help="任务 URI")],
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
     """查看单个任务。"""
-    task = get_task(task_id)
+    task = get_task(uri)
     if task is None:
-        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
         sys.exit(1)
     if json_output:
         print(json.dumps(task, indent=2, ensure_ascii=False))
@@ -626,19 +638,19 @@ def task_show(
 
 @task_app.command(name="edit")
 def task_edit(
-    task_id: Annotated[int, Parameter(help="任务 ID")],
+    uri: Annotated[str, Parameter(help="任务 URI")],
     title: Annotated[str | None, Parameter(name="--title", help="新标题")] = None,
     state: Annotated[str | None, Parameter(name="--state", help="新状态")] = None,
     subject: Annotated[str | None, Parameter(name="--subject", help="新 subject")] = None,
-    parent: Annotated[int | None, Parameter(name="--parent", help="新父任务ID")] = None,
+    parent: Annotated[str | None, Parameter(name="--parent", help="新父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="新详情")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
     """编辑任务。返回编辑后的完整字段。"""
-    if get_task(task_id) is None:
-        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
+    if get_task(uri) is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
         sys.exit(1)
 
     fields: dict[str, Any] = {}
@@ -656,7 +668,7 @@ def task_edit(
     if detail is not None:
         fields["detail"] = detail
 
-    task = update_task_field(task_id, **fields)
+    task = update_task_field(uri, **fields)
     result = {"status": "success", "data": task}
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -666,86 +678,18 @@ def task_edit(
 
 @task_app.command(name="delete")
 def task_delete(
-    task_id: Annotated[int, Parameter(help="任务 ID")],
+    uri: Annotated[str, Parameter(help="任务 URI")],
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
     """删除任务。"""
-    if get_task(task_id) is None:
-        print(f"错误: 任务 {task_id} 不存在", file=sys.stderr)
+    if get_task(uri) is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
         sys.exit(1)
 
-    delete_task(task_id)
+    delete_task(uri)
     result = {"status": "success"}
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-
-@task_app.command(name="import")
-def task_import(
-    source: Annotated[str | None, Parameter(help="源 state.yaml 路径（默认 ~/.diy/state.yaml.bak）")] = None,
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = False,
-):
-    """从旧 state.yaml 导入任务到 ~/.diy/tasks/。"""
-    src = source or os.path.expanduser("~/.diy/state.yaml.bak")
-    if not os.path.isfile(src):
-        print(f"错误: 源文件不存在 {src}", file=sys.stderr)
-        sys.exit(1)
-
-    with open(src, encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-
-    tasks = data.get("tasks", {})
-    if not tasks:
-        print("源文件没有任务数据", file=sys.stderr)
-        sys.exit(1)
-
-    from diydev._state import _next_task_id, _write_agents_md, _tasks_root
-
-    imported = 0
-    max_id = 0
-    results: list[dict[str, Any]] = []
-
-    # 按 ID 排序导入
-    for tid_str in sorted(tasks.keys(), key=lambda x: int(x)):
-        tid = int(tid_str)
-        info = tasks[tid_str]
-        max_id = max(max_id, tid)
-
-        # 检查是否已存在
-        task_dir = _tasks_root() / tid_str
-        if task_dir.exists():
-            print(f"  ⏭ 跳过 #{tid}（目录已存在）", file=sys.stderr)
-            continue
-
-        meta: dict[str, Any] = {
-            "id": tid,
-            "title": info.get("title", ""),
-            "state": info.get("state", "pending"),
-            "subject": info.get("subject", ""),
-            "created": info.get("created", "2026-06-01T00:00:00Z"),
-            "updated": info.get("updated", "2026-06-01T00:00:00Z"),
-        }
-        if info.get("detail"):
-            meta["detail"] = info["detail"]
-        if info.get("parent"):
-            meta["parent"] = info["parent"]
-
-        _write_agents_md(tid, meta)
-        imported += 1
-        results.append(meta)
-        print(f"  ✓ #{tid} — {meta['title']}", file=sys.stderr)
-
-    # 更新 counter 到 max_id + 1
-    counter_path = _tasks_root() / ".counter"
-    counter_path.write_text(str(max_id + 1))
-
-    result = {"status": "success", "data": {"imported": imported, "next_id": max_id + 1}}
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:

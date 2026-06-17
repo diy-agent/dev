@@ -5,7 +5,7 @@
 
 sh fixture 已激活 .venv（dai 直接可用）。
 fake_home fixture 将 $HOME 隔离，~/ 路径在子进程内有效。
-任务 ID 为自增 int（从 1 开始）。
+任务标识使用 URI（如 local/task/1），不再使用数字 ID。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from _shelltest import ShellTest
 
 
 def test_intent_task_create_and_list(sh: ShellTest, fake_home: Path):
-    """创建任务 → 列表可见。ID 递增。"""
+    """创建任务 → 列表可见。本地任务自动分配 URI。"""
     (fake_home / "diy").mkdir()
     (fake_home / "diy" / ".git").touch()
 
@@ -33,25 +33,27 @@ def test_intent_task_create_and_list(sh: ShellTest, fake_home: Path):
           title: 实现dai task命令
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task create --title "实现dai edit命令" --subject ~/diy --parent 1
+        $ dai task create --title "实现dai edit命令" --subject ~/diy --parent local/task/1
         status: success
         data:
           title: 实现dai edit命令
           state: pending
-          parent: 1
+          parent: local/task/1
           subject: ~/diy
+          uri: local/task/2
 
         $ dai task list
         tasks:
-          '1':
+          local/task/1:
             title: 实现dai task命令
             state: pending
             subject: ~/diy
-          '2':
+          local/task/2:
             title: 实现dai edit命令
             state: pending
-            parent: 1
+            parent: local/task/1
             subject: ~/diy
     """)
 
@@ -90,8 +92,9 @@ def test_intent_task_show(sh: ShellTest, fake_home: Path):
           title: 待查看的任务
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task show 1
+        $ dai task show local/task/1
         title: 待查看的任务
         state: pending
         subject: ~/diy
@@ -116,22 +119,23 @@ def test_intent_task_edit_title(sh: ShellTest, fake_home: Path):
           title: 旧标题
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task edit 1 --title "新标题"
+        $ dai task edit local/task/1 --title "新标题"
         status: success
         data:
           title: 新标题
           state: pending
           subject: ~/diy
 
-        $ dai task show 1
+        $ dai task show local/task/1
         title: 新标题
         state: pending
     """)
 
 
 def test_intent_task_edit_subject(sh: ShellTest, fake_home: Path):
-    """编辑任务 subject（新 subject 必须已注册）。返回编辑后的完整字段。"""
+    """编辑任务 subject（新 subject 必须已注册）。"""
     (fake_home / "alpha").mkdir()
     (fake_home / "alpha" / ".git").touch()
     (fake_home / "beta").mkdir()
@@ -156,22 +160,23 @@ def test_intent_task_edit_subject(sh: ShellTest, fake_home: Path):
           title: 迁移任务
           state: pending
           subject: ~/alpha
+          uri: local/task/1
 
-        $ dai task edit 1 --subject ~/beta
+        $ dai task edit local/task/1 --subject ~/beta
         status: success
         data:
           title: 迁移任务
           state: pending
           subject: ~/beta
 
-        $ dai task show 1
+        $ dai task show local/task/1
         title: 迁移任务
         subject: ~/beta
     """)
 
 
 def test_intent_task_edit_state(sh: ShellTest, fake_home: Path):
-    """编辑任务状态字段。返回编辑后的完整字段。"""
+    """编辑任务状态字段。"""
     (fake_home / "diy").mkdir()
     (fake_home / "diy" / ".git").touch()
 
@@ -188,15 +193,16 @@ def test_intent_task_edit_state(sh: ShellTest, fake_home: Path):
           title: 改状态
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task edit 1 --state active
+        $ dai task edit local/task/1 --state active
         status: success
         data:
           title: 改状态
           state: active
           subject: ~/diy
 
-        $ dai task show 1
+        $ dai task show local/task/1
         title: 改状态
         state: active
     """)
@@ -220,6 +226,7 @@ def test_intent_task_edit_parent(sh: ShellTest, fake_home: Path):
           title: 父任务
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
         $ dai task create --title "独立任务" --subject ~/diy
         status: success
@@ -227,18 +234,19 @@ def test_intent_task_edit_parent(sh: ShellTest, fake_home: Path):
           title: 独立任务
           state: pending
           subject: ~/diy
+          uri: local/task/2
 
-        $ dai task edit 2 --parent 1
+        $ dai task edit local/task/2 --parent local/task/1
         status: success
         data:
           title: 独立任务
           state: pending
-          parent: 1
+          parent: local/task/1
           subject: ~/diy
 
-        $ dai task show 2
+        $ dai task show local/task/2
         title: 独立任务
-        parent: 1
+        parent: local/task/1
     """)
 
 
@@ -260,8 +268,9 @@ def test_intent_task_edit_parent_validation(sh: ShellTest, fake_home: Path):
           title: 孤儿
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $! dai task edit 1 --parent 9999
+        $! dai task edit local/task/1 --parent local/task/9999
         *
     """)
 
@@ -284,8 +293,9 @@ def test_intent_task_delete(sh: ShellTest, fake_home: Path):
           title: 临时任务
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task delete 1
+        $ dai task delete local/task/1
         status: success
 
         $ dai task list
@@ -311,7 +321,7 @@ def test_intent_task_json_output(sh: ShellTest, fake_home: Path):
         $ dai task list --json
         {{regex:.*tasks.*}}
 
-        $ dai task show 1 --json
+        $ dai task show local/task/1 --json
         {{regex:.*title.*JSON测试.*}}
     """)
 
@@ -319,7 +329,7 @@ def test_intent_task_json_output(sh: ShellTest, fake_home: Path):
 def test_intent_task_show_missing(sh: ShellTest):
     """操作不存在的任务 → 报错。"""
     sh.assert_session("""
-        $! dai task show 9999
+        $! dai task show local/task/9999
         *
     """)
 
@@ -327,7 +337,7 @@ def test_intent_task_show_missing(sh: ShellTest):
 def test_intent_task_edit_missing(sh: ShellTest):
     """编辑不存在的任务 → 报错。"""
     sh.assert_session("""
-        $! dai task edit 9999 --title "不存在"
+        $! dai task edit local/task/9999 --title "不存在"
         *
     """)
 
@@ -335,7 +345,7 @@ def test_intent_task_edit_missing(sh: ShellTest):
 def test_intent_task_delete_missing(sh: ShellTest):
     """删除不存在的任务 → 报错。"""
     sh.assert_session("""
-        $! dai task delete 9999
+        $! dai task delete local/task/9999
         *
     """)
 
@@ -349,7 +359,7 @@ def test_intent_task_create_missing_title(sh: ShellTest):
 
 
 def test_intent_task_list_sort(sh: ShellTest, fake_home: Path):
-    """列表按创建顺序（自增 ID）输出。"""
+    """列表按 URI 字典序输出。"""
     (fake_home / "diy").mkdir()
     (fake_home / "diy" / ".git").touch()
 
@@ -374,17 +384,17 @@ def test_intent_task_list_sort(sh: ShellTest, fake_home: Path):
 
         $ dai task list
         tasks:
-          '1':
+          local/task/1:
             title: 任务A
-          '2':
+          local/task/2:
             title: 任务B
-          '3':
+          local/task/3:
             title: 任务C
     """)
 
 
 def test_intent_task_edit_multiple_fields(sh: ShellTest, fake_home: Path):
-    """一次编辑多个字段。返回编辑后的完整字段。"""
+    """一次编辑多个字段。"""
     (fake_home / "diy").mkdir()
     (fake_home / "diy" / ".git").touch()
 
@@ -401,15 +411,16 @@ def test_intent_task_edit_multiple_fields(sh: ShellTest, fake_home: Path):
           title: 原始
           state: pending
           subject: ~/diy
+          uri: local/task/1
 
-        $ dai task edit 1 --title "更新后" --state active
+        $ dai task edit local/task/1 --title "更新后" --state active
         status: success
         data:
           title: 更新后
           state: active
           subject: ~/diy
 
-        $ dai task show 1
+        $ dai task show local/task/1
         title: 更新后
         state: active
         subject: ~/diy

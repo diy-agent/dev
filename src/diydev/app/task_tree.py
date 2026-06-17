@@ -1,6 +1,6 @@
 """任务树数据解析 — 纯 Python，无 Qt 依赖。
 
-数据流: state.yaml → TaskNode 树
+数据流: ~/.diy/d/ 任务目录 → TaskNode 树
 加任务用 `dai task create --subject <path>`。
 AGENTS.md 是渲染输出，不解析。
 """
@@ -29,12 +29,13 @@ class TaskNode:
     label: str = ""
     kind: str = "subject"
     depth: int = 0
-    task_id: int | None = None
+    uri: str = ""                    # 任务 URI，如 local/task/23
     title: str = ""
     state: str = "pending"
     detail: str = ""
-    parent_id: int | None = None
+    parent_uri: str | None = None    # 父任务 URI
     subject_path: str = ""
+    source: dict = field(default_factory=dict)
     agents: list[AgentInfo] = field(default_factory=list)
     children: list[TaskNode] = field(default_factory=list)
 
@@ -57,24 +58,21 @@ class TaskNode:
 # ═══════════════════════════════════════════════════════
 
 def load_task_tree(agents_path: str | None = None) -> list[TaskNode]:
-    """加载任务树 — tasks/ 目录 + state.yaml subjects 驱动。
+    """加载任务树 — ~/.diy/d/ 目录 + state.yaml subjects 驱动。
 
     subject 字段决定任务挂载位置。parent 字段决定层级。
     """
     state_data = load_state()
-    # 从 ~/.diy/tasks/ 目录获取任务数据，而非 state.yaml 的 tasks 分支
     tasks_data = list_tasks()
-    state_data["tasks"] = tasks_data
-    return _build_nodes_from_state(state_data)
+    return _build_nodes_from_state(state_data, tasks_data)
 
 
 # ═══════════════════════════════════════════════════════
-# state.yaml → nodes
+# state.yaml + tasks → nodes
 # ═══════════════════════════════════════════════════════
 
-def _build_nodes_from_state(state_data: dict) -> list[TaskNode]:
+def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[TaskNode]:
     subjects = state_data.get("subjects", {})
-    tasks = state_data.get("tasks", {})
 
     # ── subject 节点：按路径层级嵌套 ──
     subject_nodes: dict[str, TaskNode] = {}
@@ -95,23 +93,24 @@ def _build_nodes_from_state(state_data: dict) -> list[TaskNode]:
             roots.append(node)
 
     # ── task 节点 ──
-    task_nodes: dict[int, TaskNode] = {}
-    for tid_str, info in sorted(tasks.items(), key=lambda x: int(x[0])):
-        tid = int(tid_str)
+    task_nodes: dict[str, TaskNode] = {}
+    for uri, info in sorted(tasks.items()):
         tn = TaskNode(
-            key=f"#{tid}", kind="task", task_id=tid,
+            key=uri, kind="task", uri=uri,
             title=info.get("title", ""),
             detail=info.get("detail", ""),
             state=info.get("state", "pending"),
             subject_path=info.get("subject", ""),
-            parent_id=info.get("parent"),
+            parent_uri=info.get("parent"),
+            source=info.get("source", {}),
         )
-        task_nodes[tid] = tn
+        task_nodes[uri] = tn
 
     # 第二遍：按 parent 建立层级
-    for tid, tn in task_nodes.items():
-        if tn.parent_id and tn.parent_id in task_nodes:
-            task_nodes[tn.parent_id].children.append(tn)
+    for uri, tn in task_nodes.items():
+        parent_uri = tn.parent_uri
+        if parent_uri and parent_uri in task_nodes:
+            task_nodes[parent_uri].children.append(tn)
         elif tn.subject_path:
             # 挂在 subject 下
             parent = subject_nodes.get(tn.subject_path)
@@ -172,12 +171,13 @@ def _parse_json_block(content: str) -> list[TaskNode] | None:
         return None
     nodes: list[TaskNode] = []
     for t in data.get("tasks", []):
-        num = t.get("number", 0)
+        uri = t.get("uri", "")
         state = t.get("state", "pending")
         nodes.append(TaskNode(
-            key=f"#{num}", kind="task", task_id=num,
+            key=uri, kind="task", uri=uri,
             title=t.get("title", ""), state=state,
-            parent_id=t.get("parent"),
+            parent_uri=t.get("parent"),
+            source=t.get("source", {}),
         ))
     return _build_hierarchy(nodes)
 
@@ -194,9 +194,10 @@ def _parse_md_tree(content: str) -> list[TaskNode]:
         rest = m.group("rest").strip()
         depth = len(prefix) // 4
         state, title = _extract_state(rest)
+        uri = f"local/task/{num}"
         nodes.append(TaskNode(
-            key=f"#{num}", kind="task", depth=depth,
-            task_id=num, title=title, state=state,
+            key=uri, kind="task", depth=depth,
+            uri=uri, title=title, state=state,
         ))
     return _build_hierarchy(nodes)
 
@@ -239,44 +240,44 @@ def _build_hierarchy(nodes: list[TaskNode]) -> list[TaskNode]:
                 roots.append(node)
             stack.append(node)
         return roots
-    by_parent: dict[int | None, list[TaskNode]] = {}
+    by_parent: dict[str | None, list[TaskNode]] = {}
     for n in nodes:
-        by_parent.setdefault(n.parent_id, []).append(n)
+        by_parent.setdefault(n.parent_uri, []).append(n)
     roots = by_parent.get(None, [])
     for n in nodes:
-        n.children = by_parent.get(n.task_id, [])
+        n.children = by_parent.get(n.uri, [])
     return roots
 
 
 def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> list[TaskNode]:
     if state_data is None:
         state_data = load_state()
-    tasks = state_data.get("tasks", {})
-    if not nodes:
-        nodes = _build_nodes_from_state(state_data)
+    # 优先使用传入的 tasks，没有就实时扫描
+    tasks = state_data.get("tasks") or list_tasks()
 
-    task_map: dict[int, TaskNode] = {}
+    task_map: dict[str, TaskNode] = {}
     def _collect(ns):
         for n in ns:
-            if n.task_id is not None:
-                task_map[n.task_id] = n
+            if n.uri:
+                task_map[n.uri] = n
             _collect(n.children)
     _collect(nodes)
 
-    for tid_str, info in tasks.items():
-        tid = int(tid_str)
-        if tid in task_map:
-            node = task_map[tid]
+    for uri, info in tasks.items():
+        if uri in task_map:
+            node = task_map[uri]
             node.title = info.get("title", node.title)
             node.state = info.get("state", node.state)
             node.detail = info.get("detail", node.detail)
             node.subject_path = info.get("subject", "")
+            node.parent_uri = info.get("parent")
         else:
             nodes.append(TaskNode(
-                key=f"#{tid}", kind="task", task_id=tid,
+                key=uri, kind="task", uri=uri,
                 title=info.get("title", ""),
                 state=info.get("state", "pending"),
                 subject_path=info.get("subject", ""),
-                parent_id=info.get("parent"),
+                parent_uri=info.get("parent"),
+                source=info.get("source", {}),
             ))
     return nodes

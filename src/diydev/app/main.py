@@ -46,7 +46,7 @@ from diydev.app.task_tree import TaskNode, load_task_tree
 # 自定义 data roles
 # ═══════════════════════════════════════════════════════
 
-ROLE_TASK_ID = Qt.ItemDataRole.UserRole + 1
+ROLE_TASK_URI = Qt.ItemDataRole.UserRole + 1
 ROLE_KIND = Qt.ItemDataRole.UserRole + 2
 ROLE_STATE = Qt.ItemDataRole.UserRole + 3
 ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
@@ -116,7 +116,7 @@ def _add_node(
         text = f"{icon} {node.key}"
     else:
         icon = node.state_icon
-        text = f"{icon} #{node.task_id} {node.title}" if node.title else f"{icon} #{node.task_id}"
+        text = f"{icon} {node.uri} {node.title}" if node.title else f"{icon} {node.uri}"
 
     if node.agents:
         running = [a for a in node.agents if a.state == "running"]
@@ -124,7 +124,7 @@ def _add_node(
             text += f"  [🤖×{len(running)}]"
 
     item = QStandardItem(text)
-    item.setData(node.task_id, ROLE_TASK_ID)
+    item.setData(node.uri, ROLE_TASK_URI)
     item.setData(node.kind, ROLE_KIND)
     item.setData(node.state, ROLE_STATE)
     item.setData(node.subject_path, ROLE_SUBJECT)
@@ -186,7 +186,7 @@ class SteerPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._task_id: int | None = None
+        self._task_uri: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -214,25 +214,25 @@ class SteerPanel(QWidget):
         self._timer.timeout.connect(self._refresh_log)
         self._timer.start(3000)
 
-    def set_task(self, task_id: int) -> None:
-        self._task_id = task_id
-        self.title_changed.emit(f"Agent 通信 — #{task_id}")
+    def set_task(self, uri: str) -> None:
+        self._task_uri = uri
+        self.title_changed.emit(f"Agent 通信 — {uri}")
         self._refresh_log()
 
     @guarded("steer.send")
     def _send(self) -> None:
         text = self._input.text().strip()
-        if not text or self._task_id is None:
+        if not text or self._task_uri is None:
             return
-        steer_send(self._task_id, text)
+        steer_send(self._task_uri, text)
         self._input.clear()
         self._refresh_log()
 
     @guarded("steer.timer")
     def _refresh_log(self) -> None:
-        if self._task_id is None:
+        if self._task_uri is None:
             return
-        self._log.setPlainText(steer_read(self._task_id) or "(无对话)")
+        self._log.setPlainText(steer_read(self._task_uri) or "(无对话)")
 
 
 # ═══════════════════════════════════════════════════════
@@ -408,7 +408,7 @@ class MainWindow(QMainWindow):
     def _refresh_agents(self) -> None:
         """从文件系统读取 agent 状态并挂到任务节点上。"""
         agents = list_agents()
-        by_task: dict[int, list[AgentStatus]] = {}
+        by_task: dict[str, list[AgentStatus]] = {}
         for a in agents:
             by_task.setdefault(a.task_id, []).append(a)
 
@@ -416,7 +416,7 @@ class MainWindow(QMainWindow):
         for n in self._iter_nodes(self._nodes):
             new_agents = [
                 AgentInfo(a.agent_id, a.state, a.pid)
-                for a in by_task.get(n.task_id or 0, [])
+                for a in by_task.get(n.uri or "", [])
             ]
             if n.agents != new_agents:
                 n.agents = new_agents
@@ -442,7 +442,7 @@ class MainWindow(QMainWindow):
         # 启动 3 秒内不响应目录变化（macOS 初始化会触发一次）
         if time.time() - self._started_at < 3.0:
             return
-        tasks_dir = str(Path.home() / ".diy" / "tasks")
+        tasks_dir = str(Path.home() / ".diy" / "d")
         if _path == tasks_dir:
             # tasks/ 目录变化（CLI 创建/删除任务）→ reload 树
             self._load()
@@ -469,13 +469,13 @@ class MainWindow(QMainWindow):
             return
 
         kind = index.data(ROLE_KIND)
-        task_id = index.data(ROLE_TASK_ID)
+        task_uri = index.data(ROLE_TASK_URI)
         state = index.data(ROLE_STATE)
 
         menu = QMenu(self)
 
-        if kind == "task" and task_id:
-            menu.addAction(f"#{task_id} — {state}").setEnabled(False)
+        if kind == "task" and task_uri:
+            menu.addAction(f"{task_uri} — {state}").setEnabled(False)
             menu.addSeparator()
 
             state_menu = menu.addMenu("更改状态")
@@ -484,15 +484,15 @@ class MainWindow(QMainWindow):
                              ("cancelled", "❌ Cancelled")]:
                 if s != state:
                     act = state_menu.addAction(label)
-                    act.triggered.connect(lambda checked, t=task_id, ns=s: self._set_state(t, ns))
+                    act.triggered.connect(lambda checked, t=task_uri, ns=s: self._set_state(t, ns))
 
             menu.addSeparator()
 
             steer_act = menu.addAction("💬 /steer 通信")
-            steer_act.triggered.connect(lambda checked, t=task_id: self._open_steer(t))
+            steer_act.triggered.connect(lambda checked, t=task_uri: self._open_steer(t))
 
             del_act = menu.addAction("🗑 删除任务")
-            del_act.triggered.connect(lambda checked, t=task_id: self._delete_task(t))
+            del_act.triggered.connect(lambda checked, t=task_uri: self._delete_task(t))
 
         menu.addSeparator()
         refresh_act = menu.addAction("🔄 刷新")
@@ -502,26 +502,26 @@ class MainWindow(QMainWindow):
 
     # ── 操作 ──
     @guarded("action.state")
-    def _set_state(self, task_id: int, new_state: str) -> None:
+    def _set_state(self, uri: str, new_state: str) -> None:
         import subprocess
         subprocess.run(
-            ["dai", "task", "edit", str(task_id), "--state", new_state],
+            ["dai", "task", "edit", uri, "--state", new_state],
             capture_output=True,
         )
         self._load()
 
     @guarded("action.delete")
-    def _delete_task(self, task_id: int) -> None:
+    def _delete_task(self, uri: str) -> None:
         import subprocess
         subprocess.run(
-            ["dai", "task", "delete", str(task_id)],
+            ["dai", "task", "delete", uri],
             capture_output=True,
         )
         self._load()
 
     @guarded("action.steer")
-    def _open_steer(self, task_id: int) -> None:
-        self._steer.set_task(task_id)
+    def _open_steer(self, uri: str) -> None:
+        self._steer.set_task(uri)
         self._secondary_sidebar.show()
 
     # ── 选中 / 双击 ──
@@ -533,7 +533,7 @@ class MainWindow(QMainWindow):
 
         index = indexes[0]
         kind = index.data(ROLE_KIND)
-        task_id = index.data(ROLE_TASK_ID)
+        task_uri = index.data(ROLE_TASK_URI)
         state = index.data(ROLE_STATE)
 
         if kind == "subject":
@@ -545,18 +545,18 @@ class MainWindow(QMainWindow):
             self._detail.setHtml(_STYLE + html)
             return
 
-        if kind != "task" or not task_id:
+        if kind != "task" or not task_uri:
             self._detail.setHtml(_STYLE + """<div class="placeholder">选择任务查看详情</div>""")
             return
 
-        node = self._find_node(task_id)
+        node = self._find_node(task_uri)
 
         # —— 拼 HTML ——
         parts: list[str] = []
 
-        # ID + state badge
+        # URI + state badge
         state_badge = _state_badge(state)
-        parts.append(f"""<div class="header">#{task_id} {state_badge}</div>""")
+        parts.append(f"""<div class="header">{task_uri} {state_badge}</div>""")
 
         # Title
         if node and node.title:
@@ -571,8 +571,8 @@ class MainWindow(QMainWindow):
         meta: list[str] = []
         if node and node.subject_path:
             meta.append(f"""<span class="tag">📂 {_esc_html(node.subject_path)}</span>""")
-        if node and node.parent_id:
-            meta.append(f"""<span class="tag">⬆ 父任务 #{node.parent_id}</span>""")
+        if node and node.parent_uri:
+            meta.append(f"""<span class="tag">⬆ 父任务 {node.parent_uri}</span>""")
         if meta:
             parts.append(f"""<div class="meta">{' '.join(meta)}</div>""")
 
@@ -593,14 +593,14 @@ class MainWindow(QMainWindow):
 
     @guarded("tree.double")
     def _on_double_click(self, index):
-        task_id = index.data(ROLE_TASK_ID)
-        if task_id:
-            self._open_steer(task_id)
+        task_uri = index.data(ROLE_TASK_URI)
+        if task_uri:
+            self._open_steer(task_uri)
 
-    def _find_node(self, task_id: int) -> TaskNode | None:
+    def _find_node(self, uri: str) -> TaskNode | None:
         def _search(nodes: list[TaskNode]) -> TaskNode | None:
             for n in nodes:
-                if n.task_id == task_id:
+                if n.uri == uri:
                     return n
                 r = _search(n.children)
                 if r:
@@ -705,17 +705,17 @@ class MainWindow(QMainWindow):
             lines.append(f"{prefix}{text}")
             MainWindow._dump_model_rows(model, child, lines, depth + 1)
 
-    def format_node(self, task_id: int) -> str:
+    def format_node(self, uri: str) -> str:
         """序列化指定任务节点详情（含 agent 状态）。"""
-        node = self._find_node(task_id)
+        node = self._find_node(uri)
         if node is None:
-            return f"未找到任务 #{task_id}"
+            return f"未找到任务 {uri}"
         lines = [
-            f"#{node.task_id} {node.title}",
+            f"{node.uri} {node.title}",
             f"  kind:    {node.kind}",
             f"  state:   {node.state} {node.state_icon}",
             f"  subject: {node.subject_path or '(无)'}",
-            f"  parent:  {f'#{node.parent_id}' if node.parent_id else '(无)'}",
+            f"  parent:  {node.parent_uri if node.parent_uri else '(无)'}",
             f"  depth:   {node.depth}",
             f"  children: {len(node.children)}",
         ]
@@ -724,7 +724,7 @@ class MainWindow(QMainWindow):
         if node.children:
             lines.append("  child_list:")
             for c in node.children:
-                lines.append(f"    #{c.task_id} {c.title} [{c.state}]")
+                lines.append(f"    {c.uri} {c.title} [{c.state}]")
         if node.agents:
             lines.append("  agents:")
             for a in node.agents:
@@ -737,7 +737,7 @@ class MainWindow(QMainWindow):
         lines: list[str] = []
         for n in self._iter_nodes(self._nodes):
             for a in n.agents:
-                lines.append(f"#{n.task_id} {a.agent_id} pid={a.pid} state={a.state}")
+                lines.append(f"{n.uri} {a.agent_id} pid={a.pid} state={a.state}")
         return "\n".join(lines) if lines else "(无 agent)"
 
     def closeEvent(self, event):
@@ -825,9 +825,9 @@ class ProbeCLI:
             return "OK"
 
         @ai.command
-        def node(task_id: int):
-            """<id> 任务节点详情"""
-            return self._main.invoke(lambda: self._window.format_node(task_id))
+        def node(uri: str):
+            """<uri> 任务节点详情"""
+            return self._main.invoke(lambda: self._window.format_node(uri))
 
         self._app.command(ai)
 

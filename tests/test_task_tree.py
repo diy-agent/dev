@@ -29,7 +29,7 @@ def test_parse_md_tree_single_task():
     md = "[#42] 测试任务 ⏳ (OPEN)"
     nodes = _parse_md_tree(md)
     assert len(nodes) == 1
-    assert nodes[0].task_id == 42
+    assert nodes[0].uri == "local/task/42"
     assert nodes[0].state == "active"  # OPEN → active
     assert nodes[0].title == "测试任务"
 
@@ -43,15 +43,15 @@ def test_parse_md_tree_hierarchy():
     nodes = _parse_md_tree(md)
     assert len(nodes) == 1  # 根只有一个 #58
     root = nodes[0]
-    assert root.task_id == 58
+    assert root.uri == "local/task/58"
     assert root.state == "active"
 
     assert len(root.children) == 3
-    assert root.children[0].task_id == 73
+    assert root.children[0].uri == "local/task/73"
     assert root.children[0].state == "done"
-    assert root.children[1].task_id == 65
+    assert root.children[1].uri == "local/task/65"
     assert root.children[1].state == "active"
-    assert root.children[2].task_id == 77
+    assert root.children[2].uri == "local/task/77"
     assert root.children[2].state == "cancelled"
 
 
@@ -75,9 +75,9 @@ _JSON_BLOCK = """<!-- diy:tree:begin -->
 ```json
 {
   "tasks": [
-    {"number": 58, "title": "Epic: dev", "state": "active", "children": [73, 65]},
-    {"number": 73, "title": "dai state", "state": "done", "parent": 58},
-    {"number": 65, "title": "--all", "state": "pending", "parent": 58}
+    {"uri": "local/task/58", "title": "Epic: dev", "state": "active", "children": [73, 65]},
+    {"uri": "local/task/73", "title": "dai state", "state": "done", "parent": "local/task/58"},
+    {"uri": "local/task/65", "title": "--all", "state": "pending", "parent": "local/task/58"}
   ],
   "locks": {}
 }
@@ -101,7 +101,7 @@ def test_parse_json_block():
         nodes = parse_agents_md_tree(tmp)
         assert len(nodes) == 1
         root = nodes[0]
-        assert root.task_id == 58
+        assert root.uri == "local/task/58"
         assert root.state == "active"
         assert len(root.children) == 2
     finally:
@@ -114,11 +114,11 @@ def test_parse_json_block():
 
 def test_merge_state_data():
     nodes = [
-        TaskNode(key="#58", task_id=58, kind="task", state="pending", title=""),
+        TaskNode(key="local/task/58", uri="local/task/58", kind="task", state="pending", title=""),
     ]
     state = {
         "tasks": {
-            "58": {"title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
+            "local/task/58": {"title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
         }
     }
     merged = merge_state_data(nodes, state)
@@ -131,8 +131,8 @@ def test_merge_adds_new_tasks():
     nodes: list[TaskNode] = []
     state = {
         "tasks": {
-            "58": {"title": "Epic", "state": "active", "subject": ""},
-            "99": {"title": "New", "state": "pending", "subject": ""},
+            "local/task/58": {"title": "Epic", "state": "active", "subject": ""},
+            "local/task/99": {"title": "New", "state": "pending", "subject": ""},
         }
     }
     merged = merge_state_data(nodes, state)
@@ -145,37 +145,21 @@ def test_merge_adds_new_tasks():
 
 def test_build_hierarchy_by_depth():
     nodes = [
-        TaskNode(key="#1", task_id=1, depth=0),
-        TaskNode(key="#2", task_id=2, depth=1),
-        TaskNode(key="#3", task_id=3, depth=1),
-        TaskNode(key="#4", task_id=4, depth=2),
+        TaskNode(key="local/task/1", uri="local/task/1", depth=0),
+        TaskNode(key="local/task/2", uri="local/task/2", depth=1),
+        TaskNode(key="local/task/3", uri="local/task/3", depth=1),
+        TaskNode(key="local/task/4", uri="local/task/4", depth=2),
     ]
     roots = _build_hierarchy(nodes)
     assert len(roots) == 1
-    assert roots[0].task_id == 1
+    assert roots[0].uri == "local/task/1"
     assert len(roots[0].children) == 2
-    assert roots[0].children[1].task_id == 3
+    assert roots[0].children[1].uri == "local/task/3"
     assert len(roots[0].children[1].children) == 1
-    assert roots[0].children[1].children[0].task_id == 4
+    assert roots[0].children[1].children[0].uri == "local/task/4"
 
 
 def test_load_task_tree():
-    """集成测试: 加载真实 AGENTS.md + state.yaml。"""
+    """集成测试: 加载真实 ~/.diy/d/ + state.yaml。"""
     nodes = load_task_tree()
-    # 至少有 diy 生态的 subjects
-    assert len(nodes) > 0
-
-    # 找到 _diy subject 下的 #58
-    found_58 = False
-    for n in nodes:
-        if n.task_id == 58:
-            found_58 = True
-            break
-        for c in n.children:
-            if c.task_id == 58:
-                found_58 = True
-                break
-
-    # #58 可能不在 state.yaml 的 tasks 中（在 AGENTS.md 中），
-    # 只验证至少加载了数据
     assert len(nodes) > 0
