@@ -12,11 +12,11 @@ diy 生态的**开发工具元项目**。
 | `dai profile list/show` | ✅ | profile 预设 |
 | `dai tree --sync` | ✅ | 注入 AGENTS.md |
 | `dai subject add/list/tree/show/remove/scan` | ✅ | subject 树管理，路径自带层级，is_git 实时检测 |
-| `dai task` | ✅ | 任务 CRUD：create/list/show/edit/delete/import。数据存 ~/.diy/tasks/<id>/AGENTS.md |
+| `dai task` | ✅ | 任务 CRUD：create/list/show/edit/delete。URI 标识（local/task/1），数据存 ~/.diy/d/ |
 | `dai app` | ✅ | 管控台探针 — 透传到 app socket（连不上自动启动 app） |
 
 `dai app` 子命令：
-- `tree` / `status` / `node <id>` / `agents` / `reload` — AI 接口
+- `tree` / `status` / `node <uri>` / `agents` / `reload` — AI 接口
 - 支持 `--help` 查看完整列表
 
 人类 TUI 通过独立 `dev` 命令访问：
@@ -52,9 +52,230 @@ intent test (代码即需求) → CLI 实现 → GUI 补充
 {
   "tasks": [
     {
-      "number": "73",
+      "uri": "local/task/120",
+      "title": "任务详情字段评估",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/120"
+      }
+    },
+    {
+      "uri": "local/task/121",
+      "title": "任务存储重构 — ~/.diy/tasks/ 方案验证",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/121"
+      }
+    },
+    {
+      "uri": "local/task/28",
+      "title": "status 重构",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/28"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/44",
+      "title": "sha.sh 架构重构",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/44"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/47",
+      "title": "项目发现机制",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/47"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/57",
+      "title": "防 agent 跨 worktree 污染",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/57"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/58",
+      "title": "Epic: dev架构更新 — dev 全局感知",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/58"
+      }
+    },
+    {
+      "uri": "local/task/61",
+      "title": "start 跨项目 worktree",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/61"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/62",
+      "title": "profile化",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/62"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/65",
+      "title": "--all 层级感知",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/65"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/67",
+      "title": "devflow 动态开发模式",
+      "state": "active",
+      "source": {
+        "type": "local",
+        "uri": "local/task/67"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/68",
+      "title": "sandbox 完善",
+      "state": "shelved",
+      "source": {
+        "type": "local",
+        "uri": "local/task/68"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/72",
+      "title": "run() 命令注入安全审计",
+      "state": "new",
+      "source": {
+        "type": "local",
+        "uri": "local/task/72"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/73",
       "title": "测试任务",
-      "state": "pending"
+      "state": "pending",
+      "source": {
+        "type": "local",
+        "uri": "local/task/73"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/74",
+      "title": "dev 人类壳包装",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/74"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/77",
+      "title": "dai vscode CLI",
+      "state": "cancelled",
+      "source": {
+        "type": "local",
+        "uri": "local/task/77"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/79",
+      "title": "Panel GUI Hello World 验证",
+      "state": "done",
+      "source": {
+        "type": "local",
+        "uri": "local/task/79"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/80",
+      "title": "app --port 不生效",
+      "state": "cancelled",
+      "source": {
+        "type": "local",
+        "uri": "local/task/80"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/81",
+      "title": "app.py state 路径重复",
+      "state": "cancelled",
+      "source": {
+        "type": "local",
+        "uri": "local/task/81"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/82",
+      "title": "tree --sync 不从 workspace 根",
+      "state": "new",
+      "source": {
+        "type": "local",
+        "uri": "local/task/82"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/83",
+      "title": "tree --sync 默认 True 语义",
+      "state": "new",
+      "source": {
+        "type": "local",
+        "uri": "local/task/83"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/84",
+      "title": "代码整洁 cleanup",
+      "state": "new",
+      "source": {
+        "type": "local",
+        "uri": "local/task/84"
+      },
+      "parent": 58
+    },
+    {
+      "uri": "local/task/85",
+      "title": "ShellTest → _diy_test 公共包",
+      "state": "pending",
+      "source": {
+        "type": "local",
+        "uri": "local/task/85"
+      }
     }
   ],
   "locks": {
