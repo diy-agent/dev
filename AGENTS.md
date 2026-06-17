@@ -44,13 +44,208 @@ diy 生态的**开发工具元项目**。
 ```
 intent test (代码即需求) → CLI 实现 → GUI 补充
 ```
-
-根文件 `~/git/AGENTS.md` 包含生态全局约束。
-
 <!-- diy:tree:begin -->
 ```json
 {
   "tasks": [
+    {
+      "uri": "github.com/diy-agent/_diy/issues/28",
+      "title": "dev status 重构：展示所有 worktree 状态",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/28"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/44",
+      "title": "dev/sha.sh 架构重构：dev 去掉隐式上下文，sha.sh 变成 thin wrapper 只代理当前项目",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/44"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/47",
+      "title": "dev 项目发现机制：沿 cwd 向上追溯 diy.yaml 定义项目根，搜所有子项目",
+      "state": "done",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/47"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/57",
+      "title": "防止 agent 跨 worktree 污染 — test_sandbox.py 事件复盘",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/57"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/58",
+      "title": "Epic: dev架构更新, 全局项目/repo管理 — dev 全局感知 diy.yaml 项目",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/58"
+      }
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/61",
+      "title": "dev start 支持跨项目 worktree — issue 在 A 项目，代码在 B 项目时无法用 dev 流程",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/61"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/62",
+      "title": "与其纠结agent worktree/main分支开发不如profile化",
+      "state": "done",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/62"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/65",
+      "title": "dev 体系增加层级感知：默认当前项目，--all 递归到根 diy.yaml",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/65"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/67",
+      "title": "dev start 支持 --devflow 参数，提供多种开发模式并带全局状态锁",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/67"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/68",
+      "title": "dev sandbox: 完善沙箱能力，解决无人值守 worker 的审批/交互阻塞",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/68"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/72",
+      "title": "安全审计：run() 命令注入风险 — 彻查所有 f-string 拼接 shell 命令",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/72"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/74",
+      "title": "dev 人类壳包装",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/74"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/77",
+      "title": "dai vscode: Captain Bridge CLI",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/77"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/79",
+      "title": "dai task 管控台 v0：Panel GUI Hello World 验证",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/79"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/80",
+      "title": "dai app --port 参数不生效 — shell.py 硬编码 5006",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/80"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/81",
+      "title": "app.py state 路径与 _state.py 重复 — 应复用 _state_path()",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/81"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/82",
+      "title": "dai tree --sync 不从 workspace 根找 AGENTS.md",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/82"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/83",
+      "title": "dai tree --sync 默认 True 语义混淆",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/83"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "github.com/diy-agent/_diy/issues/84",
+      "title": "dai 代码整洁：Any 未导入、profile 测试命名、VerboseFlag 覆盖不全",
+      "state": "active",
+      "source": {
+        "type": "github_issue",
+        "uri": "github.com/diy-agent/_diy/issues/84"
+      },
+      "parent": "github.com/diy-agent/_diy/issues/58"
+    },
+    {
+      "uri": "local/task/1",
+      "title": "PySide6 provider: 设计评审 + 改造路线图",
+      "state": "pending",
+      "source": {
+        "type": "local",
+        "uri": "local/task/1"
+      }
+    },
     {
       "uri": "local/task/120",
       "title": "任务详情字段评估",
@@ -70,201 +265,12 @@ intent test (代码即需求) → CLI 实现 → GUI 补充
       }
     },
     {
-      "uri": "local/task/28",
-      "title": "status 重构",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/28"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/44",
-      "title": "sha.sh 架构重构",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/44"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/47",
-      "title": "项目发现机制",
-      "state": "done",
-      "source": {
-        "type": "local",
-        "uri": "local/task/47"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/57",
-      "title": "防 agent 跨 worktree 污染",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/57"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/58",
-      "title": "Epic: dev架构更新 — dev 全局感知",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/58"
-      }
-    },
-    {
-      "uri": "local/task/61",
-      "title": "start 跨项目 worktree",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/61"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/62",
-      "title": "profile化",
-      "state": "done",
-      "source": {
-        "type": "local",
-        "uri": "local/task/62"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/65",
-      "title": "--all 层级感知",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/65"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/67",
-      "title": "devflow 动态开发模式",
-      "state": "active",
-      "source": {
-        "type": "local",
-        "uri": "local/task/67"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/68",
-      "title": "sandbox 完善",
-      "state": "shelved",
-      "source": {
-        "type": "local",
-        "uri": "local/task/68"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/72",
-      "title": "run() 命令注入安全审计",
-      "state": "new",
-      "source": {
-        "type": "local",
-        "uri": "local/task/72"
-      },
-      "parent": 58
-    },
-    {
       "uri": "local/task/73",
       "title": "测试任务",
       "state": "pending",
       "source": {
         "type": "local",
         "uri": "local/task/73"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/74",
-      "title": "dev 人类壳包装",
-      "state": "done",
-      "source": {
-        "type": "local",
-        "uri": "local/task/74"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/77",
-      "title": "dai vscode CLI",
-      "state": "cancelled",
-      "source": {
-        "type": "local",
-        "uri": "local/task/77"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/79",
-      "title": "Panel GUI Hello World 验证",
-      "state": "done",
-      "source": {
-        "type": "local",
-        "uri": "local/task/79"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/80",
-      "title": "app --port 不生效",
-      "state": "cancelled",
-      "source": {
-        "type": "local",
-        "uri": "local/task/80"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/81",
-      "title": "app.py state 路径重复",
-      "state": "cancelled",
-      "source": {
-        "type": "local",
-        "uri": "local/task/81"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/82",
-      "title": "tree --sync 不从 workspace 根",
-      "state": "new",
-      "source": {
-        "type": "local",
-        "uri": "local/task/82"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/83",
-      "title": "tree --sync 默认 True 语义",
-      "state": "new",
-      "source": {
-        "type": "local",
-        "uri": "local/task/83"
-      },
-      "parent": 58
-    },
-    {
-      "uri": "local/task/84",
-      "title": "代码整洁 cleanup",
-      "state": "new",
-      "source": {
-        "type": "local",
-        "uri": "local/task/84"
       },
       "parent": 58
     },
