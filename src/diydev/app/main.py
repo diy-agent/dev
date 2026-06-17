@@ -57,19 +57,113 @@ ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
 
 _STYLE = """<style>
   .card { font-family: -apple-system, "Segoe UI", sans-serif; padding: 12px; }
-  .placeholder { font-family: -apple-system, "Segoe UI", sans-serif; color: #888; font-size: 14px; padding: 20px; }
+  .placeholder { font-family: -apple-system, "Segoe UI", sans-serif; color: #a6adc8; font-size: 14px; padding: 20px; }
   .header { font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 8px; }
-  .title { font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 10px; }
+  .title { font-size: 18px; font-weight: bold; color: #ffffff; margin-bottom: 10px; }
   .detail { font-size: 13px; color: #bac2de; line-height: 1.6; margin: 8px 0 12px 0; white-space: pre-wrap; }
   .meta { margin: 8px 0 4px 0; }
-  .tag { display: inline-block; background: #313244; color: #a6adc8; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+  .tag { display: inline-block; background: #45475a; color: #cdd6f4; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
   .section-title { font-size: 13px; font-weight: bold; color: #a6adc8; margin: 4px 0; }
   .agent { font-size: 12px; color: #bac2de; margin: 2px 0; }
   .agent code { background: #1e1e2e; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }
   .hint { font-size: 12px; color: #585b70; margin-top: 4px; }
-  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #fff; }
-  hr { border: none; border-top: 1px solid #313244; margin: 12px 0; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #1e1e2e; }
+  hr { border: none; border-top: 1px solid #45475a; margin: 12px 0; }
 </style>"""
+
+
+# ═══════════════════════════════════════════════════════
+# Material3 暗色主题 — 语义化颜色系统
+# ═══════════════════════════════════════════════════════
+
+class Theme:
+    """语义化颜色令牌 — 高对比度暗色主题"""
+
+    # 基色
+    surface = "#1e1e2e"        # 主背景
+    surface_alt = "#181825"    # 侧栏/面板背景
+    on_surface = "#cdd6f4"     # 主文本
+    on_surface_variant = "#a6adc8"  # 次要文本
+    outline = "#45475a"        # 分隔线
+
+    # 状态色 — 高对比度版本
+    pending_bg = "#e5c07b"     # 琥珀黄背景
+    pending_fg = "#1e1e2e"     # 琥珀上文本（深色）
+    active_bg = "#7aa2f7"      # 明亮蓝
+    active_fg = "#1e1e2e"
+    done_bg = "#9ece6a"        # 明亮绿
+    done_fg = "#1e1e2e"
+    cancelled_bg = "#565f89"   # 灰紫
+    cancelled_fg = "#cdd6f4"
+    blocked_bg = "#f7768e"     # 明亮红
+    blocked_fg = "#1e1e2e"
+    shelved_bg = "#e0af68"     # 橙
+    shelved_fg = "#1e1e2e"
+    new_bg = "#73daca"         # 青
+    new_fg = "#1e1e2e"
+
+    @classmethod
+    def state_bg(cls, state: str) -> str:
+        return {
+            "pending": cls.pending_bg, "active": cls.active_bg,
+            "open": cls.active_bg, "done": cls.done_bg,
+            "closed": cls.done_bg, "cancelled": cls.cancelled_bg,
+            "blocked": cls.blocked_bg, "shelved": cls.shelved_bg,
+            "new": cls.new_bg,
+        }.get(state, cls.cancelled_bg)
+
+    @classmethod
+    def state_fg(cls, state: str) -> str:
+        return {
+            "pending": cls.pending_fg, "active": cls.active_fg,
+            "open": cls.active_fg, "done": cls.done_fg,
+            "closed": cls.done_fg, "cancelled": cls.cancelled_fg,
+            "blocked": cls.blocked_fg, "shelved": cls.shelved_fg,
+            "new": cls.new_fg,
+        }.get(state, cls.on_surface)
+
+
+def _app_stylesheet() -> str:
+    """全局 Material3 暗色主题 QSS。"""
+    return f"""
+        QMainWindow {{ background: {Theme.surface}; }}
+        QDockWidget {{ background: {Theme.surface}; color: {Theme.on_surface};
+                       border: 1px solid {Theme.outline}; titlebar-close-icon: none; }}
+        QDockWidget::title {{ background: {Theme.surface_alt};
+                              padding: 4px 8px; text-align: left; }}
+        QTreeView {{ background: {Theme.surface}; color: {Theme.on_surface};
+                     border: none; font-size: 13px;
+                     outline: none; }}
+        QTreeView::item {{ padding: 2px 4px; border-radius: 4px; }}
+        QTreeView::item:selected {{ background: #45475a; color: #cdd6f4; }}
+        QTreeView::item:hover {{ background: #313244; }}
+        QTreeView::branch {{ background: {Theme.surface}; }}
+        QTextBrowser {{ background: {Theme.surface}; color: {Theme.on_surface};
+                        border: none; font-size: 14px; padding: 8px; }}
+        QPlainTextEdit {{ background: {Theme.surface_alt}; color: {Theme.on_surface};
+                          border: none; font-size: 12px; }}
+        QLineEdit {{ background: {Theme.surface_alt}; color: {Theme.on_surface};
+                     border: 1px solid {Theme.outline}; border-radius: 4px;
+                     padding: 4px 8px; }}
+        QLineEdit:focus {{ border: 1px solid {Theme.active_bg}; }}
+        QPushButton {{ background: #45475a; color: {Theme.on_surface};
+                       border: none; border-radius: 4px; padding: 4px 12px; }}
+        QPushButton:hover {{ background: #585b70; }}
+        QTabWidget::pane {{ background: {Theme.surface}; border: 1px solid {Theme.outline}; }}
+        QTabBar::tab {{ background: {Theme.surface_alt}; color: {Theme.on_surface_variant};
+                       padding: 4px 12px; border: none; }}
+        QTabBar::tab:selected {{ background: {Theme.surface}; color: {Theme.on_surface};
+                                 border-bottom: 2px solid {Theme.active_bg}; }}
+        QScrollBar:vertical {{ background: {Theme.surface_alt}; width: 10px;
+                               border: none; }}
+        QScrollBar::handle:vertical {{ background: #45475a; border-radius: 4px;
+                                       min-height: 20px; }}
+        QScrollBar::handle:vertical:hover {{ background: #585b70; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical
+          {{ height: 0; background: none; border: none; }}
+        QToolTip {{ background: {Theme.surface_alt}; color: {Theme.on_surface};
+                    border: 1px solid {Theme.outline}; font-size: 12px; }}
+    """
 
 
 def _esc_html(text: str) -> str:
@@ -93,16 +187,10 @@ def _short_uri(uri: str) -> str:
     return uri
 
 
-_STATE_COLORS = {
-    "pending": "#f9e2af", "active": "#89b4fa", "open": "#89b4fa",
-    "done": "#a6e3a1", "closed": "#a6e3a1", "cancelled": "#6c7086",
-    "blocked": "#f38ba8", "shelved": "#fab387", "new": "#94e2d5",
-}
-
-
 def _state_badge(state: str) -> str:
-    color = _STATE_COLORS.get(state, "#585b70")
-    return f'<span class="badge" style="background:{color};color:#1e1e2e;">{state}</span>'
+    bg = Theme.state_bg(state)
+    fg = Theme.state_fg(state)
+    return f'<span class="badge" style="background:{bg};color:{fg};">{state}</span>'
 
 
 def build_model(nodes: list[TaskNode]) -> QStandardItemModel:
@@ -141,13 +229,8 @@ def _add_node(
     item.setData(node.state, ROLE_STATE)
     item.setData(node.subject_path, ROLE_SUBJECT)
 
-    colors = {
-        "done": QColor("#2e7d32"), "closed": QColor("#2e7d32"),
-        "active": QColor("#1565c0"), "open": QColor("#1565c0"),
-        "blocked": QColor("#c62828"), "cancelled": QColor("#6d4c41"),
-    }
-    if node.state in colors:
-        item.setForeground(colors[node.state])
+    fg = QColor(Theme.state_fg(node.state))
+    item.setForeground(fg)
 
     parent.appendRow(item)
     for child in node.children:
@@ -272,6 +355,7 @@ class MainWindow(QMainWindow):
         self._tree = QTreeView()
         self._tree.setHeaderHidden(True)
         self._tree.setAnimated(True)
+        self._tree.setIndentation(14)  # 缩进减半
         self._tree.setRootIsDecorated(True)
         self._tree.setExpandsOnDoubleClick(True)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1007,6 +1091,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setStyleSheet(_app_stylesheet())
 
     # Ctrl+C 两次退出（调试模式下 Qt event loop 会吞 SIGINT）
     signal.signal(signal.SIGINT, signal.SIG_DFL)
