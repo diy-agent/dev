@@ -620,6 +620,59 @@ def task_create(
         yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+@task_app.command(name="link")
+def task_link(
+    title: Annotated[str, Parameter(name="--title", help="任务标题")],
+    subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
+    source_uri: Annotated[str, Parameter(name="--source-uri", help="外部任务 URI（如 github.com/owner/repo/issues/58）")],
+    parent: Annotated[str | None, Parameter(name="--parent", help="父任务 URI")] = None,
+    detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """链接外部任务（GitHub issue / PR 等）。不修改远端，仅建立本地引用。"""
+    if not source_uri:
+        print("错误: --source-uri 必填", file=sys.stderr)
+        sys.exit(1)
+
+    # 从 source_uri 格式推测 type
+    if "github.com" in source_uri:
+        if "/pull/" in source_uri:
+            source_type = "github_pr"
+        else:
+            source_type = "github_issue"
+    else:
+        source_type = "external"
+
+    subject_n = _norm(subject)
+    data = load_state()
+    subjects = data.get("subjects", {})
+    if subject_n not in subjects:
+        print(f"错误: subject {shlex.quote(subject_n)} 未注册", file=sys.stderr)
+        sys.exit(1)
+    if parent is not None and get_task(parent) is None:
+        print(f"错误: parent {parent} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        uri = create_task(
+            title=title, subject=subject_n, parent=parent, detail=detail,
+            source_type=source_type, source_uri=source_uri,
+        )
+    except ValueError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    task = get_task(uri) or {}
+    result = {"status": "success", "data": task}
+    _notify_app_reload()
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
 @task_app.command(name="list")
 def task_list(
     json_output: Annotated[
@@ -703,9 +756,42 @@ def task_delete(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """删除任务。"""
-    if get_task(uri) is None:
+    """删除本地任务。外部任务请用 unlink。"""
+    task = get_task(uri)
+    if task is None:
         print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    src = task.get("source", {})
+    if src.get("type") != "local":
+        print(f"错误: {uri} 是外部任务，请用 dai task unlink {uri} 解绑", file=sys.stderr)
+        sys.exit(1)
+
+    delete_task(uri)
+    result = {"status": "success"}
+    _notify_app_reload()
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="unlink")
+def task_unlink(
+    uri: Annotated[str, Parameter(help="外部任务 URI（如 github.com/owner/repo/issues/58）")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """解绑外部任务引用。不删除远端 issue，仅移除本地记录。"""
+    task = get_task(uri)
+    if task is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    src = task.get("source", {})
+    if src.get("type") == "local":
+        print(f"错误: {uri} 是本地任务，请用 dai task delete {uri}", file=sys.stderr)
         sys.exit(1)
 
     delete_task(uri)
@@ -755,14 +841,14 @@ def _app_probe(args: list[str]) -> None:
             s.connect(socket_path)
             s.sendall((" ".join(args) + "\n").encode("utf-8"))
             s.shutdown(sock.SHUT_WR)
-            buf = []
+            buf: list[bytes] = []
             while True:
                 data = s.recv(4096)
                 if not data:
                     break
-                buf.append(data.decode("utf-8"))
+                buf.append(data)
             s.close()
-            sys.stdout.write("".join(buf))
+            sys.stdout.write(b"".join(buf).decode("utf-8"))
             return 0
         except (FileNotFoundError, ConnectionRefusedError, OSError):
             return 1
