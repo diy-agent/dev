@@ -988,6 +988,18 @@ class AppProbeError(Exception):
     """已有运行中的管控台实例。"""
 
 
+_PID_PATH = os.path.expanduser("~/.diy/app.pid")
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """检查 PID 是否存活。"""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 class AppProbe(QObject):
     """Unix domain socket server，允许外部进程查询/操纵 app 运行状态。
 
@@ -1009,7 +1021,24 @@ class AppProbe(QObject):
         self._cli = ProbeCLI(window)
 
     def start(self) -> None:
-        # 检查是否有活实例 — socket 文件即锁
+        # 1) PID 锁检查 — 即使 socket 文件被误删也能拦截
+        if os.path.exists(_PID_PATH):
+            try:
+                with open(_PID_PATH) as fh:
+                    pid = int(fh.read().strip())
+                if _is_pid_alive(pid):
+                    raise AppProbeError(
+                        f"已有运行中的管控台实例 (pid={pid})"
+                    )
+                logger.warning("PID 文件残留 pid=%d，清理", pid)
+            except (OSError, ValueError):
+                pass
+            try:
+                os.unlink(_PID_PATH)
+            except OSError:
+                pass
+
+        # 2) Socket 锁检查
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(0.5)
@@ -1021,7 +1050,7 @@ class AppProbe(QObject):
         except (OSError, socket.timeout):
             pass  # 连不上 → 残留或不存在
 
-        # 清理残留
+        # 3) 清理残留 socket + 绑定
         try:
             os.unlink(self._path)
         except OSError:
@@ -1030,13 +1059,25 @@ class AppProbe(QObject):
         self._server = socketserver.UnixStreamServer(self._path, _make_handler(self))
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-        logger.info("AppProbe socket ready → %s", self._path)
+
+        # 4) 写入 PID 锁
+        try:
+            with open(_PID_PATH, "w") as fh:
+                fh.write(str(os.getpid()))
+        except OSError:
+            pass
+
+        logger.info("AppProbe socket ready → %s  pid=%d", self._path, os.getpid())
 
     def stop(self) -> None:
         if self._server:
             self._server.shutdown()
         try:
             os.unlink(self._path)
+        except OSError:
+            pass
+        try:
+            os.unlink(_PID_PATH)
         except OSError:
             pass
 

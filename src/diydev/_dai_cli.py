@@ -823,6 +823,7 @@ def _app_probe(args: list[str]) -> None:
     import time as _time
 
     socket_path = os.path.expanduser("~/.diy/app.sock")
+    pid_path = os.path.expanduser("~/.diy/app.pid")
     # dai app 是 AI 原生接口，所有命令加 ai 前缀
     if not args:
         args = ["ai", "--help"]
@@ -855,6 +856,25 @@ def _app_probe(args: list[str]) -> None:
 
     if _send() == 0:
         return
+
+    # 连不上 → 先查 PID 锁
+    if os.path.exists(pid_path):
+        try:
+            with open(pid_path) as fh:
+                pid = int(fh.read().strip())
+            try:
+                os.kill(pid, 0)  # 进程存活 → socket 异常
+                print(f"错误: 管控台进程 pid={pid} 异常，socket 不通。请手动 kill {pid} 后重试",
+                      file=sys.stderr)
+                sys.exit(1)
+            except (OSError, ProcessLookupError):
+                pass  # pid 已死 → 清理残留
+            try:
+                os.unlink(pid_path)
+            except OSError:
+                pass
+        except (OSError, ValueError):
+            pass
 
     # 连不上 → 启动 app
     # __file__ = src/diydev/_dai_cli.py, repo = _diy/
