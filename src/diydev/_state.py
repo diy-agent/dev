@@ -283,12 +283,14 @@ def _meta_to_task_dict(uri: str, meta: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_task(uri: str) -> dict[str, Any] | None:
-    """获取任务信息。通过 URI 读取。"""
+    """获取任务信息。通过 URI 读取。返回 dict 包含 body 字段。"""
     md = _uri_to_path(uri)
     meta = _read_frontmatter(md)
     if meta is None:
         return None
-    return _meta_to_task_dict(uri, meta)
+    result = _meta_to_task_dict(uri, meta)
+    result["body"] = _read_body(md)
+    return result
 
 
 def create_task(
@@ -299,6 +301,7 @@ def create_task(
     parent: str | None = None,
     state_val: str = "pending",
     detail: str | None = None,
+    body: str = "",
 ) -> str:
     """创建任务，返回任务 URI。
 
@@ -336,12 +339,15 @@ def create_task(
     if parent is not None:
         meta["parent"] = parent
 
-    _write_agents_md(uri, meta)
+    _write_agents_md(uri, meta, body)
     return uri
 
 
 def update_task_field(uri: str, **fields: Any) -> dict[str, Any]:
-    """更新任务字段，返回更新后的完整任务。"""
+    """更新任务字段，返回更新后的完整任务。
+
+    特殊字段 'body' 写入 markdown body 而非 frontmatter。
+    """
     md = _uri_to_path(uri)
     meta = _read_frontmatter(md)
     if meta is None:
@@ -353,11 +359,13 @@ def update_task_field(uri: str, **fields: Any) -> dict[str, Any]:
         if p is not None and get_task(p) is None:
             raise KeyError(f"parent {p} 不存在")
 
+    body = fields.pop("body", None)
+    if body is None:
+        body = _read_body(md)
+
     meta.update(fields)
     meta["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 保留已有的 body 内容
-    body = _read_body(md)
     _write_agents_md(uri, meta, body)
     return _meta_to_task_dict(uri, meta)
 
@@ -387,7 +395,9 @@ def list_tasks() -> dict[str, dict[str, Any]]:
         uri = _path_to_uri(md)
         if uri is None:
             continue
-        result[uri] = _meta_to_task_dict(uri, meta)
+        task_dict = _meta_to_task_dict(uri, meta)
+        task_dict["body"] = _read_body(md)
+        result[uri] = task_dict
     return result
 
 

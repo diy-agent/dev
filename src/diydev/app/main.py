@@ -41,6 +41,7 @@ from diydev.app.agent_bridge import (
     steer_send,
 )
 from diydev.app.task_tree import TaskNode, load_task_tree
+from diydev.app._doctor import HealthIssue, is_locked, run_check, set_locked
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -69,6 +70,24 @@ _STYLE = """<style>
   .hint { font-size: 12px; color: #585b70; margin-top: 4px; }
   .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #1e1e2e; }
   hr { border: none; border-top: 1px solid #45475a; margin: 12px 0; }
+  /* markdown body 渲染 */
+  .md-body { font-size: 13px; color: #bac2de; line-height: 1.7; }
+  .md-body h1 { font-size: 18px; color: #ffffff; margin: 16px 0 8px 0; border-bottom: 1px solid #45475a; padding-bottom: 4px; }
+  .md-body h2 { font-size: 16px; color: #cdd6f4; margin: 14px 0 6px 0; }
+  .md-body h3 { font-size: 14px; color: #a6adc8; margin: 12px 0 4px 0; }
+  .md-body p { margin: 6px 0; }
+  .md-body code { background: #1e1e2e; color: #f5c2e7; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .md-body pre { background: #181825; padding: 10px 14px; border-radius: 6px; overflow-x: auto; }
+  .md-body pre code { background: none; padding: 0; }
+  .md-body table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  .md-body th { background: #313244; color: #cdd6f4; padding: 6px 10px; text-align: left; font-weight: 600; }
+  .md-body td { padding: 5px 10px; border-bottom: 1px solid #313244; }
+  .md-body blockquote { border-left: 3px solid #45475a; padding-left: 12px; color: #a6adc8; margin: 8px 0; }
+  .md-body ul, .md-body ol { padding-left: 20px; margin: 6px 0; }
+  .md-body li { margin: 2px 0; }
+  .md-body a { color: #89b4fa; }
+  .md-body strong { color: #cdd6f4; }
+  .md-body em { color: #a6e3a1; }
 </style>"""
 
 
@@ -444,6 +463,11 @@ class MainWindow(QMainWindow):
         self._refresh_timer.timeout.connect(self._refresh_agents)
         self._refresh_timer.start(5000)
 
+        # ── 健康自检（10s，启动后 30s 才开始） ──
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._on_health_check)
+        QTimer.singleShot(30000, lambda: self._health_timer.start(10000))
+
         logger.info("MainWindow 初始化完成, pid=%s", os.getpid())
 
     def _setup_menu(self):
@@ -555,6 +579,61 @@ class MainWindow(QMainWindow):
         else:
             self._refresh_agents()
 
+    # ── 健康自检 ──
+    @guarded("health")
+    def _on_health_check(self) -> None:
+        sock_dev = getattr(self._probe, '_sock_dev', None)
+        sock_ino = getattr(self._probe, '_sock_ino', None)
+        critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
+        if critical:
+            logger.warning("健康自检发现 %d 个严重问题", len(critical))
+            for iss in critical:
+                logger.warning("  [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
+            set_locked(True)
+            self._enter_lockdown(critical)
+            self._health_timer.stop()
+
+    def _enter_lockdown(self, issues: list[HealthIssue]) -> None:
+        """严重故障 → 锁定界面并显示告示。"""
+        # 隐藏所有 dock（副作用：无法交互）
+        for dock in self.findChildren(QDockWidget):
+            dock.hide()
+
+        self.menuBar().setEnabled(False)
+
+        html = """<style>
+          body { background: #1e1e2e; color: #cdd6f4; font-family: -apple-system, sans-serif;
+                 display: flex; justify-content: center; align-items: center;
+                 height: 100vh; margin: 0; }
+          .card { max-width: 600px; padding: 40px; text-align: center; }
+          .icon-warn { font-size: 48px; margin-bottom: 12px; }
+          h1 { color: #f7768e; font-size: 20px; margin-bottom: 16px; }
+          .issue { background: #313244; border-radius: 8px; padding: 12px 16px;
+                   margin: 8px 0; text-align: left; font-size: 13px; line-height: 1.6; }
+          .issue code { background: #45475a; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }
+          .issue .msg { font-weight: bold; color: #f7768e; }
+          .hint { margin-top: 20px; font-size: 13px; color: #a6adc8; }
+        </style>
+        <div class="card">
+          <div class="icon-warn">⚠️</div>
+          <h1>严重故障 — 应用已锁定</h1>
+        """
+        for iss in issues:
+            html += (
+                f'<div class="issue">'
+                f'<div class="msg">[{iss.code}] {iss.message}</div>'
+                f'<div>{self._esc_html(iss.detail)}</div>'
+                f'</div>'
+            )
+        html += (
+            '<div class="hint">'
+            '建议：关闭本窗口 → kill 残留进程 → 重新启动'
+            '</div></div>'
+        )
+        self._detail.setHtml(html)
+        self.setCentralWidget(self._detail)
+        self.setWindowTitle("⚠️ 应用故障")
+
     # ── 右键菜单 ──
     @guarded("ctxmenu")
     def _on_context_menu(self, pos):
@@ -662,6 +741,13 @@ class MainWindow(QMainWindow):
         if node and node.detail:
             detail_html = _esc_html(node.detail).replace("\n", "<br>")
             parts.append(f"""<div class="detail">{detail_html}</div>""")
+
+        # Body（markdown 设计文档）— 用 markdown-it-py 渲染为 HTML
+        if node and node.body:
+            from markdown_it import MarkdownIt
+            md = MarkdownIt("commonmark", {"breaks": True, "html": True})
+            body_html = md.render(node.body)
+            parts.append(f"""<hr><div class="section-title">📄 文档</div><div class="md-body">{body_html}</div>""")
 
         # Metadata row
         meta: list[str] = []
@@ -817,6 +903,10 @@ class MainWindow(QMainWindow):
         ]
         if node.detail:
             lines.append(f"  detail:  {node.detail}")
+        if node.body:
+            # 探针输出 body 第一行 + ... 提示
+            body_preview = node.body.split("\n")[0]
+            lines.append(f"  body:    {body_preview}{' ...' if len(node.body.splitlines()) > 1 else ''}")
         if node.children:
             lines.append("  child_list:")
             for c in node.children:
@@ -924,6 +1014,25 @@ class ProbeCLI:
             """<uri> 任务节点详情"""
             return self._main.invoke(lambda: self._window.format_node(uri))
 
+        @ai.command
+        def doctor():
+            """健康自检 — 列出所有问题"""
+            from diydev.app._doctor import HealthIssue, run_check
+            probe = self._window._probe
+            sock_dev = getattr(probe, '_sock_dev', None)
+            sock_ino = getattr(probe, '_sock_ino', None)
+            issues = run_check(sock_dev, sock_ino)
+            if not issues:
+                return "✅ 一切正常"
+            lines = [f"发现 {len(issues)} 个问题:", ""]
+            for i in issues:
+                emoji = {"critical": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(i.severity, "ℹ️")
+                lines.append(f"  {emoji} [{i.code}] {i.message}")
+                if i.detail:
+                    for line in i.detail.strip().split("\n"):
+                        lines.append(f"    {line}")
+            return "\n".join(lines)
+
         self._app.command(ai)
 
         # ── 人类子应用 ──
@@ -988,18 +1097,6 @@ class AppProbeError(Exception):
     """已有运行中的管控台实例。"""
 
 
-_PID_PATH = os.path.expanduser("~/.diy/app.pid")
-
-
-def _is_pid_alive(pid: int) -> bool:
-    """检查 PID 是否存活。"""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
 class AppProbe(QObject):
     """Unix domain socket server，允许外部进程查询/操纵 app 运行状态。
 
@@ -1021,24 +1118,7 @@ class AppProbe(QObject):
         self._cli = ProbeCLI(window)
 
     def start(self) -> None:
-        # 1) PID 锁检查 — 即使 socket 文件被误删也能拦截
-        if os.path.exists(_PID_PATH):
-            try:
-                with open(_PID_PATH) as fh:
-                    pid = int(fh.read().strip())
-                if _is_pid_alive(pid):
-                    raise AppProbeError(
-                        f"已有运行中的管控台实例 (pid={pid})"
-                    )
-                logger.warning("PID 文件残留 pid=%d，清理", pid)
-            except (OSError, ValueError):
-                pass
-            try:
-                os.unlink(_PID_PATH)
-            except OSError:
-                pass
-
-        # 2) Socket 锁检查
+        # 1) Socket 锁检查 — 连接成功说明有活实例
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(0.5)
@@ -1050,7 +1130,7 @@ class AppProbe(QObject):
         except (OSError, socket.timeout):
             pass  # 连不上 → 残留或不存在
 
-        # 3) 清理残留 socket + 绑定
+        # 2) 清理残留 socket + 绑定
         try:
             os.unlink(self._path)
         except OSError:
@@ -1060,10 +1140,13 @@ class AppProbe(QObject):
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
-        # 4) 写入 PID 锁
+        # 记下 socket 文件身份（stat 而非 fstat，因为 AF_UNIX 两类 inode 不同）
+        self._sock_dev: int | None = None
+        self._sock_ino: int | None = None
         try:
-            with open(_PID_PATH, "w") as fh:
-                fh.write(str(os.getpid()))
+            st = os.stat(self._path)
+            self._sock_dev = st.st_dev
+            self._sock_ino = st.st_ino
         except OSError:
             pass
 
@@ -1074,10 +1157,6 @@ class AppProbe(QObject):
             self._server.shutdown()
         try:
             os.unlink(self._path)
-        except OSError:
-            pass
-        try:
-            os.unlink(_PID_PATH)
         except OSError:
             pass
 

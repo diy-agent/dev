@@ -33,6 +33,7 @@ class TaskNode:
     title: str = ""
     state: str = "pending"
     detail: str = ""
+    body: str = ""                   # markdown body（设计文档等）
     parent_uri: str | None = None    # 父任务 URI
     subject_path: str = ""
     source: dict = field(default_factory=dict)
@@ -102,6 +103,7 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
             key=uri, kind="task", uri=uri,
             title=info.get("title", ""),
             detail=info.get("detail", ""),
+            body=info.get("body", ""),
             state=info.get("state", "pending"),
             subject_path=info.get("subject", ""),
             parent_uri=info.get("parent"),
@@ -272,6 +274,7 @@ def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> l
             node.title = info.get("title", node.title)
             node.state = info.get("state", node.state)
             node.detail = info.get("detail", node.detail)
+            node.body = info.get("body", node.body)
             node.subject_path = info.get("subject", "")
             node.parent_uri = info.get("parent")
         else:
@@ -279,6 +282,8 @@ def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> l
                 key=uri, kind="task", uri=uri,
                 title=info.get("title", ""),
                 state=info.get("state", "pending"),
+                detail=info.get("detail", ""),
+                body=info.get("body", ""),
                 subject_path=info.get("subject", ""),
                 parent_uri=info.get("parent"),
                 source=info.get("source", {}),

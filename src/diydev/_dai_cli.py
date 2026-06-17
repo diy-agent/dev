@@ -583,6 +583,7 @@ def task_create(
     subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
     parent: Annotated[str | None, Parameter(name="--parent", help="父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
+    body_file: Annotated[str | None, Parameter(name="--body-file", help="markdown body 文件路径")] = None,
     source_type: Annotated[str, Parameter(name="--source-type", help="任务来源类型")] = "local",
     source_uri: Annotated[str | None, Parameter(name="--source-uri", help="外部任务 URI（非 local 必填）")] = None,
     json_output: Annotated[
@@ -602,10 +603,18 @@ def task_create(
         print(f"错误: parent {parent} 不存在", file=sys.stderr)
         sys.exit(1)
 
+    body = ""
+    if body_file:
+        try:
+            body = Path(body_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"错误: 无法读取 body 文件 {shlex.quote(body_file)}: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     try:
         uri = create_task(
             title=title, subject=subject_n, parent=parent, detail=detail,
-            source_type=source_type, source_uri=source_uri,
+            source_type=source_type, source_uri=source_uri, body=body,
         )
     except ValueError as exc:
         print(f"错误: {exc}", file=sys.stderr)
@@ -702,10 +711,14 @@ def task_show(
     if task is None:
         print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
         sys.exit(1)
+    body = task.pop("body", "") if not json_output else task.get("body", "")
     if json_output:
         print(json.dumps(task, indent=2, ensure_ascii=False))
     else:
         yaml.dump(task, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        if body:
+            print()
+            print(body)
 
 
 @task_app.command(name="edit")
@@ -716,6 +729,7 @@ def task_edit(
     subject: Annotated[str | None, Parameter(name="--subject", help="新 subject")] = None,
     parent: Annotated[str | None, Parameter(name="--parent", help="新父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="新详情")] = None,
+    body_file: Annotated[str | None, Parameter(name="--body-file", help="markdown body 文件路径")] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -739,6 +753,12 @@ def task_edit(
         fields["parent"] = parent
     if detail is not None:
         fields["detail"] = detail
+    if body_file is not None:
+        try:
+            fields["body"] = Path(body_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"错误: 无法读取 body 文件 {shlex.quote(body_file)}: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     task = update_task_field(uri, **fields)
     result = {"status": "success", "data": task}
@@ -823,7 +843,6 @@ def _app_probe(args: list[str]) -> None:
     import time as _time
 
     socket_path = os.path.expanduser("~/.diy/app.sock")
-    pid_path = os.path.expanduser("~/.diy/app.pid")
     # dai app 是 AI 原生接口，所有命令加 ai 前缀
     if not args:
         args = ["ai", "--help"]
@@ -856,25 +875,6 @@ def _app_probe(args: list[str]) -> None:
 
     if _send() == 0:
         return
-
-    # 连不上 → 先查 PID 锁
-    if os.path.exists(pid_path):
-        try:
-            with open(pid_path) as fh:
-                pid = int(fh.read().strip())
-            try:
-                os.kill(pid, 0)  # 进程存活 → socket 异常
-                print(f"错误: 管控台进程 pid={pid} 异常，socket 不通。请手动 kill {pid} 后重试",
-                      file=sys.stderr)
-                sys.exit(1)
-            except (OSError, ProcessLookupError):
-                pass  # pid 已死 → 清理残留
-            try:
-                os.unlink(pid_path)
-            except OSError:
-                pass
-        except (OSError, ValueError):
-            pass
 
     # 连不上 → 启动 app
     # __file__ = src/diydev/_dai_cli.py, repo = _diy/
