@@ -82,6 +82,17 @@ def _esc_html(text: str) -> str:
     )
 
 
+def _short_uri(uri: str) -> str:
+    """URI 短显示：local/task/58 → local#58, github.com/.../58 → github#58"""
+    if uri.startswith("local/"):
+        num = uri.rstrip("/").rsplit("/", 1)[-1]
+        return f"local#{num}"
+    if "github.com" in uri:
+        num = uri.rstrip("/").rsplit("/", 1)[-1]
+        return f"github#{num}"
+    return uri
+
+
 _STATE_COLORS = {
     "pending": "#f9e2af", "active": "#89b4fa", "open": "#89b4fa",
     "done": "#a6e3a1", "closed": "#a6e3a1", "cancelled": "#6c7086",
@@ -116,7 +127,8 @@ def _add_node(
         text = f"{icon} {node.key}"
     else:
         icon = node.state_icon
-        text = f"{icon} {node.uri} {node.title}" if node.title else f"{icon} {node.uri}"
+        display_uri = _short_uri(node.uri or "")
+        text = f"{icon} {display_uri} {node.title}" if node.title else f"{icon} {display_uri}"
 
     if node.agents:
         running = [a for a in node.agents if a.state == "running"]
