@@ -559,6 +559,24 @@ app.command(subject_app)
 task_app = App(name="task", help="任务管理")
 
 
+def _notify_app_reload() -> None:
+    """通知 GUI app 刷新任务树（如果正在运行）。失败静默。"""
+    import socket as _sock
+    socket_path = os.path.join(
+        os.environ.get("DIY_HOME", os.path.expanduser("~/.diy")),
+        "app.sock",
+    )
+    try:
+        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(socket_path)
+        s.sendall(b"ai reload\n")
+        s.shutdown(_sock.SHUT_WR)
+        s.close()
+    except OSError:
+        pass
+
+
 @task_app.command(name="create")
 def task_create(
     title: Annotated[str, Parameter(name="--title", help="任务标题")],
@@ -595,6 +613,7 @@ def task_create(
 
     task = get_task(uri) or {}
     result = {"status": "success", "data": task}
+    _notify_app_reload()
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
@@ -670,6 +689,7 @@ def task_edit(
 
     task = update_task_field(uri, **fields)
     result = {"status": "success", "data": task}
+    _notify_app_reload()
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
@@ -690,6 +710,7 @@ def task_delete(
 
     delete_task(uri)
     result = {"status": "success"}
+    _notify_app_reload()
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:

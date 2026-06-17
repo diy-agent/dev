@@ -338,10 +338,10 @@ class MainWindow(QMainWindow):
         # state.yaml 变化 → 自动 reload
         state_path = str(Path.home() / ".diy" / "state.yaml")
         self._watcher.addPath(state_path)
-        # tasks/ 目录变化（CLI 创建/删除任务）→ 自动 reload
-        tasks_path = str(Path.home() / ".diy" / "tasks")
-        os.makedirs(tasks_path, exist_ok=True)
-        self._watcher.addPath(tasks_path)
+        # ~/.diy/d/ 目录变化（CLI 创建/删除任务）→ 自动 reload
+        data_path = str(Path.home() / ".diy" / "d")
+        os.makedirs(data_path, exist_ok=True)
+        self._watcher.addPath(data_path)
 
         # ── 定时刷新（agent 状态 5s） ──
         self._refresh_timer = QTimer(self)
