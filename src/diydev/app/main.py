@@ -124,7 +124,7 @@ def _add_node(
         expanded = Path(node.key).expanduser()
         is_git = expanded.joinpath(".git").is_dir()
         icon = "📦" if is_git else "📁"
-        text = f"{icon} {node.key}"
+        text = f"{icon} {node.label or node.key}"
     else:
         icon = node.state_icon
         display_uri = _short_uri(node.uri or "")

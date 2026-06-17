@@ -83,14 +83,17 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
         )
         subject_nodes[spath] = node
 
-    # 找到每个 subject 的最邻近父 subject
+    # 找到每个 subject 的最邻近父 subject，计算相对显示名
     roots: list[TaskNode] = []
     for spath, node in sorted(subject_nodes.items()):
         parent = _find_parent_subject(spath, subject_nodes)
         if parent:
             parent.children.append(node)
+            # 相对父 subject 的路径
+            node.label = os.path.relpath(spath, parent.key)
         else:
             roots.append(node)
+            node.label = spath  # 根 subject 保留全路径
 
     # ── task 节点 ──
     task_nodes: dict[str, TaskNode] = {}
