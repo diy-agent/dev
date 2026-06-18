@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
 )
 
 from diydev.app._activity_bar import ActivityBar
-from diydev.app._app_log import logger, setup_app_logger
+from diydev.app._app_log import get_logger, logger, setup_app_logger
 from diydev.app._log_panel import LogPanel
 from diydev.app.agent_bridge import (
     AgentStatus,
@@ -497,7 +497,7 @@ class MainWindow(QMainWindow):
         self._render_tree()
         subjects = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "subject")
         tasks = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "task")
-        logger.info("reload — %d subject(s), %d task(s), %d root(s)", subjects, tasks, len(self._nodes))
+        logger.debug("[main] 重载完成 — %d subject, %d task, %d root", subjects, tasks, len(self._nodes))
 
     def _render_tree(self) -> None:
         model = build_model(self._nodes)
@@ -525,7 +525,10 @@ class MainWindow(QMainWindow):
                 changed = True
 
         if changed:
+            logger.debug("[timer] agent 状态变化 → 重绘树 (%d agent)", len(agents))
             self._render_tree()
+        elif agents:
+            logger.debug("[timer] agent 无变化 (%d agent)", len(agents))
 
     def _iter_nodes(self, nodes: list[TaskNode]):
         for n in nodes:
@@ -546,19 +549,22 @@ class MainWindow(QMainWindow):
             return
         tasks_dir = str(Path.home() / ".diy" / "d")
         if _path == tasks_dir:
-            # tasks/ 目录变化（CLI 创建/删除任务）→ reload 树
+            logger.debug("[watcher] ~/.diy/d/ 目录条目变化 → 全量重载")
             self._load()
         else:
+            logger.debug("[watcher] agents/ 目录变化 → 刷新 agent 状态")
             self._refresh_agents()
 
     @guarded("watcher.file")
     def _on_file_changed(self, path: str) -> None:
         if path.endswith("state.yaml"):
+            logger.debug("[watcher] state.yaml 变化 → 全量重载")
             # macOS: yaml 写入可能换 inode，重新 watch
             self._watcher.removePath(path)
             self._watcher.addPath(path)
             self._load()
         else:
+            logger.debug("[watcher] 其他文件变化 → 刷新 agent 状态")
             self._refresh_agents()
 
     # ── 健康自检 ──
@@ -568,12 +574,14 @@ class MainWindow(QMainWindow):
         sock_ino = getattr(self._probe, '_sock_ino', None)
         critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
         if critical:
-            logger.warning("健康自检发现 %d 个严重问题", len(critical))
+            logger.warning("[health] 发现 %d 个严重问题, 锁定界面", len(critical))
             for iss in critical:
-                logger.warning("  [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
+                logger.warning("[health]   [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
             set_locked(True)
             self._enter_lockdown(critical)
             self._health_timer.stop()
+        else:
+            logger.debug("[health] 自检通过")
 
     def _enter_lockdown(self, issues: list[HealthIssue]) -> None:
         """严重故障 → 锁定界面并显示告示。"""
@@ -1051,6 +1059,7 @@ class ProbeCLI:
         @ai.command
         def reload():
             """热重载 state.yaml"""
+            logger.debug("[probe] ai reload 收到 → 全量重载")
             self._main.invoke(self._window._load)
             return "OK"
 

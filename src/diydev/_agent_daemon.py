@@ -376,7 +376,7 @@ class _ThreadedUnixServer(socketserver.ThreadingUnixStreamServer):
 
 
 def run_daemon():
-    """启动 agent daemon。"""
+    """启动 agent daemon（单实例，socket 锁检测）。"""
     global _pool
 
     logging.basicConfig(
@@ -385,12 +385,24 @@ def run_daemon():
         stream=sys.stderr,
     )
 
-    _pool = SessionPool()
-    logger.info("SessionPool 已创建 (Hermes AIAgent: %s)", _pool._AIAgent.__name__)
+    # ── Socket 锁检查：连接成功说明有活实例 ──
+    import socket as _sock
+    try:
+        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect(str(_SOCKET_PATH))
+        s.close()
+        print(f"错误: 已有运行中的 agentd (socket: {_SOCKET_PATH})", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, _sock.timeout):
+        pass  # 连不上 → 残留或不存在
 
-    # 清理旧的 socket 文件
+    # ── 清理残留 socket ──
     if _SOCKET_PATH.exists():
         _SOCKET_PATH.unlink()
+
+    _pool = SessionPool()
+    logger.info("SessionPool 已创建 (Hermes AIAgent: %s)", _pool._AIAgent.__name__)
 
     server = _ThreadedUnixServer(str(_SOCKET_PATH), AgentDaemonHandler)
     logger.info("agentd 监听 %s", _SOCKET_PATH)

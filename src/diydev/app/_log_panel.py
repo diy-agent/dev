@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import logging
 
+import re
+from collections import Counter
+
 from PySide6.QtCore import Qt  # type: ignore[import-untyped]
 from PySide6.QtGui import QFont, QTextCursor  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
@@ -31,16 +34,29 @@ _LOG_LEVELS = [
     ("DEBUG", 10),
 ]
 
+_SOURCE_ALL = "(所有来源)"
+
 _CLASSIC = QFont("Menlo", 11)
+
+# 从消息中提取 [source] 前缀
+_RE_SOURCE = re.compile(r"^\[(\w+)\]")
+
+
+def _extract_source(message: str) -> str:
+    m = _RE_SOURCE.match(message)
+    return m.group(1) if m else ""
 
 
 class LogPanel(QWidget):
-    """日志输出视图，实时显示 app 日志，可过滤级别。"""
+    """日志输出视图，实时显示 app 日志，可过滤级别和来源。"""
 
     MAX_LINES = 5000
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self._line_count = 0
+        self._seen_sources: Counter[str] = Counter()
 
         # ── 控件 ──
         self._text = QPlainTextEdit()
@@ -56,11 +72,16 @@ class LogPanel(QWidget):
             }
         """)
 
-        # 过滤
-        self._filter = QComboBox()
+        # 级别过滤
+        self._level_filter = QComboBox()
         for label, lvl in _LOG_LEVELS:
-            self._filter.addItem(label, lvl)
-        self._filter.currentIndexChanged.connect(self._apply_filter)
+            self._level_filter.addItem(label, lvl)
+        self._level_filter.currentIndexChanged.connect(self._apply_filter)
+
+        # 来源过滤
+        self._source_filter = QComboBox()
+        self._source_filter.addItem("(所有来源)", _SOURCE_ALL)
+        self._source_filter.currentIndexChanged.connect(self._apply_filter)
 
         # 自动滚
         self._auto_scroll = QCheckBox("自动滚动")
@@ -68,12 +89,13 @@ class LogPanel(QWidget):
 
         # 清空
         clear_btn = QPushButton("清空")
-        clear_btn.clicked.connect(self._text.clear)
+        clear_btn.clicked.connect(self._clear)
 
         # ── Toolbar ──
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(4, 2, 4, 2)
-        toolbar.addWidget(self._filter)
+        toolbar.addWidget(self._level_filter)
+        toolbar.addWidget(self._source_filter)
         toolbar.addWidget(self._auto_scroll)
         toolbar.addStretch()
         toolbar.addWidget(clear_btn)
@@ -94,8 +116,21 @@ class LogPanel(QWidget):
 
     def _on_record(self, _name: str, levelno: int, message: str) -> None:
         """从 QtLogHandler 接收日志记录（跨线程安全）。"""
-        min_level = self._filter.currentData()
+        # 级别过滤
+        min_level = self._level_filter.currentData()
         if min_level and levelno < min_level:
+            return
+
+        # 来源过滤（首次出现的来源自动加入下拉）
+        source = _extract_source(message)
+        if source and source not in self._seen_sources:
+            self._seen_sources[source] = 0
+            self._source_filter.addItem(source, source)
+        if source:
+            self._seen_sources[source] += 1
+
+        filter_source = self._source_filter.currentData()
+        if filter_source != _SOURCE_ALL and source != filter_source:
             return
 
         color = _level_color(levelno)
@@ -108,8 +143,32 @@ class LogPanel(QWidget):
             self._text.setTextCursor(cursor)
 
     def _apply_filter(self) -> None:
-        min_level = self._filter.currentData()
-        logger.debug("过滤切换至 level=%s", min_level)
+        min_level = self._level_filter.currentData()
+        filter_source = self._source_filter.currentData()
+        logger.debug("[panel] 过滤切换: level=%s source=%s",
+                     min_level or "ALL", filter_source)
+
+        # 重绘 — 重新从缓存加载所有匹配的记录
+        qt_handler = get_qt_handler()
+        if not qt_handler:
+            return
+        self._text.clear()
+        for entry in qt_handler._buffer:
+            _name, levelno, msg = entry
+            if min_level and levelno < min_level:
+                continue
+            src = _extract_source(msg)
+            if filter_source != _SOURCE_ALL and src != filter_source:
+                continue
+            color = _level_color(levelno)
+            html = f'<pre style="color:{color};margin:0;font-family:Menlo;font-size:11px;">{_esc_html(msg)}</pre>'
+            self._text.appendHtml(html)
+        logger.debug("[panel] 重绘完成, 显示 %d 条", self._text.blockCount())
+
+    def _clear(self) -> None:
+        self._text.clear()
+        self._seen_sources.clear()
+        logger.debug("[panel] 日志已清空")
 
     def append_log(self, message: str) -> None:
         """手动追加一条日志（供外部直接调用）。"""

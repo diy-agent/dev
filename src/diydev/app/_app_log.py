@@ -24,16 +24,27 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal  # type: ignore[import-untyped]
 
-__all__ = ["setup_app_logger", "logger", "QtLogHandler"]
+__all__ = ["setup_app_logger", "logger", "QtLogHandler", "get_logger"]
 
 # 模块级 logger — logging.getLogger() 在 setup_app_logger 调用前返回安全空 logger
 logger: logging.Logger = logging.getLogger("diy.app")
 
-# 所有 handler 共享的格式（含时间戳，三路一致）
+# 所有 handler 共享的格式（含时间戳、logger 名，三路一致）
 _SHARED_FMT = logging.Formatter(
-    "%(asctime)s [%(levelname)-5s] %(message)s",
+    "%(asctime)s [%(levelname)-5s] [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
 )
+
+
+def get_logger(name: str) -> logging.Logger:
+    """创建 diy.app 下的子 logger。
+
+    用法:
+        logger = get_logger("main")    → diy.app.main
+        logger = get_logger("probe")   → diy.app.probe
+        logger.watcher()/info()/debug() 同标准 logging
+    """
+    return logging.getLogger(f"diy.app.{name}")
 
 
 class QtLogHandler(logging.Handler):
