@@ -377,6 +377,41 @@ def delete_task(uri: str) -> None:
         shutil.rmtree(d)
 
 
+def _archive_root() -> Path:
+    """~/.diy/archive/data/（和 state.yaml 同级）"""
+    return _state_path().parent / "archive" / "data"
+
+
+def archive_task(uri: str) -> Path:
+    """归档任务：从 ~/.diy/d/<uri>/ 移到 ~/.diy/archive/data/<uri>/。
+
+    保留完整目录结构和 AGENTS.md（含 body）。
+    归档目录名带日期-时间后缀如 57.20260618-074801。
+    同秒碰撞时递增时间保证目录名不重复。
+    返回归档后的路径。
+    """
+    src = _uri_to_path(uri).parent
+    if not src.exists():
+        raise FileNotFoundError(f"任务 {uri} 不存在")
+
+    dst_base = _archive_root() / uri
+    now = datetime.now(timezone.utc)
+
+    # 尝试 base.20260618-074801，同秒碰撞则递增
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    counter = 0
+    while True:
+        suffix = f".{stamp}" if counter == 0 else f".{stamp}.{counter}"
+        dst = dst_base.with_name(f"{dst_base.name}{suffix}")
+        if not dst.exists():
+            break
+        counter += 1
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return dst
+
+
 def list_tasks() -> dict[str, dict[str, Any]]:
     """列出所有任务。递归扫描 ~/.diy/d/ 下所有目录。"""
     root = _data_root()

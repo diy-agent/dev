@@ -12,7 +12,8 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Slot, Signal  # type: ignore[import-untyped]
-from PySide6.QtGui import QAction, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
+from PySide6.QtGui import QAction, QFont, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
+from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QAbstractItemView,
     QApplication,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -51,44 +53,6 @@ ROLE_TASK_URI = Qt.ItemDataRole.UserRole + 1
 ROLE_KIND = Qt.ItemDataRole.UserRole + 2
 ROLE_STATE = Qt.ItemDataRole.UserRole + 3
 ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
-
-# ═══════════════════════════════════════════════════════
-# 详情面板样式
-# ═══════════════════════════════════════════════════════
-
-_STYLE = """<style>
-  .card { font-family: -apple-system, "Segoe UI", sans-serif; padding: 12px; }
-  .placeholder { font-family: -apple-system, "Segoe UI", sans-serif; color: #a6adc8; font-size: 14px; padding: 20px; }
-  .header { font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 8px; }
-  .title { font-size: 18px; font-weight: bold; color: #ffffff; margin-bottom: 10px; }
-  .detail { font-size: 13px; color: #bac2de; line-height: 1.6; margin: 8px 0 12px 0; white-space: pre-wrap; }
-  .meta { margin: 8px 0 4px 0; }
-  .tag { display: inline-block; background: #45475a; color: #cdd6f4; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
-  .section-title { font-size: 13px; font-weight: bold; color: #a6adc8; margin: 4px 0; }
-  .agent { font-size: 12px; color: #bac2de; margin: 2px 0; }
-  .agent code { background: #1e1e2e; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }
-  .hint { font-size: 12px; color: #585b70; margin-top: 4px; }
-  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #1e1e2e; }
-  hr { border: none; border-top: 1px solid #45475a; margin: 12px 0; }
-  /* markdown body 渲染 */
-  .md-body { font-size: 13px; color: #bac2de; line-height: 1.7; }
-  .md-body h1 { font-size: 18px; color: #ffffff; margin: 16px 0 8px 0; border-bottom: 1px solid #45475a; padding-bottom: 4px; }
-  .md-body h2 { font-size: 16px; color: #cdd6f4; margin: 14px 0 6px 0; }
-  .md-body h3 { font-size: 14px; color: #a6adc8; margin: 12px 0 4px 0; }
-  .md-body p { margin: 6px 0; }
-  .md-body code { background: #1e1e2e; color: #f5c2e7; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-  .md-body pre { background: #181825; padding: 10px 14px; border-radius: 6px; overflow-x: auto; }
-  .md-body pre code { background: none; padding: 0; }
-  .md-body table { border-collapse: collapse; margin: 8px 0; width: 100%; }
-  .md-body th { background: #313244; color: #cdd6f4; padding: 6px 10px; text-align: left; font-weight: 600; }
-  .md-body td { padding: 5px 10px; border-bottom: 1px solid #313244; }
-  .md-body blockquote { border-left: 3px solid #45475a; padding-left: 12px; color: #a6adc8; margin: 8px 0; }
-  .md-body ul, .md-body ol { padding-left: 20px; margin: 6px 0; }
-  .md-body li { margin: 2px 0; }
-  .md-body a { color: #89b4fa; }
-  .md-body strong { color: #cdd6f4; }
-  .md-body em { color: #a6e3a1; }
-</style>"""
 
 
 # ═══════════════════════════════════════════════════════
@@ -350,6 +314,26 @@ class SteerPanel(QWidget):
 
 
 # ═══════════════════════════════════════════════════════
+# DetailView — HTML 元数据 + WebEngine body
+# ═══════════════════════════════════════════════════════
+
+class DetailView(QWidget):
+    """详情面板：单 QWebEngineView，全部 HTML 统一渲染。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.view = QWebEngineView()
+        layout.addWidget(self.view)
+
+    def set_html(self, html: str) -> None:
+        """设全量 HTML（含 header + body + CSS）。"""
+        self.view.setHtml(html)
+
+
+# ═══════════════════════════════════════════════════════
 # 主窗口
 # ═══════════════════════════════════════════════════════
 
@@ -390,9 +374,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._primary_sidebar)
 
         # ── 详情面板（中央 Editor） ──
-        self._detail = QTextBrowser()
-        self._detail.setOpenExternalLinks(True)
-        self._detail.setPlaceholderText("选择任务查看详情")
+        self._detail = DetailView()
         self.setCentralWidget(self._detail)
 
         # ── Steer Panel（副侧边栏） ──
@@ -630,7 +612,7 @@ class MainWindow(QMainWindow):
             '建议：关闭本窗口 → kill 残留进程 → 重新启动'
             '</div></div>'
         )
-        self._detail.setHtml(html)
+        self._detail.set_html(html)
         self.setCentralWidget(self._detail)
         self.setWindowTitle("⚠️ 应用故障")
 
@@ -713,15 +695,25 @@ class MainWindow(QMainWindow):
 
         if kind == "subject":
             display = index.data(Qt.ItemDataRole.DisplayRole) or ""
-            html = f"""<div class="card">
-  <div class="header">📁 Subject</div>
-  <div class="title">{_esc_html(display)}</div>
-</div>"""
-            self._detail.setHtml(_STYLE + html)
+            html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ background: #1e1e2e; color: #cdd6f4; font-family: -apple-system, sans-serif; padding: 12px; }}
+  .header {{ font-size: 14px; font-weight: bold; color: #cdd6f4; }}
+  .title {{ font-size: 18px; font-weight: bold; color: #fff; margin-top: 8px; }}
+</style></head><body>
+<div class="header">📁 Subject</div>
+<div class="title">{_esc_html(display)}</div>
+</body></html>"""
+            self._detail.set_html(html)
             return
 
         if kind != "task" or not task_uri:
-            self._detail.setHtml(_STYLE + """<div class="placeholder">选择任务查看详情</div>""")
+            self._detail.set_html(f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ background: #1e1e2e; color: #a6adc8; font-family: -apple-system, sans-serif; font-size: 14px; padding: 20px; }}
+</style></head><body>
+<div>选择任务查看详情</div>
+</body></html>""")
             return
 
         node = self._find_node(task_uri)
@@ -742,12 +734,13 @@ class MainWindow(QMainWindow):
             detail_html = _esc_html(node.detail).replace("\n", "<br>")
             parts.append(f"""<div class="detail">{detail_html}</div>""")
 
-        # Body（markdown 设计文档）— 用 markdown-it-py 渲染为 HTML
+        # Body（markdown 文档）— 渲染后嵌入同一 HTML
+        full_body_html: str | None = None
         if node and node.body:
             from markdown_it import MarkdownIt
-            md = MarkdownIt("commonmark", {"breaks": True, "html": True})
-            body_html = md.render(node.body)
-            parts.append(f"""<hr><div class="section-title">📄 文档</div><div class="md-body">{body_html}</div>""")
+            md = MarkdownIt("gfm-like", {"breaks": True, "html": True})
+            rendered = md.render(node.body)
+            full_body_html = f"""<hr><div class="section-title">📄 文档</div><div class="md-body">{rendered}</div>"""
 
         # Metadata row
         meta: list[str] = []
@@ -771,7 +764,49 @@ class MainWindow(QMainWindow):
         else:
             parts.append("""<div class="hint">无运行中的 agent</div>""")
 
-        self._detail.setHtml(_STYLE + "".join(parts))
+        # —— 合成完整 HTML ——
+        header_html = "".join(parts)
+        if full_body_html:
+            header_html += full_body_html
+
+        html_doc = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ background: #1e1e2e; color: #cdd6f4; font-family: -apple-system, sans-serif; font-size: 14px; padding: 12px; line-height: 1.7; }}
+  .card {{ font-family: -apple-system, "Segoe UI", sans-serif; padding: 12px; }}
+  .placeholder {{ font-family: -apple-system, "Segoe UI", sans-serif; color: #a6adc8; font-size: 14px; padding: 20px; }}
+  .header {{ font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 8px; }}
+  .title {{ font-size: 18px; font-weight: bold; color: #ffffff; margin-bottom: 10px; }}
+  .detail {{ font-size: 13px; color: #bac2de; line-height: 1.6; margin: 8px 0 12px 0; white-space: pre-wrap; }}
+  .meta {{ margin: 8px 0 4px 0; }}
+  .tag {{ display: inline-block; background: #45475a; color: #cdd6f4; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }}
+  .section-title {{ font-size: 13px; font-weight: bold; color: #a6adc8; margin: 4px 0; }}
+  .agent {{ font-size: 12px; color: #bac2de; margin: 2px 0; }}
+  .agent code {{ background: #1e1e2e; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }}
+  .hint {{ font-size: 12px; color: #585b70; margin-top: 4px; }}
+  .badge {{ display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #1e1e2e; }}
+  hr {{ border: none; border-top: 1px solid #45475a; margin: 12px 0; }}
+  .md-body {{ font-size: 13px; color: #bac2de; line-height: 1.7; }}
+  .md-body h1 {{ color: #fff; font-size: 20px; border-bottom: 1px solid #45475a; padding-bottom: 4px; }}
+  .md-body h2 {{ color: #cdd6f4; font-size: 17px; }} .md-body h3 {{ color: #a6adc8; font-size: 15px; }}
+  .md-body table {{ border-collapse: collapse; margin: 12px 0; width: 100%; }}
+  .md-body th {{ background: #313244; color: #cdd6f4; padding: 8px 12px; text-align: left; font-weight: 600; border: 1px solid #45475a; }}
+  .md-body td {{ padding: 6px 12px; border: 1px solid #313244; }}
+  .md-body tr:nth-child(even) {{ background: #181825; }}
+  .md-body code {{ background: #1e1e2e; color: #f5c2e7; padding: 1px 5px; border-radius: 3px; }}
+  .md-body pre {{ background: #181825; padding: 10px 14px; border-radius: 6px; overflow-x: auto; }}
+  .md-body blockquote {{ border-left: 3px solid #45475a; padding-left: 12px; color: #a6adc8; }}
+  .md-body a {{ color: #89b4fa; }}
+  .md-body strong {{ color: #cdd6f4; }} .md-body em {{ color: #a6e3a1; }}
+</style></head><body>{header_html}<script>
+  document.addEventListener('click', function(e) {{
+    var t = e.target; while (t && t.tagName !== 'A') t = t.parentElement;
+    if (t && t.href && t.getAttribute('target') === '_blank') {{
+      e.preventDefault(); window.location.href = t.href;
+    }}
+  }});
+</script></body></html>"""
+
+        self._detail.set_html(html_doc)
 
     @guarded("tree.double")
     def _on_double_click(self, index):
@@ -924,7 +959,17 @@ class MainWindow(QMainWindow):
         for n in self._iter_nodes(self._nodes):
             for a in n.agents:
                 lines.append(f"{n.uri} {a.agent_id} pid={a.pid} state={a.state}")
-        return "\n".join(lines) if lines else "(无 agent)"
+        if lines:
+            return "\n".join(lines)
+        # 兜底：直接从 ~/.diy/agents/ 读
+        from diydev.app.agent_bridge import list_agents
+        all_agents = list_agents()
+        if all_agents:
+            lines = []
+            for a in all_agents:
+                lines.append(f"{a.task_id} agentd pid={a.pid} state={a.state}")
+            return "\n".join(lines)
+        return "(无 agent)"
 
     def closeEvent(self, event):
         self._probe.stop()
@@ -1016,7 +1061,7 @@ class ProbeCLI:
 
         @ai.command
         def doctor():
-            """健康自检 — 列出所有检查项结果"""
+            """分层健康自检 — app 状态 / socket 健康 / 多实例 / state.yaml"""
             from diydev.app._doctor import format_report, run_check
             probe = self._window._probe
             sock_dev = getattr(probe, '_sock_dev', None)

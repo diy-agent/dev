@@ -23,7 +23,7 @@ from cyclopts import App, Parameter
 
 from ._dai_scan import find_spaces, find_workspace_root
 from ._log import VerboseFlag, set_verbosity
-from ._state import create_task, delete_task, get_task, list_tasks, load_state, save_state, update_task_field
+from ._state import archive_task, create_task, delete_task, get_task, list_tasks, load_state, save_state, update_task_field
 
 app = App(
     name="dai",
@@ -683,6 +683,203 @@ def task_link(
         yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+# ════════════════════════════════════════════════════════════════
+# dai task sync — 同步外部任务
+# ════════════════════════════════════════════════════════════════
+
+
+_GH_STATE_MAP = {
+    "OPEN": "active",
+    "CLOSED": "done",
+    "MERGED": "done",
+}
+
+
+def _gh_uri_parse(source_uri: str) -> tuple[str, str, str] | None:
+    """解析 GitHub URI，返回 (owner, repo, issue_number)。
+
+    github.com/owner/repo/issues/N
+    """
+    m = re.match(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", source_uri)
+    if not m:
+        return None
+    return m.group(1), m.group(2), m.group(3)
+
+
+def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
+    """同步单个 GitHub issue 到本地。成功返回更新后的 task dict，失败返回错误字符串。"""
+    import subprocess
+
+    src = task.get("source", {})
+    source_uri = src.get("uri", uri)
+    parsed = _gh_uri_parse(source_uri)
+    if not parsed:
+        return f"无法解析 GitHub URI: {source_uri}"
+
+    owner, repo, number = parsed
+    repo_full = f"{owner}/{repo}"
+
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "view", number, "--repo", repo_full,
+             "--json", "title,body,state,updatedAt"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError:
+        return "gh CLI 未安装，请先安装 GitHub CLI (brew install gh)"
+    except subprocess.TimeoutExpired:
+        return f"请求 {repo_full}#{number} 超时"
+
+    if result.returncode != 0:
+        err = result.stderr.strip()
+        if "issue not found" in err.lower() or "not found" in err.lower():
+            # GitHub issue 已删除 → 归档本地数据
+            try:
+                archive_path = archive_task(uri)
+                return f"GitHub issue 已不存在，已归档至 {archive_path}"
+            except FileNotFoundError:
+                return f"GitHub issue 已不存在（本地数据同步前已移除）"
+        return f"gh 调用失败: {err}"
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return f"gh 返回非 JSON: {result.stdout[:200]}"
+
+    title = data.get("title", task.get("title", ""))
+    body = data.get("body", "") or ""
+    gh_state = _GH_STATE_MAP.get(data.get("state", ""), "active")
+
+    return update_task_field(
+        uri,
+        title=title,
+        state=gh_state,
+        body=body,
+    )
+
+
+@task_app.command(name="sync")
+def task_sync(
+    uri: Annotated[str | None, Parameter(help="任务 URI（如 github.com/owner/repo/issues/58），--all 时省略")] = None,
+    all: Annotated[
+        bool, Parameter(name=["--all", "-a"], help="同步所有外部任务")
+    ] = False,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """同步外部任务内容到本地。
+
+    从远端拉取最新 title / state / body 并更新本地 AGENTS.md。
+    目前支持：GitHub issue（依赖 gh CLI）。
+
+    用法:
+      dai task sync <uri>          同步单个任务
+      dai task sync --all          同步所有聚焦任务及其子树
+    """
+    if not uri and not all:
+        print("错误: 请指定任务 URI 或使用 --all 同步全部", file=sys.stderr)
+        sys.exit(1)
+
+    if all:
+        tasks = list_tasks()
+        results: dict[str, str | dict[str, Any]] = {}
+        total = 0
+        for t_uri, t_data in sorted(tasks.items()):
+            src = t_data.get("source", {})
+            source_type = src.get("type", "")
+            if source_type not in ("github_issue",):
+                continue
+            total += 1
+            print(f"  ⟳ {_short_uri(t_uri)} {t_data.get('title', '')[:50]}...")
+            r = _sync_github_issue(t_uri, t_data)
+            if isinstance(r, str):
+                print(f"    ✗ {r}")
+                results[t_uri] = f"失败: {r}"
+            else:
+                results[t_uri] = r
+
+        _notify_app_reload()
+
+        ok = sum(1 for v in results.values() if isinstance(v, dict))
+        fail = sum(1 for v in results.values() if isinstance(v, str))
+        output = {
+            "status": "success",
+            "data": {
+                "synced": ok,
+                "failed": fail,
+                "results": results,
+            },
+        }
+        if json_output:
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+        else:
+            print(f"\n✅ 同步完成: {ok} 内容更新, {fail} 失败，共 {total} 个外部任务")
+        if fail:
+            sys.exit(1)
+        return
+
+    # 同步单个
+    task = get_task(uri)
+    if task is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    src = task.get("source", {})
+    source_type = src.get("type", "")
+
+    if source_type == "github_issue":
+        result = _sync_github_issue(uri, task)
+    else:
+        print(f"错误: {uri} 的类型 {source_type} 暂不支持同步", file=sys.stderr)
+        sys.exit(1)
+
+    if isinstance(result, str):
+        print(f"错误: {result}", file=sys.stderr)
+        sys.exit(1)
+
+    _notify_app_reload()
+    output = {"status": "success", "data": result}
+    if json_output:
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(output, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="archive")
+def task_archive(
+    uri: Annotated[str, Parameter(help="任务 URI")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """归档任务：从 ~/.diy/d/ 移到 ~/.diy/archive/data/。
+
+    保留完整 AGENTS.md（含 body）。归档目录名带日期时间后缀。
+    归档后从任务树中移除。
+    """
+    task = get_task(uri)
+    if task is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        archive_path = archive_task(uri)
+    except FileNotFoundError:
+        print(f"错误: 任务文件不存在: {uri}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as exc:
+        print(f"错误: 归档失败: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    _notify_app_reload()
+    result = {"status": "success", "data": {"uri": uri, "archive_path": str(archive_path)}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
 @task_app.command(name="list")
 def task_list(
     json_output: Annotated[
@@ -828,6 +1025,230 @@ app.command(task_app)
 
 
 # ════════════════════════════════════════════════════════════════
+# dai agent — 子 agent 管理
+# ════════════════════════════════════════════════════════════════
+
+_AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
+
+
+def _agent_send(cmd: dict) -> dict:
+    """向 agentd socket 发送 JSON 命令，返回响应。"""
+    import socket as sock
+    s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+    s.settimeout(10)
+    s.connect(_AGENT_SOCKET)
+    s.sendall(json.dumps(cmd).encode("utf-8"))
+    s.shutdown(sock.SHUT_WR)
+    buf = b""
+    while True:
+        data = s.recv(4096)
+        if not data:
+            break
+        buf += data
+    s.close()
+    return json.loads(buf.decode("utf-8"))
+
+
+agent_app = App(name="agent", help="子 agent 管理 — spawn/kill/send/log")
+
+
+@agent_app.command
+def agent_spawn(
+    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
+    message: Annotated[str, Parameter(name="--message", help="初始消息")],
+    model: Annotated[str | None, Parameter(name="--model", help="模型名")] = None,
+    toolsets: Annotated[str | None, Parameter(name="--toolsets", help="工具集（逗号分隔）")] = None,
+    reasoning_budget: Annotated[
+        int | None, Parameter(name="--reasoning", help="推理预算 token 数")
+    ] = None,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = True,
+):
+    """为一个 task 创建并启动 agent。"""
+    config: dict[str, object] = {}
+    if model:
+        config["model"] = model
+    if toolsets:
+        config["enabled_toolsets"] = [t.strip() for t in toolsets.split(",")]
+    if reasoning_budget is not None:
+        config["reasoning_budget"] = reasoning_budget
+
+    cmd = {"action": "spawn", "task_uri": task_uri, "message": message, "config": config}
+    resp = _agent_send(cmd)
+    if json_output:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        data = resp.get("data", {})
+        print(f"agent {task_uri}: {data.get('state', '?')}")
+
+
+@agent_app.command
+def agent_send(
+    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
+    message: Annotated[str, Parameter(name="--message", help="消息内容")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = True,
+):
+    """向 agent 发送消息（运行时=steer，空闲时=新对话）。"""
+    cmd = {"action": "send", "task_uri": task_uri, "message": message}
+    resp = _agent_send(cmd)
+    if json_output:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        data = resp.get("data", {})
+        print(f"agent {task_uri}: {data.get('state', '?')}")
+
+
+@agent_app.command
+def agent_kill(
+    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = True,
+):
+    """终止一个 agent。"""
+    cmd = {"action": "kill", "task_uri": task_uri}
+    resp = _agent_send(cmd)
+    if json_output:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        print(f"agent {task_uri}: killed")
+
+
+@agent_app.command
+def agent_list(
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = True,
+):
+    """列出所有活跃 agent。"""
+    cmd = {"action": "list"}
+    resp = _agent_send(cmd)
+    if json_output:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        data = resp.get("data", [])
+        if not data:
+            print("无活跃 agent")
+            return
+        for a in data:
+            print(f"  {a['task_uri']:30s} {a['state']:10s} {a['model']}")
+
+
+@agent_app.command
+def agent_show(
+    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = True,
+):
+    """查看 agent 状态和输出。"""
+    cmd = {"action": "show", "task_uri": task_uri}
+    resp = _agent_send(cmd)
+    if json_output:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        data = resp.get("data")
+        if not data:
+            print(f"agent {task_uri} 不存在")
+            return
+        print(f"状态: {data.get('state')}")
+        print(f"模型: {data.get('model')}")
+        print(f"启动: {data.get('started_at')}")
+        print(f"最后消息: {data.get('last_message', '')[:100]}")
+        tail = data.get("output_tail", [])
+        if tail:
+            print("--- 输出 ---")
+            for line in tail:
+                print(line)
+
+
+@agent_app.command
+def agent_daemon(
+    action: Annotated[str, Parameter(name="--action", help="start | stop | status")] = "start",
+):
+    """管理 agentd 守护进程。"""
+    import subprocess
+    import time as _time
+
+    if action == "status":
+        if os.path.exists(_AGENT_SOCKET):
+            try:
+                resp = _agent_send({"action": "list"})
+                count = len(resp.get("data", []))
+                print(f"agentd 运行中，{count} 个 agent")
+            except Exception:
+                print("agentd socket 存在但无响应（可能已崩溃）")
+        else:
+            print("agentd 未运行")
+        return
+
+    if action == "stop":
+        if os.path.exists(_AGENT_SOCKET):
+            try:
+                _agent_send({"action": "shutdown"})
+                print("agentd 已关闭")
+            except Exception:
+                pass
+            _AGENT_SOCKET and os.path.exists(_AGENT_SOCKET) and os.unlink(_AGENT_SOCKET)
+        else:
+            print("agentd 未运行")
+        return
+
+    if action == "start":
+        if os.path.exists(_AGENT_SOCKET):
+            # 尝试连接，如果通就跳过
+            try:
+                _agent_send({"action": "list"})
+                print("agentd 已在运行")
+                return
+            except Exception:
+                # socket 残留 → 清理
+                os.unlink(_AGENT_SOCKET)
+
+        # 找到 Hermes 的 Python
+        hermes_python = os.path.expanduser(
+            "~/.hermes/hermes-agent/venv/bin/python3"
+        )
+        if not os.path.exists(hermes_python):
+            print("错误: 找不到 Hermes Python", file=sys.stderr)
+            sys.exit(1)
+
+        print("⏳ 正在启动 agentd...", file=sys.stderr)
+
+        # 设置 PYTHONPATH 指向 _diy 的 src/，让 daemon 能找到 diydev 包
+        srcdir = os.path.dirname(os.path.abspath(__file__))
+        src_parent = os.path.dirname(srcdir)  # src/
+        env = os.environ.copy()
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{src_parent}:{existing}" if existing else src_parent
+
+        proc = subprocess.Popen(
+            [hermes_python, "-m", "diydev._agent_daemon"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+
+        # 等待 socket 就绪
+        deadline = _time.time() + 10
+        while _time.time() < deadline:
+            if os.path.exists(_AGENT_SOCKET):
+                _time.sleep(0.3)
+                print(f"agentd 已启动 (pid={proc.pid})")
+                return
+            _time.sleep(0.3)
+
+        print("错误: agentd 启动超时", file=sys.stderr)
+        sys.exit(1)
+
+
+app.command(agent_app)
+
+
+# ════════════════════════════════════════════════════════════════
 # dai app — PySide6 管控台
 # ════════════════════════════════════════════════════════════════
 
@@ -941,6 +1362,17 @@ def _parse_value(raw: str) -> object:
     return raw
 
 
+def _short_uri(uri: str) -> str:
+    """URI 短显示：local/task/58 → local#58, github.com/.../58 → github#58"""
+    if uri.startswith("local/"):
+        num = uri.rstrip("/").rsplit("/", 1)[-1]
+        return f"local#{num}"
+    if "github.com" in uri:
+        num = uri.rstrip("/").rsplit("/", 1)[-1]
+        return f"github#{num}"
+    return uri
+
+
 # ════════════════════════════════════════════════════════════════
 # 入口
 # ════════════════════════════════════════════════════════════════
@@ -991,6 +1423,11 @@ def main():
     # dai doctor → 自检
     if len(sys.argv) > 1 and sys.argv[1] == "doctor":
         dai_doctor()
+        return
+
+    # dai agent daemon → 单独处理（不走 cyclopts，避免 import Hermes 的路径问题）
+    if len(sys.argv) > 1 and sys.argv[1] == "agent" and len(sys.argv) > 2 and sys.argv[2] == "daemon":
+        agent_daemon(sys.argv[3] if len(sys.argv) > 3 else "start")
         return
 
     try:
