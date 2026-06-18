@@ -28,10 +28,35 @@ diy 生态的**开发工具元项目**。
 ## GUI
 
 - `sha.sh app` — 启动 PySide6 桌面 app（`python -m diydev.app.main`）
-|- 源码：`src/diydev/app/{main,task_tree,agent_bridge,_app_log,_log_panel,_activity_bar,_doctor}.py`
+| - 源码：`src/diydev/app/{main,task_tree,agent_bridge,_app_log,_log_panel,_activity_bar,_doctor}.py`
 - Unix socket 探针：`~/.diy/app.sock`
 - 命令路由：`ai.*` (agent) / `human.*` (人类)
 - `dai app <cmd>` 自动加 `ai` 前缀，`dev` 自动加 `human` 前缀
+
+## 日志规范
+
+所有日志统一标准，三路输出格式一致：
+
+格式:  `HH:MM:SS [LEVEL] [logger.name] [category] message`
+
+来源分类（消息前缀 `[category]`）:
+  [watcher] — 文件系统监控触发刷新（INFO: 数据变化）
+  [timer]   — 定时器触发刷新          (DEBUG)
+  [probe]   — Socket 命令触发刷新     (INFO: ai reload)
+  [health]  — 健康自检                (DEBUG: 通过 / WARN: 发现问题)
+  [main]    — 全量重载完成             (DEBUG)
+  [panel]   — LogPanel 操作            (DEBUG)
+
+三路输出:
+  1. ~/.diy/app.log（RotatingFileHandler 5MB×3）
+  2. stderr（终端模式）
+  3. LogPanel（GUI 内，可过滤级别 + 来源）
+
+级别约定:
+  INFO  — 数据发生实质性变化（文件变化、重载触发）
+  DEBUG — 无副作用的周期性操作（定时器、自检通过）
+
+新增日志时在消息开头加对应 [category] 前缀。如果新增一个来源类别，更新此处列表。
 
 ## 测试体系
 
