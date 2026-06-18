@@ -549,16 +549,16 @@ class MainWindow(QMainWindow):
             return
         tasks_dir = str(Path.home() / ".diy" / "d")
         if _path == tasks_dir:
-            logger.debug("[watcher] ~/.diy/d/ 目录条目变化 → 全量重载")
+            logger.info("[watcher] ~/.diy/d/ 目录条目变化 → 全量重载")
             self._load()
         else:
-            logger.debug("[watcher] agents/ 目录变化 → 刷新 agent 状态")
+            logger.info("[watcher] agents/ 目录变化 → 刷新 agent 状态")
             self._refresh_agents()
 
     @guarded("watcher.file")
     def _on_file_changed(self, path: str) -> None:
         if path.endswith("state.yaml"):
-            logger.debug("[watcher] state.yaml 变化 → 全量重载")
+            logger.info("[watcher] state.yaml 变化 → 全量重载")
             # macOS: yaml 写入可能换 inode，重新 watch
             self._watcher.removePath(path)
             self._watcher.addPath(path)
@@ -1059,7 +1059,7 @@ class ProbeCLI:
         @ai.command
         def reload():
             """热重载 state.yaml"""
-            logger.debug("[probe] ai reload 收到 → 全量重载")
+            logger.info("[probe] ai reload 收到 → 全量重载")
             self._main.invoke(self._window._load)
             return "OK"
 
