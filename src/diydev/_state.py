@@ -8,6 +8,8 @@
 
 任务数据存储在 ~/.diy/d/<uri-path>/AGENTS.md（YAML frontmatter + markdown body）。
 每个任务对应一个 URI，URI 也是文件系统路径和身份标识。
+
+归档任务移入 ~/.diy/archive/data/<uri-path>.YYYYMMDD-HHMMSS/ 保留完整数据。
 """
 
 from __future__ import annotations

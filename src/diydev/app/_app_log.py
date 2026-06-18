@@ -1,18 +1,27 @@
 """diy 管控台日志基础设施。
 
-三路输出:
+三路输出，格式统一为 %(name)s + [category] 前缀:
   1. 文件 → ~/.diy/app.log（RotatingFileHandler，5MB×3）
   2. stderr → 终端（如有）
-  3. Qt Signal → GUI LogPanel（跨线程安全）
+  3. Qt Signal → GUI LogPanel（跨线程安全，可过滤级别 + 来源）
 
 QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
 
+分类前缀约定（消息首词 [xxx]）:
+  [watcher] — 文件系统监控触发刷新
+  [timer]   — 定时器触发刷新
+  [probe]   — Socket 命令触发刷新
+  [health]  — 健康自检
+  [main]    — 全量重载
+  [panel]   — LogPanel 操作
+
 用法:
-  from diydev.app._app_log import setup_app_logger, logger
+  from diydev.app._app_log import setup_app_logger, get_logger, logger
 
   setup_app_logger()
-  logger.info("hello")
-  logger.error("something bad")
+  logger.info("[watcher] 文件变化 → reload")     # 统一 logger
+  sub = get_logger("probe")                       # 子 logger → diy.app.probe
+  sub.debug("socket 连接已建立")
 """
 
 from __future__ import annotations

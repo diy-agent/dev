@@ -48,7 +48,12 @@ def _extract_source(message: str) -> str:
 
 
 class LogPanel(QWidget):
-    """日志输出视图，实时显示 app 日志，可过滤级别和来源。"""
+    """日志输出视图，实时显示 app 日志，可过滤级别和来源。
+
+    消息中的 [category] 前缀自动提取为来源过滤选项。
+    格式示例:
+      18:30:15 [INFO ] [diy.app] [watcher] 文件变化 → 全量重载
+    """
 
     MAX_LINES = 5000
 

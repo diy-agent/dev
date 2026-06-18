@@ -5,6 +5,17 @@
   dai state --json   全量输出 state.yaml（JSON）
   dai tree --sync    注入 AGENTS.md json block
   dai doctor         健康自检（Socket/多实例/state.yaml）
+
+  dai task list              列出所有任务
+  dai task show <uri>        查看任务（含 body）
+  dai task create ...        创建任务
+  dai task link ...          链接外部任务（GitHub issue 等）
+  dai task edit ...          编辑任务
+  dai task sync <uri>       同步单个外部任务内容
+  dai task sync --all        同步所有已 link 的外部任务（内容 + 归档已删除）
+  dai task archive <uri>     归档任务到 ~/.diy/archive/data/
+  dai task delete <uri>      删除本地任务
+  dai task unlink <uri>      解绑外部任务引用
 """
 
 from __future__ import annotations
