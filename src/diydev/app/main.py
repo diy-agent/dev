@@ -574,14 +574,14 @@ class MainWindow(QMainWindow):
         sock_ino = getattr(self._probe, '_sock_ino', None)
         critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
         if critical:
-            logger.warning("[health] 发现 %d 个严重问题, 锁定界面", len(critical))
+            logger.warning("[health] 发现 %d 个严重问题, 退出", len(critical))
             for iss in critical:
                 logger.warning("[health]   [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
-            set_locked(True)
-            self._enter_lockdown(critical)
             self._health_timer.stop()
-        else:
-            logger.debug("[health] 自检通过")
+            # 直接退出，不留错误面板
+            QApplication.instance().quit()
+            return
+        logger.debug("[health] 自检通过")
 
     def _enter_lockdown(self, issues: list[HealthIssue]) -> None:
         """严重故障 → 锁定界面并显示告示。"""
@@ -1247,11 +1247,46 @@ class AgentInfo:
 
 def main():
     import signal
+    import socket
+    import subprocess
 
     # 日志系统必须先初始化（MainWindow.__init__ 中 guarded 方法可能立即触发）
     setup_app_logger()
     logger.info("=" * 50)
     logger.info("diy 管控台启动")
+
+    # ── 连接 agentd（已有则复用，没有则启动） ──
+    hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")
+    _agentd_proc = None
+    agentd_sock = os.path.expanduser("~/.diy/agentd.sock")
+
+    # 先试试能不能连上已存在的 agentd
+    _agentd_alive = False
+    if os.path.exists(agentd_sock):
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(agentd_sock)
+            s.close()
+            _agentd_alive = True
+            logger.info("agentd 已在运行，复用")
+        except OSError:
+            pass  # socket 残留，需要启动新的
+
+    if not _agentd_alive and os.path.exists(hermes_python):
+        srcdir = os.path.dirname(os.path.abspath(__file__))  # diydev/app/
+        src_parent = os.path.dirname(srcdir)  # src/
+        env = os.environ.copy()
+        env["PYTHONPATH"] = src_parent
+        _agentd_proc = subprocess.Popen(
+            [hermes_python, "-m", "diydev._agent_daemon"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        logger.info("agentd 已启动 (pid=%s)", _agentd_proc.pid)
+    elif not _agentd_alive:
+        logger.warning("找不到 Hermes Python，agentd 未启动")
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -1267,8 +1302,18 @@ def main():
         return
 
     window.show()
-    logger.info("窗口已显示")
-    sys.exit(app.exec())
+    ret = app.exec()
+
+    # ── 退出时杀 agentd ──
+    if _agentd_proc and _agentd_proc.poll() is None:
+        _agentd_proc.terminate()
+        try:
+            _agentd_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            _agentd_proc.kill()
+        logger.info("agentd 已停止")
+
+    sys.exit(ret)
 
 
 if __name__ == "__main__":

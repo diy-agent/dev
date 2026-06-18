@@ -35,28 +35,40 @@ diy 生态的**开发工具元项目**。
 
 ## 日志规范
 
-所有日志统一标准，三路输出格式一致：
+格式按用途分离:
 
-格式:  `HH:MM:SS [LEVEL] [logger.name] [category] message`
+- **文件** → `~/.diy/app.log`（JSONL，可 jq/grep 查询）
+- **终端** → stderr（纯文本）
+- **GUI** → LogPanel（纯文本，可过滤级别 + 来源）
 
-来源分类（消息前缀 `[category]`）:
-  [watcher] — 文件系统监控触发刷新（INFO: 数据变化）
-  [timer]   — 定时器触发刷新          (DEBUG)
-  [probe]   — Socket 命令触发刷新     (INFO: ai reload)
-  [health]  — 健康自检                (DEBUG: 通过 / WARN: 发现问题)
-  [main]    — 全量重载完成             (DEBUG)
-  [panel]   — LogPanel 操作            (DEBUG)
+文件端 JSONL 字段:
 
-三路输出:
-  1. ~/.diy/app.log（RotatingFileHandler 5MB×3）
-  2. stderr（终端模式）
-  3. LogPanel（GUI 内，可过滤级别 + 来源）
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `t` | 时间 (HH:MM:SS) | `18:30:15` |
+| `l` | 级别 | `INFO` / `DEBUG` |
+| `n` | logger 名 | `diy.app.watcher` |
+| `c` | 分类前缀 | `watcher` / `timer` / `probe` |
+| `m` | 消息正文 | `文件变化 → 全量重载` |
 
-级别约定:
-  INFO  — 数据发生实质性变化（文件变化、重载触发）
-  DEBUG — 无副作用的周期性操作（定时器、自检通过）
+分类前缀 `[category]`:
 
-新增日志时在消息开头加对应 [category] 前缀。如果新增一个来源类别，更新此处列表。
+| 前缀 | 触发点 | 级别 | 说明 |
+|------|--------|------|------|
+| `[watcher]` | `_on_agent_dir_changed` / `_on_file_changed` | INFO | 文件系统数据变化 |
+| `[probe]` | `ProbeCLI.ai.reload` | INFO | socket 命令触发重载 |
+| `[timer]` | `_refresh_agents` 5s 定时 | DEBUG | 周期性 agent 状态检查 |
+| `[health]` | `_on_health_check` 10s 定时 | DEBUG/WARN | 健康自检 |
+| `[main]` | `_load()` | DEBUG | 全量重载统计 |
+| `[panel]` | LogPanel 过滤/清空 | DEBUG | UI 操作 |
+
+查询示例:
+```bash
+jq 'select(.c == "watcher")' ~/.diy/app.log
+grep '"c":"watcher"' ~/.diy/app.log
+```
+
+新增日志时在消息开头加对应 `[category]` 前缀。新增来源类别时更新此处列表。
 
 ## 测试体系
 

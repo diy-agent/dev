@@ -406,6 +406,31 @@ def run_daemon():
 
     server = _ThreadedUnixServer(str(_SOCKET_PATH), AgentDaemonHandler)
     logger.info("agentd 监听 %s", _SOCKET_PATH)
+
+    # ── 记下 socket 文件身份，用于自检 ──
+    _sock_dev = _sock_ino = None
+    try:
+        st = os.stat(_SOCKET_PATH)
+        _sock_dev, _sock_ino = st.st_dev, st.st_ino
+    except OSError:
+        pass
+
+    # ── 心跳线程：检测 socket 文件是否异常 ──
+    def _health_beat():
+        while True:
+            time.sleep(5)
+            try:
+                st = os.stat(_SOCKET_PATH)
+            except FileNotFoundError:
+                logger.critical("agentd socket 文件被删除，退出")
+                os._exit(1)
+            if (st.st_dev, st.st_ino) != (_sock_dev, _sock_ino):
+                logger.critical("agentd socket 文件被替换，退出")
+                os._exit(1)
+
+    t = threading.Thread(target=_health_beat, daemon=True)
+    t.start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

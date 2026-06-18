@@ -1,9 +1,9 @@
 """diy 管控台日志基础设施。
 
-三路输出，格式统一为 %(name)s + [category] 前缀:
-  1. 文件 → ~/.diy/app.log（RotatingFileHandler，5MB×3）
-  2. stderr → 终端（如有）
-  3. Qt Signal → GUI LogPanel（跨线程安全，可过滤级别 + 来源）
+三路输出，格式按用途分离:
+  1. 文件 → ~/.diy/app.log（JSONL，RotatingFileHandler 5MB×3，可 jq/grep 查询）
+  2. stderr → 终端（纯文本，含 [category] 前缀）
+  3. Qt Signal → GUI LogPanel（纯文本，可过滤级别 + 来源）
 
 QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
 
@@ -22,12 +22,18 @@ QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
   logger.info("[watcher] 文件变化 → reload")     # 统一 logger
   sub = get_logger("probe")                       # 子 logger → diy.app.probe
   sub.debug("socket 连接已建立")
+
+文件端查询示例:
+  jq 'select(.c == "watcher")' ~/.diy/app.log
+  grep '"c":"watcher"' ~/.diy/app.log
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
+import re
 from collections import deque
 from pathlib import Path
 
@@ -43,6 +49,40 @@ _SHARED_FMT = logging.Formatter(
     "%(asctime)s [%(levelname)-5s] [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
 )
+
+# 从消息中提取 [category] 前缀
+_RE_CATEGORY = re.compile(r"^\[(\w+)\]")
+
+
+class JsonlFormatter(logging.Formatter):
+    """JSONL formatter — 每行一个 JSON 对象，适合 jq/grep 查询。
+
+    字段:
+      t — 时间 (HH:MM:SS)
+      l — 级别 (DEBUG/INFO/WARNING/ERROR)
+      n — logger 名称
+      c — 分类前缀（如 watcher/timer/probe）
+      m — 消息正文（不含前缀）
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage()
+        cat = ""
+        body = msg
+        m = _RE_CATEGORY.match(msg)
+        if m:
+            cat = m.group(1)
+            body = msg[m.end():].strip()
+        return json.dumps(
+            {
+                "t": self.formatTime(record, "%H:%M:%S"),
+                "l": record.levelname,
+                "n": record.name,
+                "c": cat,
+                "m": body,
+            },
+            ensure_ascii=False,
+        )
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -149,7 +189,7 @@ def setup_app_logger(
     # ── Qt 原生消息拦截（过滤 keymapper 等噪音） ──
     _install_qt_msg_handler()
 
-    # ── 文件（5MB×3 轮转） ──
+    # ── 文件（5MB×3 轮转，JSONL 格式） ──
     fh = logging.handlers.RotatingFileHandler(
         str(log_path),
         maxBytes=5 * 1024 * 1024,
@@ -157,7 +197,7 @@ def setup_app_logger(
         encoding="utf-8",
     )
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(_SHARED_FMT)
+    fh.setFormatter(JsonlFormatter())
     root.addHandler(fh)
 
     # ── stderr（终端模式可见） ──

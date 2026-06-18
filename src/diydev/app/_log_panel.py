@@ -38,13 +38,15 @@ _SOURCE_ALL = "(所有来源)"
 
 _CLASSIC = QFont("Menlo", 11)
 
-# 从消息中提取 [source] 前缀
-_RE_SOURCE = re.compile(r"^\[(\w+)\]")
+# 从完整格式化消息中提取 [category] 前缀
+# 输入: "18:30:15 [INFO ] [diy.app] [watcher] 消息正文"
+# 输出: "watcher"（取最后一个带括号的标识符）
+_RE_SOURCE = re.compile(r"\[(\w+)\]")
 
 
 def _extract_source(message: str) -> str:
-    m = _RE_SOURCE.match(message)
-    return m.group(1) if m else ""
+    matches = _RE_SOURCE.findall(message)
+    return matches[-1] if matches else ""
 
 
 class LogPanel(QWidget):
