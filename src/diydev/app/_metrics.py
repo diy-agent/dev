@@ -1,45 +1,120 @@
-"""轻量内存指标存储，设计参考 OpenTelemetry。
+"""轻量指标存储，API 对齐 OpenTelemetry Metrics API。
 
-- counter: 单调递增计数（如健康检查次数、命令调用次数）
-- gauge: 瞬时值（如 agent 数量、自检通过/失败）
-- history: gauge 时间序列，保留最近 1000 条
+接口签名与 opentelemetry-api 一致：
+  meter.create_counter(name) → counter.add(amount, attributes)
+  meter.create_histogram(name) → histogram.record(amount, attributes)
+
+后面想接真实 OTel exporter 时，把 _create_instrument 的实现
+换成 opentelemetry-sdk 就好，调用代码不动。
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
 from typing import Any
 
 
+# ── OTel-compatible instrument 接口 ──
+
+class _Counter:
+    """单调递增计数器，匹配 OTel Counter.add()。"""
+
+    def __init__(self, store: "MetricsStore", name: str):
+        self._store = store
+        self._name = name
+
+    def add(self, amount: int | float = 1, attributes: dict | None = None) -> None:
+        self._store._counters[self._name] = (
+            self._store._counters.get(self._name, 0) + amount
+        )
+
+
+class _Histogram:
+    """瞬时值 + 时间序列，匹配 OTel Histogram.record()。
+
+    OTel 标准 Histogram 记录分布统计（min/max/sum/count），
+    我们简化成 gauge + 时间序列（tradeoff：不保存分布，只存最近值）。
+    """
+
+    def __init__(self, store: "MetricsStore", name: str):
+        self._store = store
+        self._name = name
+
+    def record(self, amount: int | float, attributes: dict | None = None) -> None:
+        now = time.time()
+        self._store._gauges[self._name] = amount
+        if self._name not in self._store._histories:
+            self._store._histories[self._name] = []
+        h = self._store._histories[self._name]
+        h.append((now, float(amount)))
+        if len(h) > self._store._max_history:
+            self._store._histories[self._name] = h[-self._store._max_history :]
+
+
+# ── Meter ──
+
+class Meter:
+    """匹配 OTel Meter.create_counter() / create_histogram()。"""
+
+    def __init__(self, store: "MetricsStore") -> None:
+        self._store = store
+
+    def create_counter(
+        self, name: str, unit: str = "", description: str = ""
+    ) -> _Counter:
+        return _Counter(self._store, name)
+
+    def create_histogram(
+        self, name: str, unit: str = "", description: str = ""
+    ) -> _Histogram:
+        return _Histogram(self._store, name)
+
+
+# ── MetricsStore ──
+
 class MetricsStore:
-    """进程内指标存储。"""
+    """进程内指标存储。
+
+    使用方式（otel 风格的 API）:
+        meter = store.meter
+        counter = meter.create_counter("health.checks")
+        counter.add(1)
+        gauge = meter.create_histogram("agent.count")
+        gauge.record(5)
+    """
 
     def __init__(self, max_history: int = 1000):
-        self._counters: dict[str, int] = {}
+        self._counters: dict[str, float] = {}
         self._gauges: dict[str, float] = {}
         self._histories: dict[str, list[tuple[float, float]]] = {}
         self._max_history = max_history
+        self._meter = Meter(self)
 
-    # ── 增删改 ──
+    @property
+    def meter(self) -> Meter:
+        """获取 OTel 兼容 Meter，用于创建 instrument。"""
+        return self._meter
 
-    def counter(self, name: str, delta: int = 1) -> None:
-        """递增计数器。"""
+    # ── 快捷方法（不通过 Meter，直接记） ──
+
+    def counter(self, name: str, delta: int | float = 1) -> None:
+        """快捷：counter.add(delta)"""
         self._counters[name] = self._counters.get(name, 0) + delta
 
     def gauge(self, name: str, value: float) -> None:
-        """设 gauge 值，同时记录时间序列。"""
+        """快捷：histogram.record(value)"""
+        now = time.time()
         self._gauges[name] = value
         if name not in self._histories:
             self._histories[name] = []
-        self._histories[name].append((time.time(), value))
-        # 保留最近 N 条
         h = self._histories[name]
+        h.append((now, value))
         if len(h) > self._max_history:
             self._histories[name] = h[-self._max_history :]
 
+    # ── 快照 ──
+
     def snapshot(self) -> dict[str, Any]:
-        """返回当前指标快照（可序列化成 YAML/JSON）。"""
         return {
             "counters": dict(self._counters),
             "gauges": dict(self._gauges),
@@ -49,9 +124,9 @@ class MetricsStore:
             },
         }
 
-    # ── 快捷读取 ──
+    # ── 读取 ──
 
-    def get_counter(self, name: str, default: int = 0) -> int:
+    def get_counter(self, name: str, default: float = 0) -> float:
         return self._counters.get(name, default)
 
     def get_gauge(self, name: str, default: float = 0.0) -> float:
@@ -61,23 +136,3 @@ class MetricsStore:
         self, name: str, default: None = None
     ) -> list[tuple[float, float]] | None:
         return self._histories.get(name, default)
-
-    def format_doctor_section(self) -> str:
-        """格式化成 dai doctor 可读的文本。"""
-        lines: list[str] = []
-
-        counts: list[str] = []
-        for k, v in sorted(self._counters.items()):
-            counts.append(f"  {k}: {v}")
-        if counts:
-            lines.append("📊 计数器:")
-            lines.extend(counts)
-
-        gauges: list[str] = []
-        for k, v in sorted(self._gauges.items()):
-            gauges.append(f"  {k}: {v}")
-        if gauges:
-            lines.append("📈 瞬时值:")
-            lines.extend(gauges)
-
-        return "\n".join(lines) if lines else "（无指标数据）"
