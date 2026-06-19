@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -362,6 +363,8 @@ class SteerPanel(QWidget):
 class DetailView(QWidget):
     """详情面板：查看/编辑任务。"""
 
+    task_saved = Signal(str)  # task_uri
+
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -457,7 +460,6 @@ class DetailView(QWidget):
         self._current_node: TaskNode | None = None
 
         # ── 保存完成信号 ──
-        self.task_saved = Signal(str)  # task_uri
 
     def show_task(self, uri: str, node: TaskNode | None, html: str) -> None:
         """进入查看模式，显示任务详情。"""
