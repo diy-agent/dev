@@ -28,9 +28,12 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QComboBox,
     QDialog,
     QDockWidget,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
@@ -297,8 +300,8 @@ def guarded(context: str):
 # Steer Panel
 # ═══════════════════════════════════════════════════════
 
-class SteerPanel(QWidget):
-    """用于 /steer 与 agent 通信。"""
+class AgentChatPanel(QWidget):
+    """Agent 对话面板：session 列表 + 聊天区。"""
 
     title_changed = Signal(str)
 
@@ -308,53 +311,195 @@ class SteerPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-        # 只读对话区
+        # ── Session 列表 ──
+        session_label = QLabel("Agent Sessions")
+        session_label.setStyleSheet("color: #a6adc8; font-size: 11px; padding: 4px 8px;")
+        layout.addWidget(session_label)
+
+        self._session_list = QListWidget()
+        self._session_list.setFrameShape(QFrame.Shape.NoFrame)
+        self._session_list.setStyleSheet(
+            "QListWidget { background: transparent; border: none; }"
+            "QListWidget::item { padding: 4px 8px; color: #cdd6f4; }"
+            "QListWidget::item:selected { background: #45475a; border-radius: 4px; }"
+        )
+        self._session_list.currentRowChanged.connect(self._on_session_selected)
+        layout.addWidget(self._session_list)
+
+        # ── 聊天区 ──
         self._log = QTextEdit()
         self._log.setReadOnly(True)
+        self._log.setStyleSheet(
+            "QTextEdit { background: #1e1e2e; color: #cdd6f4; border: none;"
+            " border-top: 1px solid #313244; padding: 6px; font-size: 12px; }"
+        )
         layout.addWidget(self._log)
 
-        # 输入区
+        # ── 输入区 ──
         input_row = QHBoxLayout()
+        input_row.setContentsMargins(4, 2, 4, 2)
+        input_row.setSpacing(4)
+
         self._input = QLineEdit()
-        self._input.setPlaceholderText("输入 /steer 消息...")
+        self._input.setPlaceholderText("输入消息...")
         self._input.returnPressed.connect(self._send)
+        self._input.setStyleSheet(
+            "QLineEdit { background: #313244; color: #cdd6f4; border: 1px solid #45475a;"
+            " border-radius: 4px; padding: 4px 8px; font-size: 12px; }"
+        )
         input_row.addWidget(self._input)
 
-        send_btn = QPushButton("发送")
-        send_btn.clicked.connect(self._send)
-        input_row.addWidget(send_btn)
+        self._resume_btn = QPushButton("🔄 恢复")
+        self._resume_btn.setFixedHeight(24)
+        self._resume_btn.setStyleSheet(
+            "QPushButton { background: #89b4fa; color: #1e1e2e; border: none;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #74c7ec; }"
+        )
+        self._resume_btn.clicked.connect(self._resume_session)
+        self._resume_btn.hide()
+
+        self._send_btn = QPushButton("发送")
+        self._send_btn.setFixedHeight(24)
+        self._send_btn.setStyleSheet(
+            "QPushButton { background: #45475a; color: #cdd6f4; border: none;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 11px; }"
+            "QPushButton:hover { background: #585b70; }"
+        )
+        self._send_btn.clicked.connect(self._send)
+
+        input_row.addWidget(self._resume_btn)
+        input_row.addWidget(self._send_btn)
 
         layout.addLayout(input_row)
 
-        # 定时刷新对话
+        # ── 定时刷新 ──
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh_log)
+        self._timer.timeout.connect(self._refresh_sessions)
         self._timer.start(3000)
+
+        # ── 状态 ──
+        self._sessions: list[dict] = []
+        self._selected_idx: int | None = None
+
+    # ── 公开接口 ──
 
     def set_task(self, uri: str) -> None:
         self._task_uri = uri
-        self.title_changed.emit(f"Agent 通信 — {uri}")
-        self._refresh_log()
+        self.title_changed.emit(f"Agent — {uri}")
+        self._refresh_sessions()
+
+    def set_compact(self, compact: bool) -> None:
+        """嵌入侧边栏时紧凑模式。"""
+        if compact:
+            self._session_list.setMaximumHeight(120)
+            self._session_list.setMinimumHeight(60)
+
+    # ── Session 列表 ──
+
+    @guarded("agent.session")
+    def _refresh_sessions(self) -> None:
+        """刷新 session 列表。"""
+        if self._task_uri is None:
+            return
+
+        sessions = _list_sessions(self._task_uri)
+        if sessions == self._sessions:
+            return  # 没变化
+
+        self._sessions = sessions
+        current_row = self._session_list.currentRow()
+
+        self._session_list.blockSignals(True)
+        self._session_list.clear()
+        for s in sessions:
+            icon = _session_icon(s.get("state", ""))
+            sid = s.get("agent_id", s.get("id", "?"))
+            item = QListWidgetItem(f"{icon} {sid}")
+            item.setData(Qt.ItemDataRole.UserRole, s)
+            item.setToolTip(s.get("state", ""))
+            self._session_list.addItem(item)
+
+        # 恢复选中
+        if current_row >= 0 and current_row < self._session_list.count():
+            self._session_list.setCurrentRow(current_row)
+        elif self._session_list.count() > 0:
+            self._session_list.setCurrentRow(0)
+
+        self._session_list.blockSignals(False)
+
+    @guarded("agent.session.select")
+    def _on_session_selected(self, row: int) -> None:
+        self._selected_idx = row
+        if row < 0 or row >= len(self._sessions):
+            return
+        s = self._sessions[row]
+        state = s.get("state", "")
+
+        # 加载对话
+        if self._task_uri:
+            chat = steer_read(self._task_uri)
+            self._log.setPlainText(chat or "(无对话)")
+
+        # 输入区状态
+        active = state == "running"
+        self._input.setEnabled(active)
+        self._send_btn.setEnabled(active)
+        self._resume_btn.setVisible(state in ("done", "killed", "idle"))
+        self._input.setPlaceholderText(
+            "输入消息..." if active else "会话已结束，点击「恢复」重新激活"
+        )
+
+    # ── 发送 / 恢复 ──
 
     def _send_text(self, text: str) -> None:
-        """编程发送文本（不经过输入框）。"""
+        """编程发送文本。"""
         if not text or self._task_uri is None:
             return
         steer_send(self._task_uri, text)
         self._input.clear()
-        self._refresh_log()
+        self._refresh_sessions()
+        self._on_session_selected(self._session_list.currentRow())
 
-    @guarded("steer.send")
+    @guarded("agent.send")
     def _send(self) -> None:
         text = self._input.text().strip()
         self._send_text(text)
 
-    @guarded("steer.timer")
-    def _refresh_log(self) -> None:
-        if self._task_uri is None:
+    @guarded("agent.resume")
+    def _resume_session(self) -> None:
+        """恢复已结束的 session（TODO: 需要 task/15 的 agentd 支持）。"""
+        if self._task_uri is None or self._selected_idx is None:
             return
-        self._log.setPlainText(steer_read(self._task_uri) or "(无对话)")
+        logger.info("[agent] 恢复 session 请求 (task/15 未实现): %s", self._task_uri)
+
+
+# ── Session 辅助函数 ──
+
+_SESSION_ICONS = {
+    "running": "●",
+    "idle": "○",
+    "done": "✓",
+    "failed": "✗",
+    "killed": "⊘",
+    "interrupted": "◉",
+    "waiting_input": "💬",
+    "waiting_approval": "🔒",
+    "": "○",
+}
+
+
+def _session_icon(state: str) -> str:
+    return _SESSION_ICONS.get(state, "○")
+
+
+def _list_sessions(task_uri: str) -> list[dict]:
+    """列出某个 task 的所有 agent session。"""
+    from diydev.app.agent_bridge import list_agents  # noqa: PLC0415
+    agents = list_agents()
+    return [a.to_dict() for a in agents if a.task_id == task_uri]
 
 
 # ═══════════════════════════════════════════════════════
@@ -362,7 +507,7 @@ class SteerPanel(QWidget):
 # ═══════════════════════════════════════════════════════
 
 class DetailView(QWidget):
-    """详情面板：查看/编辑任务。"""
+    """详情面板：查看/编辑任务。GitHub/Jira 风格的两栏布局。"""
 
     task_saved = Signal(str)  # task_uri
 
@@ -424,11 +569,15 @@ class DetailView(QWidget):
 
         layout.addWidget(self._toolbar)
 
-        # ── 内容：view / edit 切换 ──
-        self._stack = QStackedWidget()
-        layout.addWidget(self._stack)
+        # ── 内容区：QSplitter 两栏布局（查看模式） ──
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        layout.addWidget(self._splitter)
 
-        # view 页
+        # 左侧：body（view / edit 切换）
+        self._stack = QStackedWidget()
+        self._splitter.addWidget(self._stack)
+
+        # view 页 — body 区
         self.view = QWebEngineView()
         self._stack.addWidget(self.view)
 
@@ -450,17 +599,63 @@ class DetailView(QWidget):
         self._edit_body = QPlainTextEdit()
         self._edit_body.setStyleSheet(
             "QPlainTextEdit { background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;"
-            " border-radius: 4px; padding: 6px; font-size: 13px; font-family: 'SF Mono', monospace; }"
+            " border-radius: 4px; padding: 6px; font-size: 13px;"
+            " font-family: 'SF Mono', monospace; }"
         )
         ed_lay.addWidget(self._edit_body)
 
         self._stack.addWidget(edit_page)
 
-        # ── 当前编辑状态 ──
+        # 右侧：侧边栏（属性 + Agent Chat）
+        self._sidebar = QWidget()
+        self._sidebar.setMinimumWidth(240)
+        self._sidebar.setMaximumWidth(400)
+        side_lay = QVBoxLayout(self._sidebar)
+        side_lay.setContentsMargins(0, 0, 0, 0)
+        side_lay.setSpacing(0)
+
+        # ─ 属性面板 ─
+        self._attr_widget = QWidget()
+        self._attr_widget.setStyleSheet(
+            "QWidget { background: #181825; }"
+            "QLabel { color: #a6adc8; font-size: 11px; padding: 2px 8px; }"
+        )
+        attr_lay = QVBoxLayout(self._attr_widget)
+        attr_lay.setContentsMargins(0, 4, 0, 4)
+        attr_lay.setSpacing(0)
+
+        self._attr_subject = QLabel()
+        self._attr_parent = QLabel()
+        self._attr_detail = QLabel()
+        self._attr_detail.setWordWrap(True)
+
+        attr_lay.addWidget(QLabel("属性"))
+        attr_lay.addWidget(self._attr_subject)
+        attr_lay.addWidget(self._attr_parent)
+        attr_lay.addWidget(self._attr_detail)
+        attr_lay.addStretch()
+
+        side_lay.addWidget(self._attr_widget)
+
+        # ─ 分隔线 ─
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #313244;")
+        side_lay.addWidget(sep)
+
+        # ─ Agent Chat ─
+        self._chat = AgentChatPanel(self)
+        self._chat.set_compact(True)
+        side_lay.addWidget(self._chat, 1)  # stretch=1, 占剩余空间
+
+        self._splitter.addWidget(self._sidebar)
+
+        # ── 当前状态 ──
         self._current_task_uri: str | None = None
         self._current_node: TaskNode | None = None
+        self._current_task_uri_for_chat: str | None = None
 
-        # ── 保存完成信号 ──
+    # ── 公开接口 ──
 
     def show_task(self, uri: str, node: TaskNode | None, html: str) -> None:
         """进入查看模式，显示任务详情。"""
@@ -475,6 +670,15 @@ class DetailView(QWidget):
         self._state_label.setText(state)
         self.view.setHtml(html)
 
+        # 更新侧边栏
+        self._update_sidebar(uri, node)
+
+        # 关联 Agent Chat
+        if uri != self._current_task_uri_for_chat:
+            self._chat.set_task(uri)
+            self._current_task_uri_for_chat = uri
+            self._splitter.setSizes([400, 260])  # 初始比例
+
     def show_placeholder(self, html: str) -> None:
         """显示占位信息（无任务选中）。"""
         self._current_task_uri = None
@@ -485,7 +689,35 @@ class DetailView(QWidget):
         self._cancel_btn.hide()
         self._uri_label.clear()
         self._state_label.clear()
+        self._current_task_uri_for_chat = None
         self.view.setHtml(html)
+        self._clear_sidebar()
+
+    # ── 侧边栏 ──
+
+    def _update_sidebar(self, uri: str, node: TaskNode | None) -> None:
+        if not node:
+            self._clear_sidebar()
+            return
+        parts = []
+        if node.subject_path:
+            parts.append(f"📂 {_esc_html(node.subject_path)}")
+        if node.parent_uri:
+            parts.append(f"⬆ 父任务 {node.parent_uri}")
+        if node.detail:
+            parts.append(f"📝 {_esc_html(node.detail)}")
+        self._attr_subject.setText(parts[0] if len(parts) > 0 else "")
+        self._attr_parent.setText(parts[1] if len(parts) > 1 else "")
+        self._attr_detail.setText(parts[2] if len(parts) > 2 else "")
+        self._attr_widget.setVisible(len(parts) > 0)
+
+    def _clear_sidebar(self) -> None:
+        self._attr_subject.clear()
+        self._attr_parent.clear()
+        self._attr_detail.clear()
+        self._attr_widget.hide()
+
+    # ── 编辑模式 ──
 
     def _toggle_edit(self) -> None:
         """切换到编辑模式。"""
@@ -493,13 +725,15 @@ class DetailView(QWidget):
             return
         self._edit_title.setText(self._current_node.title or "")
         self._edit_body.setPlainText(self._current_node.body or "")
-        self._stack.setCurrentIndex(1)
         self._edit_btn.hide()
         self._save_btn.show()
         self._cancel_btn.show()
+        # 编辑模式隐藏侧边栏
+        self._sidebar.hide()
 
     def _cancel_edit(self) -> None:
         """取消编辑，返回查看模式。"""
+        self._sidebar.show()
         self._stack.setCurrentIndex(0)
         self._edit_btn.show()
         self._save_btn.hide()
@@ -595,19 +829,6 @@ class MainWindow(QMainWindow):
         self._detail.task_saved.connect(self._on_task_saved)
         self.setCentralWidget(self._detail)
 
-        # ── Agent Chat Panel（副侧边栏） ──
-        self._steer = SteerPanel(self)
-        self._steer.title_changed.connect(self._on_steer_title)
-
-        self._secondary_sidebar = QDockWidget("Agent 通信", self)
-        self._secondary_sidebar.setObjectName("SecondarySidebar")
-        self._secondary_sidebar.setWidget(self._steer)
-        self._secondary_sidebar.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._secondary_sidebar)
-        self._secondary_sidebar.hide()
-
         # ── 底部面板（输出 / Agent 列表等） ──
         self._log_panel = LogPanel(self)
 
@@ -630,7 +851,6 @@ class MainWindow(QMainWindow):
 
         # ── ActivityBar → Dock 绑定 ──
         self._activity_bar.set_dock(0, self._primary_sidebar)   # 📁
-        self._activity_bar.set_dock(1, self._secondary_sidebar)  # 💬
         self._activity_bar.set_dock(2, self._panel_dock)          # 📋
 
         # ── 菜单栏 ──
@@ -689,12 +909,6 @@ class MainWindow(QMainWindow):
         self._primary_sidebar.visibilityChanged.connect(toggle_sidebar.setChecked)
         view_menu.addAction(toggle_sidebar)
 
-        toggle_steer = QAction("Agent 通信", self, checkable=True)
-        toggle_steer.setChecked(False)
-        toggle_steer.triggered.connect(self._secondary_sidebar.setVisible)
-        self._secondary_sidebar.visibilityChanged.connect(toggle_steer.setChecked)
-        view_menu.addAction(toggle_steer)
-
         view_menu.addSeparator()
 
         toggle_output = QAction("输出", self, checkable=True)
@@ -709,9 +923,6 @@ class MainWindow(QMainWindow):
         if visible:
             self._panel_tabs.setCurrentIndex(tab_index)
             self._panel_dock.raise_()
-
-    def _on_steer_title(self, title: str) -> None:
-        self._secondary_sidebar.setWindowTitle(title)
 
     @guarded("task_saved")
     def _on_task_saved(self, uri: str) -> None:
@@ -978,9 +1189,7 @@ class MainWindow(QMainWindow):
             return
         title = task.get("title", uri)
         prompt = f"请完成以下任务：{title}"
-        self._steer.set_task(uri)
-        self._steer._send_text(prompt)
-        self._secondary_sidebar.show()
+        self._detail._chat._send_text(prompt)
 
     @guarded("action.create")
     def _open_create_task(self, parent_uri: str | None = None, subject: str | None = None) -> None:
@@ -991,8 +1200,7 @@ class MainWindow(QMainWindow):
 
     @guarded("action.steer")
     def _open_steer(self, uri: str) -> None:
-        self._steer.set_task(uri)
-        self._secondary_sidebar.show()
+        self._detail._chat.set_task(uri)
 
     # ── 选中 / 双击 ──
     @guarded("tree.select")
@@ -1217,8 +1425,7 @@ class MainWindow(QMainWindow):
             f"state:     {state_path} {'✅' if state_exists else '❌ missing'}",
             f"socket:    {self._gateway._path} {'✅' if self._gateway._server else '❌'}",
             f"watchers:  {len(self._watcher.files()) + len(self._watcher.directories())} paths",
-            f"timers:    refresh={self._refresh_timer.interval()}ms "
-            f"steer={self._steer._timer.interval()}ms",
+            f"timers:    refresh={self._refresh_timer.interval()}ms",
             f"qt:        {'running' if QApplication.instance() else 'stopped'}",
             f"sandbox:   {'⚡ ' + self._sandbox_path if self._sandbox else 'no'}",
         ])
