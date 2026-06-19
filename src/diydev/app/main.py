@@ -17,6 +17,8 @@ from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-unt
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QAbstractItemView,
     QApplication,
+    QComboBox,
+    QDialog,
     QDockWidget,
     QHBoxLayout,
     QLabel,
@@ -325,14 +327,18 @@ class SteerPanel(QWidget):
         self.title_changed.emit(f"Agent 通信 — {uri}")
         self._refresh_log()
 
-    @guarded("steer.send")
-    def _send(self) -> None:
-        text = self._input.text().strip()
+    def _send_text(self, text: str) -> None:
+        """编程发送文本（不经过输入框）。"""
         if not text or self._task_uri is None:
             return
         steer_send(self._task_uri, text)
         self._input.clear()
         self._refresh_log()
+
+    @guarded("steer.send")
+    def _send(self) -> None:
+        text = self._input.text().strip()
+        self._send_text(text)
 
     @guarded("steer.timer")
     def _refresh_log(self) -> None:
@@ -671,9 +677,26 @@ class MainWindow(QMainWindow):
 
         kind = index.data(ROLE_KIND)
         task_uri = index.data(ROLE_TASK_URI)
+        subject_path = index.data(ROLE_SUBJECT)
         state = index.data(ROLE_STATE)
 
         menu = QMenu(self)
+
+        # 所有节点都可以创建子任务
+        new_act = menu.addAction("✨ 新建任务")
+        if kind == "task":
+            new_act.triggered.connect(lambda checked, t=task_uri: self._open_create_task(parent_uri=t))
+        elif kind == "subject":
+            subj = index.data(ROLE_SUBJECT) or next(
+                (k for k, v in _subjects_from_state().items()
+                 if k == subject_path or k == index.data(Qt.ItemDataRole.DisplayRole)),
+                None
+            )
+            new_act.triggered.connect(lambda checked, s=subj or subject_path: self._open_create_task(subject=s))
+        else:
+            new_act.triggered.connect(lambda: self._open_create_task())
+
+        menu.addSeparator()
 
         if kind == "task" and task_uri:
             menu.addAction(f"{task_uri} — {state}").setEnabled(False)
@@ -688,6 +711,9 @@ class MainWindow(QMainWindow):
                     act.triggered.connect(lambda checked, t=task_uri, ns=s: self._set_state(t, ns))
 
             menu.addSeparator()
+
+            spawn_act = menu.addAction("🤖 启动 agent")
+            spawn_act.triggered.connect(lambda checked, t=task_uri: self._spawn_agent(t))
 
             steer_act = menu.addAction("💬 /steer 通信")
             steer_act.triggered.connect(lambda checked, t=task_uri: self._open_steer(t))
@@ -719,6 +745,27 @@ class MainWindow(QMainWindow):
             capture_output=True,
         )
         self._load()
+
+    @guarded("action.spawn")
+    def _spawn_agent(self, uri: str) -> None:
+        """启动 agent for 一个 task。"""
+        # 通过 Gateway 发送 diy agent spawn 命令
+        from diydev._state import get_task
+        task = get_task(uri)
+        if not task:
+            return
+        title = task.get("title", uri)
+        prompt = f"请完成以下任务：{title}"
+        self._steer.set_task(uri)
+        self._steer._send_text(prompt)
+        self._secondary_sidebar.show()
+
+    @guarded("action.create")
+    def _open_create_task(self, parent_uri: str | None = None, subject: str | None = None) -> None:
+        """打开创建任务对话框。"""
+        dlg = _CreateTaskDialog(self, parent_uri=parent_uri, initial_subject=subject)
+        if dlg.exec():
+            self._load()
 
     @guarded("action.steer")
     def _open_steer(self, uri: str) -> None:
@@ -1823,6 +1870,146 @@ class GatewayCLI:
         if err_text:
             out.write(err_text)
         out.flush()
+
+
+# ═══════════════════════════════════════════════════════
+# 辅助函数
+# ═══════════════════════════════════════════════════════
+
+
+def _subjects_from_state() -> dict:
+    """从 state.yaml 读取 subject 列表。"""
+    from diydev._state import load_state
+    return load_state().get("subjects", {})
+
+
+# ═══════════════════════════════════════════════════════
+# 创建任务对话框
+# ═══════════════════════════════════════════════════════
+
+class _CreateTaskDialog(QDialog):
+    """创建任务弹窗。"""
+
+    def __init__(self, parent=None, parent_uri: str | None = None,
+                 initial_subject: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("✨ 新建任务")
+        self.resize(480, 400)
+
+        self._parent_uri = parent_uri
+        self._result_uri: str | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        # 标题
+        layout.addWidget(QLabel("标题"))
+        self._title = QLineEdit()
+        self._title.setPlaceholderText("任务标题...")
+        layout.addWidget(self._title)
+
+        # Subject 选择
+        layout.addWidget(QLabel("Subject"))
+        self._subject = QComboBox()
+        subjects = _subjects_from_state()
+        self._subject.addItem("(无)", "")
+        for s in sorted(subjects.keys()):
+            self._subject.addItem(s, s)
+        if initial_subject and initial_subject in subjects:
+            self._subject.setCurrentText(initial_subject)
+        layout.addWidget(self._subject)
+
+        # 父任务（只读显示）
+        if parent_uri:
+            from diydev._state import get_task
+            pt = get_task(parent_uri)
+            pt_label = pt.get("title", parent_uri) if pt else parent_uri
+            info = QLabel(f"父任务: {parent_uri} — {pt_label}")
+            info.setStyleSheet("color: #a6adc8; font-size: 12px;")
+            info.setWordWrap(True)
+            layout.addWidget(info)
+
+        # 详情
+        layout.addWidget(QLabel("详情（可选）"))
+        self._detail = QTextEdit()
+        self._detail.setPlaceholderText("任务描述...")
+        self._detail.setMaximumHeight(120)
+        layout.addWidget(self._detail)
+
+        layout.addStretch()
+
+        # 按钮
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        create_btn = QPushButton("创建")
+        create_btn.setDefault(True)
+        create_btn.clicked.connect(self._on_create)
+        btn_row.addWidget(create_btn)
+        layout.addLayout(btn_row)
+
+        # 暗色样式
+        self.setStyleSheet("""
+            QDialog {
+                background: #1e1e2e; color: #cdd6f4;
+                font-size: 13px;
+            }
+            QLabel {
+                color: #a6adc8; font-size: 12px;
+            }
+            QLineEdit, QTextEdit, QComboBox {
+                background: #313244; color: #cdd6f4;
+                border: 1px solid #45475a; border-radius: 4px;
+                padding: 6px 8px; font-size: 13px;
+            }
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+                border: 1px solid #7aa2f7;
+            }
+            QComboBox::drop-down {
+                border: none; width: 20px;
+            }
+            QComboBox QAbstractItemView {
+                background: #313244; color: #cdd6f4;
+                selection-background-color: #45475a;
+            }
+            QPushButton {
+                background: #45475a; color: #cdd6f4;
+                border: none; border-radius: 4px;
+                padding: 6px 16px;
+            }
+            QPushButton:hover {
+                background: #585b70;
+            }
+            QPushButton[pressed=true] {
+                background: #7aa2f7;
+            }
+        """)
+
+    def _on_create(self) -> None:
+        title = self._title.text().strip()
+        if not title:
+            self._title.setFocus()
+            return
+        subject = self._subject.currentData() or ""
+        detail = self._detail.toPlainText().strip() or None
+
+        from diydev._state import create_task
+        try:
+            uri = create_task(
+                title=title,
+                subject=subject,
+                parent=self._parent_uri,
+                detail=detail,
+            )
+        except ValueError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "创建失败", str(e))
+            return
+
+        self._result_uri = uri
+        self.accept()
 
 
 class Gateway(QObject):
