@@ -2397,6 +2397,13 @@ def main():
     logger.info("=" * 50)
     logger.info("diy 管控台启动")
 
+    # 清理上次启动的错误文件
+    _error_path = os.path.expanduser("~/.diy/app.error")
+    try:
+        os.unlink(_error_path)
+    except FileNotFoundError:
+        pass
+
     # ── 连接 agentd（已有则复用，没有则启动） ──
     hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")
     _agentd_proc = None
@@ -2438,10 +2445,17 @@ def main():
     # Ctrl+C 两次退出（调试模式下 Qt event loop 会吞 SIGINT）
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+    _error_path = os.path.expanduser("~/.diy/app.error")
     try:
         window = MainWindow()
     except ConnectionError as e:
         logger.error(str(e))
+        return
+    except Exception:
+        logger.critical("管控台启动失败", exc_info=True)
+        with open(_error_path, "w") as f:
+            import traceback as _tb
+            _tb.print_exc(file=f)
         return
 
     window.show()

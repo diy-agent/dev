@@ -110,5 +110,13 @@ def forward_to_app(args: list[str]) -> None:
             return
 
     os.close(lock_fd)
-    print("错误: app 启动超时，请检查日志", file=sys.stderr)
+    # 超时 — 检查 app 是否崩溃
+    error_path = os.path.expanduser("~/.diy/app.error")
+    if os.path.exists(error_path):
+        with open(error_path) as _f:
+            _error = _f.read().strip()
+        os.unlink(error_path)
+        print(f"错误: app 启动失败\n{_error}", file=sys.stderr)
+    else:
+        print("错误: app 启动超时，请检查日志", file=sys.stderr)
     sys.exit(1)
