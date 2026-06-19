@@ -1186,13 +1186,18 @@ def _app_restart():
         stderr=subprocess.DEVNULL,
     )
 
-    # 5) 等 socket 就绪
+    # 5) 等 socket 就绪（文件存在 + 可连接）
     deadline = _time.time() + 10
     while _time.time() < deadline:
         if os.path.exists(socket_path):
             _time.sleep(0.3)
-            print("管控台已重启", file=sys.stderr)
-            return
+            # 验证 socket 真正可连接
+            if _send_to_socket("diy", timeout=1.0) is not None:
+                print("管控台已重启", file=sys.stderr)
+                return
+            # socket 文件存在但 server 未就绪，继续等
+            _time.sleep(0.3)
+            continue
         _time.sleep(0.3)
 
     print("错误: 管控台重启超时", file=sys.stderr)
