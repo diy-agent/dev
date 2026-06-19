@@ -584,8 +584,8 @@ class MainWindow(QMainWindow):
         if time.time() - self._started_at < 3.0:
             return
         tasks_dir = str(Path.home() / ".diy" / "d")
-        if _path == tasks_dir:
-            logger.info("[watcher] ~/.diy/d/ 目录条目变化 → 全量重载")
+        if _path == tasks_dir or _path.startswith(tasks_dir + "/"):
+            logger.info("[watcher] ~/.diy/d/ 目录变化 → 全量重载")
             self._load()
         else:
             logger.info("[watcher] agents/ 目录变化 → 刷新 agent 状态")
