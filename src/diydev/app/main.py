@@ -1301,6 +1301,7 @@ import threading
 from typing import Callable, TypeVar
 
 from cyclopts import App as CycloptsApp
+from cyclopts.exceptions import UnknownCommandError
 from PySide6.QtCore import QEventLoop, QMetaObject, Qt as QtCore, Q_ARG, QTimer  # type: ignore[import-untyped]
 from PySide6.QtCore import QObject  # type: ignore[import-untyped]
 
@@ -2091,6 +2092,9 @@ class GatewayCLI:
         try:
             self._app(tokens, console=console, exit_on_error=False)
         except SystemExit:
+            pass
+        except UnknownCommandError:
+            # cyclopts 已经写了错误信息到 stderr，不需要重复
             pass
         except Exception as exc:
             logger.error("dispatch 异常: %s\n%s", exc, traceback.format_exc())
