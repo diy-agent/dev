@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         self._detail.task_saved.connect(self._on_task_saved)
         self.setCentralWidget(self._detail)
 
-        # ── Steer Panel（副侧边栏） ──
+        # ── Agent Chat Panel（副侧边栏） ──
         self._steer = SteerPanel(self)
         self._steer.title_changed.connect(self._on_steer_title)
 
