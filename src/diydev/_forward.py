@@ -93,10 +93,9 @@ def forward_to_app(args: list[str]) -> None:
         sys.exit(1)
 
     print("⏳ 正在启动 diy 管控台...", file=sys.stderr)
-    proc = subprocess.Popen(
+    subprocess.Popen(
         ["bash", script, "app"],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
     )
 
     # Step 5: wait for socket — lock keeps other launchers waiting
@@ -106,23 +105,9 @@ def forward_to_app(args: list[str]) -> None:
         resp = _send_to_socket(socket_path, payload)
         if resp is not None:
             os.close(lock_fd)
-            # 成功启动，清理错误记录
-            try:
-                os.unlink(os.path.expanduser("~/.diy/app.error"))
-            except FileNotFoundError:
-                pass
             sys.stdout.write(resp)
             return
 
     os.close(lock_fd)
-    # 超时 — 检查 app 是否已崩溃
-    _stderr_output = None
-    if proc.poll() is not None:
-        _stderr_output = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else None
-    proc.stderr.close()
-
-    if _stderr_output:
-        print(f"错误: app 启动失败\n{_stderr_output.strip()}", file=sys.stderr)
-    else:
-        print("错误: app 启动超时，请检查日志", file=sys.stderr)
+    print("错误: app 启动超时，请检查日志", file=sys.stderr)
     sys.exit(1)

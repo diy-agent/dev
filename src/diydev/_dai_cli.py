@@ -1183,7 +1183,6 @@ def _app_restart():
     proc = subprocess.Popen(
         ["bash", script, "app"],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
     )
 
     # 5) 等 socket 就绪（文件存在 + 可连接）
@@ -1196,16 +1195,8 @@ def _app_restart():
                 return
         _time.sleep(0.3)
 
-    # 6) 超时 — 检查 app 是否已崩溃
-    _stderr_output = None
-    if proc.poll() is not None:
-        _stderr_output = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else None
-    proc.stderr.close()
-
-    if _stderr_output:
-        print(f"错误: 管控台启动失败\n{_stderr_output.strip()}", file=sys.stderr)
-    else:
-        print("错误: 管控台启动超时，请检查日志", file=sys.stderr)
+    # 6) 超时
+    print("错误: 管控台启动超时，请检查日志", file=sys.stderr)
     sys.exit(1)
 
 
