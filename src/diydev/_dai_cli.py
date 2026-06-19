@@ -33,7 +33,6 @@ import yaml
 from cyclopts import App, Parameter
 
 from ._dai_scan import find_spaces, find_workspace_root
-from ._log import VerboseFlag, set_verbosity
 from ._state import archive_task, create_task, delete_task, get_task, list_tasks, load_state, save_state, update_task_field
 
 app = App(
@@ -302,15 +301,12 @@ def tree(
         bool,
         Parameter(name=["--sync"], help="注入 AGENTS.md json block"),
     ] = True,
-    verbose: VerboseFlag = 0,
 ):
     """注入 AGENTS.md json block。
 
     在 AGENTS.md 中查找 <!-- diy:tree:begin --> / <!-- diy:tree:end -->
     之间的区域，替换为当前 state.yaml 的 JSON 投影。
     """
-    set_verbosity(verbose)
-
     agents_path = _find_agents_md()
     if not agents_path:
         print("错误: 当前目录未找到 AGENTS.md", file=sys.stderr)
@@ -582,7 +578,7 @@ def _notify_app_reload() -> None:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(2)
         s.connect(socket_path)
-        s.sendall(b"ai reload\n")
+        s.sendall(b"diy reload\n")
         s.shutdown(_sock.SHUT_WR)
         s.close()
     except OSError:
