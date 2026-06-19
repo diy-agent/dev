@@ -1126,8 +1126,86 @@ def dai_doctor() -> None:
         sys.exit(1)
 
 
+def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
+    """直接向 app.sock 发送一行文本，不经过 forward_to_app。
+
+    用于 restart/shutdown 等需要控制 app 生命周期的命令。
+    """
+    import socket as sock
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    try:
+        s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(socket_path)
+        s.sendall((cmd_line + "\n").encode("utf-8"))
+        s.shutdown(sock.SHUT_WR)
+        buf = b""
+        while True:
+            data = s.recv(4096)
+            if not data:
+                break
+            buf += data
+        s.close()
+        return buf.decode("utf-8")
+    except OSError:
+        return None
+
+
+def _app_restart():
+    """重启管控台：shutdown → 等 socket 消失 → 启动 app。"""
+    import subprocess
+    import time as _time
+
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    script = os.path.join(os.path.dirname(__file__), "..", "..", "sha.sh")
+    script = os.path.abspath(script)
+
+    # 1) shutdown
+    if os.path.exists(socket_path):
+        print("⏳ 正在关闭管控台...", file=sys.stderr)
+        _send_to_socket("diy shutdown", timeout=2.0)
+
+    # 2) 等 socket 消失（app 退出会清理 socket）
+    deadline = _time.time() + 5
+    while _time.time() < deadline:
+        if not os.path.exists(socket_path):
+            break
+        _time.sleep(0.2)
+
+    # 3) 启动 app
+    if not os.path.exists(script):
+        print("错误: 找不到 sha.sh", file=sys.stderr)
+        sys.exit(1)
+
+    print("⏳ 正在启动管控台...", file=sys.stderr)
+    subprocess.Popen(
+        ["bash", script, "app"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 4) 等 socket 就绪
+    deadline = _time.time() + 10
+    while _time.time() < deadline:
+        if os.path.exists(socket_path):
+            _time.sleep(0.3)
+            print("管控台已重启", file=sys.stderr)
+            return
+        _time.sleep(0.3)
+
+    print("错误: 管控台重启超时", file=sys.stderr)
+    sys.exit(1)
+
+
 def main():
     from ._forward import forward_to_app
+
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    # 重启：本地执行（先关 app 再开，不走 forward_to_app）
+    if cmd == "restart":
+        _app_restart()
+        return
 
     # 所有命令走 app.sock，协议前缀 diy = v1
     args = ["diy"] + sys.argv[1:]

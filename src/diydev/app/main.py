@@ -1784,6 +1784,12 @@ class GatewayCLI:
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
 
+        @diy.command
+        def shutdown():
+            """关闭管控台。app 退出后下次 dai 命令会自动启动。"""
+            QTimer.singleShot(200, QApplication.instance().quit)
+            return "OK app 正在退出"
+
         # ── 注册 diy 组 ──
         self._app.command(diy)
 
