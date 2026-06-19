@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (  # type: ignore[import-untyped]
     QFileSystemWatcher,
+    QItemSelectionModel,
     QSortFilterProxyModel,
     Qt,
     QTimer,
@@ -359,19 +360,162 @@ class SteerPanel(QWidget):
 # ═══════════════════════════════════════════════════════
 
 class DetailView(QWidget):
-    """详情面板：单 QWebEngineView，全部 HTML 统一渲染。"""
+    """详情面板：查看/编辑任务。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
+        # ── 顶栏：URI + state + 按钮 ──
+        self._toolbar = QWidget()
+        self._toolbar.setFixedHeight(32)
+        tb_lay = QHBoxLayout(self._toolbar)
+        tb_lay.setContentsMargins(8, 2, 8, 2)
+        tb_lay.setSpacing(6)
+
+        self._uri_label = QLabel()
+        self._uri_label.setStyleSheet("color: #cdd6f4; font-size: 12px; font-weight: bold;")
+
+        self._state_label = QLabel()
+        self._state_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
+
+        tb_lay.addWidget(self._uri_label)
+        tb_lay.addWidget(self._state_label)
+        tb_lay.addStretch()
+
+        self._edit_btn = QPushButton("✏️ 编辑")
+        self._edit_btn.setFixedHeight(24)
+        self._edit_btn.setStyleSheet(
+            "QPushButton { background: #45475a; color: #cdd6f4; border: none;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 11px; }"
+            "QPushButton:hover { background: #585b70; }"
+        )
+        self._edit_btn.clicked.connect(self._toggle_edit)
+
+        self._save_btn = QPushButton("💾 保存")
+        self._save_btn.setFixedHeight(24)
+        self._save_btn.setStyleSheet(
+            "QPushButton { background: #a6e3a1; color: #1e1e2e; border: none;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #94e2d5; }"
+        )
+        self._save_btn.clicked.connect(self._save_task)
+        self._save_btn.hide()
+
+        self._cancel_btn = QPushButton("取消")
+        self._cancel_btn.setFixedHeight(24)
+        self._cancel_btn.setStyleSheet(
+            "QPushButton { background: #45475a; color: #cdd6f4; border: none;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 11px; }"
+            "QPushButton:hover { background: #585b70; }"
+        )
+        self._cancel_btn.clicked.connect(self._cancel_edit)
+        self._cancel_btn.hide()
+
+        tb_lay.addWidget(self._edit_btn)
+        tb_lay.addWidget(self._save_btn)
+        tb_lay.addWidget(self._cancel_btn)
+
+        layout.addWidget(self._toolbar)
+
+        # ── 内容：view / edit 切换 ──
+        self._stack = QStackedWidget()
+        layout.addWidget(self._stack)
+
+        # view 页
         self.view = QWebEngineView()
-        layout.addWidget(self.view)
+        self._stack.addWidget(self.view)
 
-    def set_html(self, html: str) -> None:
-        """设全量 HTML（含 header + body + CSS）。"""
+        # edit 页
+        edit_page = QWidget()
+        ed_lay = QVBoxLayout(edit_page)
+        ed_lay.setContentsMargins(8, 8, 8, 8)
+        ed_lay.setSpacing(6)
+
+        ed_lay.addWidget(QLabel("标题"))
+        self._edit_title = QLineEdit()
+        self._edit_title.setStyleSheet(
+            "QLineEdit { background: #313244; color: #cdd6f4; border: 1px solid #45475a;"
+            " border-radius: 4px; padding: 6px 8px; font-size: 14px; }"
+        )
+        ed_lay.addWidget(self._edit_title)
+
+        ed_lay.addWidget(QLabel("文档 (Markdown)"))
+        self._edit_body = QPlainTextEdit()
+        self._edit_body.setStyleSheet(
+            "QPlainTextEdit { background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;"
+            " border-radius: 4px; padding: 6px; font-size: 13px; font-family: 'SF Mono', monospace; }"
+        )
+        ed_lay.addWidget(self._edit_body)
+
+        self._stack.addWidget(edit_page)
+
+        # ── 当前编辑状态 ──
+        self._current_task_uri: str | None = None
+        self._current_node: TaskNode | None = None
+
+        # ── 保存完成信号 ──
+        self.task_saved = Signal(str)  # task_uri
+
+    def show_task(self, uri: str, node: TaskNode | None, html: str) -> None:
+        """进入查看模式，显示任务详情。"""
+        self._current_task_uri = uri
+        self._current_node = node
+        self._stack.setCurrentIndex(0)
+        self._edit_btn.show()
+        self._save_btn.hide()
+        self._cancel_btn.hide()
+        self._uri_label.setText(uri)
+        state = node.state if node else ""
+        self._state_label.setText(state)
         self.view.setHtml(html)
+
+    def show_placeholder(self, html: str) -> None:
+        """显示占位信息（无任务选中）。"""
+        self._current_task_uri = None
+        self._current_node = None
+        self._stack.setCurrentIndex(0)
+        self._edit_btn.hide()
+        self._save_btn.hide()
+        self._cancel_btn.hide()
+        self._uri_label.clear()
+        self._state_label.clear()
+        self.view.setHtml(html)
+
+    def _toggle_edit(self) -> None:
+        """切换到编辑模式。"""
+        if not self._current_node:
+            return
+        self._edit_title.setText(self._current_node.title or "")
+        self._edit_body.setPlainText(self._current_node.body or "")
+        self._stack.setCurrentIndex(1)
+        self._edit_btn.hide()
+        self._save_btn.show()
+        self._cancel_btn.show()
+
+    def _cancel_edit(self) -> None:
+        """取消编辑，返回查看模式。"""
+        self._stack.setCurrentIndex(0)
+        self._edit_btn.show()
+        self._save_btn.hide()
+        self._cancel_btn.hide()
+
+    def _save_task(self) -> None:
+        """保存任务修改。"""
+        uri = self._current_task_uri
+        if not uri:
+            return
+        new_title = self._edit_title.text().strip()
+        new_body = self._edit_body.toPlainText()
+        from ._state import update_task_field  # noqa: PLC0415
+        if new_title != (self._current_node.title or "") if self._current_node else True:
+            update_task_field(uri, title=new_title)
+        if new_body != (self._current_node.body or "") if self._current_node else True:
+            update_task_field(uri, body=new_body)
+        self._cancel_edit()
+        self.task_saved.emit(uri)
 
 
 # ═══════════════════════════════════════════════════════
@@ -445,6 +589,7 @@ class MainWindow(QMainWindow):
 
         # ── 详情面板（中央 Editor） ──
         self._detail = DetailView()
+        self._detail.task_saved.connect(self._on_task_saved)
         self.setCentralWidget(self._detail)
 
         # ── Steer Panel（副侧边栏） ──
@@ -563,6 +708,34 @@ class MainWindow(QMainWindow):
 
     def _on_steer_title(self, title: str) -> None:
         self._secondary_sidebar.setWindowTitle(title)
+
+    @guarded("task_saved")
+    def _on_task_saved(self, uri: str) -> None:
+        """任务编辑保存后刷新数据并触发重渲染。"""
+        self._nodes = load_task_tree()
+        self._render_tree()
+        # 保存后重新选中该任务 — 在 source model 中搜索
+        source = self._proxy.sourceModel()
+        if source is None:
+            return
+
+        def _walk(item):
+            for row in range(item.rowCount()):
+                child = item.child(row)
+                if child.data(ROLE_TASK_URI) == uri:
+                    return child
+                found = _walk(child)
+                if found is not None:
+                    return found
+            return None
+
+        target = _walk(source.invisibleRootItem())
+        if target is not None:
+            idx = self._proxy.mapFromSource(target.index())
+            self._tree.selectionModel().select(
+                idx, QItemSelectionModel.SelectionFlag.Select
+            )
+            self._tree.scrollTo(idx)
 
     def _load(self) -> None:
         self._nodes = load_task_tree()
@@ -703,7 +876,7 @@ class MainWindow(QMainWindow):
             '建议：关闭本窗口 → kill 残留进程 → 重新启动'
             '</div></div>'
         )
-        self._detail.set_html(html)
+        self._detail.show_placeholder(html)
         self.setCentralWidget(self._detail)
         self.setWindowTitle("⚠️ 应用故障")
 
@@ -836,11 +1009,11 @@ class MainWindow(QMainWindow):
 <div class="header">📁 Subject</div>
 <div class="title">{_esc_html(display)}</div>
 </body></html>"""
-            self._detail.set_html(html)
+            self._detail.show_placeholder(html)
             return
 
         if kind != "task" or not task_uri:
-            self._detail.set_html(f"""<!DOCTYPE html>
+            self._detail.show_placeholder(f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
   body {{ background: #1e1e2e; color: #a6adc8; font-family: -apple-system, sans-serif; font-size: 14px; padding: 20px; }}
 </style></head><body>
@@ -938,7 +1111,7 @@ class MainWindow(QMainWindow):
   }});
 </script></body></html>"""
 
-        self._detail.set_html(html_doc)
+        self._detail.show_task(task_uri, node, html_doc)
 
     @guarded("tree.double")
     def _on_double_click(self, index):
