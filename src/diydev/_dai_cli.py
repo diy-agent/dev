@@ -1167,6 +1167,19 @@ def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
         return None
 
 
+def _local_shutdown():
+    """关闭管控台（本地执行，不自动启动 app）。"""
+    socket_path = os.path.expanduser("~/.diy/app.sock")
+    if not os.path.exists(socket_path):
+        print("管控台未运行", file=sys.stderr)
+        return
+    resp = _send_to_socket("diy shutdown", timeout=2.0)
+    if resp is not None:
+        print(resp, file=sys.stderr)
+    else:
+        print("管控台未运行", file=sys.stderr)
+
+
 def _app_restart():
     """重启管控台：shutdown → 清理 socket → 启动 app。"""
     import subprocess
@@ -1221,9 +1234,12 @@ def main():
 
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
 
-    # 本地执行（不走 app.sock）
+    # 本地执行（不走 app.sock，生命周期类命令不应自动启动 app）
     if cmd == "restart":
         _app_restart()
+        return
+    if cmd == "shutdown":
+        _local_shutdown()
         return
     if cmd == "doctor" and len(sys.argv) > 2 and sys.argv[2] == "metrics":
         dai_doctor_metrics()
