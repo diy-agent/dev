@@ -11,7 +11,14 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, Qt, QTimer, Slot, Signal  # type: ignore[import-untyped]
+from PySide6.QtCore import (  # type: ignore[import-untyped]
+    QFileSystemWatcher,
+    QSortFilterProxyModel,
+    Qt,
+    QTimer,
+    Slot,
+    Signal,
+)
 from PySide6.QtGui import QAction, QFont, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
 from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
@@ -396,6 +403,22 @@ class MainWindow(QMainWindow):
         self._activity_bar = ActivityBar(self)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self._activity_bar)
 
+        # ── 过滤栏（搜索 + 状态过滤） ──
+        self._filter_text = QLineEdit()
+        self._filter_text.setPlaceholderText("搜索任务...")
+        self._filter_text.setClearButtonEnabled(True)
+        self._filter_text.textChanged.connect(self._filter_tree)
+
+        self._filter_state = QComboBox()
+        self._filter_state.addItems(["所有状态", "pending", "active", "done", "blocked", "cancelled"])
+        self._filter_state.currentTextChanged.connect(self._filter_tree)
+
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(4, 4, 4, 0)
+        filter_row.setSpacing(4)
+        filter_row.addWidget(self._filter_text, 3)
+        filter_row.addWidget(self._filter_state, 2)
+
         # ── 树视图（主侧边栏） ──
         self._tree = QTreeView()
         self._tree.setHeaderHidden(True)
@@ -407,9 +430,16 @@ class MainWindow(QMainWindow):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
+        tree_container = QWidget()
+        tree_layout = QVBoxLayout(tree_container)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.setSpacing(0)
+        tree_layout.addLayout(filter_row)
+        tree_layout.addWidget(self._tree)
+
         self._primary_sidebar = QDockWidget("任务树", self)
         self._primary_sidebar.setObjectName("PrimarySidebar")
-        self._primary_sidebar.setWidget(self._tree)
+        self._primary_sidebar.setWidget(tree_container)
         self._primary_sidebar.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
@@ -542,11 +572,20 @@ class MainWindow(QMainWindow):
         logger.debug("[main] 重载完成 — %d subject, %d task, %d root", subjects, tasks, len(self._nodes))
 
     def _render_tree(self) -> None:
-        model = build_model(self._nodes)
-        self._tree.setModel(model)
+        source = build_model(self._nodes)
+        self._proxy = TaskFilterProxy(self)
+        self._proxy.setSourceModel(source)
+        self._proxy.setRecursiveFilteringEnabled(True)
+        self._tree.setModel(self._proxy)
         self._tree.expandAll()
         # setModel() 会重建 selectionModel，重新连接信号
         self._tree.selectionModel().selectionChanged.connect(self._on_select)
+
+    @guarded("filter")
+    def _filter_tree(self) -> None:
+        """根据过滤栏筛选树节点。"""
+        self._proxy.invalidateFilter()
+        self._tree.expandAll()
 
     @guarded("timer.refresh")
     def _refresh_agents(self) -> None:
@@ -2118,6 +2157,42 @@ def _make_handler(gateway: Gateway):
 # ═══════════════════════════════════════════════════════
 # AgentInfo (简化 dataclass，避免循环导入)
 # ═══════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════
+# 任务树过滤器
+# ═══════════════════════════════════════════════════════
+
+class TaskFilterProxy(QSortFilterProxyModel):
+    """按文本 + 状态过滤任务树。"""
+
+    def __init__(self, window: "MainWindow"):
+        super().__init__(window)
+        self._window = window
+        self.setRecursiveFilteringEnabled(True)
+
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
+        model = self.sourceModel()
+        if model is None:
+            return True
+        index = model.index(source_row, 0, source_parent)
+        if not index.isValid():
+            return True
+
+        text = self._window._filter_text.text().strip().lower()
+        state_filter = self._window._filter_state.currentText()
+
+        display = (index.data(Qt.ItemDataRole.DisplayRole) or "").lower()
+        uri = index.data(ROLE_TASK_URI) or ""
+        item_state = index.data(ROLE_STATE) or ""
+
+        # 文本匹配
+        text_ok = not text or text in display or text in uri.lower()
+
+        # 状态匹配
+        state_ok = state_filter == "所有状态" or item_state == state_filter
+
+        return text_ok and state_ok
+
 
 class AgentInfo:
     def __init__(self, agent_id: str, state: str = "unknown", pid: int | None = None):
