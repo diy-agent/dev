@@ -1834,7 +1834,8 @@ class GatewayCLI:
         @diy.command
         def shutdown():
             """关闭管控台。app 退出后下次 dai 命令会自动启动。"""
-            QTimer.singleShot(200, QApplication.instance().quit)
+            # QApp.quit() 线程安全 — 直接调用，不经过 QTimer
+            QApplication.instance().quit()
             return "OK app 正在退出"
 
         # ── 注册 diy 组 ──

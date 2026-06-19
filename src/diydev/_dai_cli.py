@@ -1152,7 +1152,7 @@ def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
 
 
 def _app_restart():
-    """重启管控台：shutdown → 等 socket 消失 → 启动 app。"""
+    """重启管控台：shutdown → 清理 socket → 启动 app。"""
     import subprocess
     import time as _time
 
@@ -1160,19 +1160,21 @@ def _app_restart():
     script = os.path.join(os.path.dirname(__file__), "..", "..", "sha.sh")
     script = os.path.abspath(script)
 
-    # 1) shutdown
+    # 1) shutdown — 不管成功与否，只发一次
     if os.path.exists(socket_path):
         print("⏳ 正在关闭管控台...", file=sys.stderr)
-        _send_to_socket("diy shutdown", timeout=2.0)
+        _send_to_socket("diy shutdown", timeout=1.0)
 
-    # 2) 等 socket 消失（app 退出会清理 socket）
-    deadline = _time.time() + 5
-    while _time.time() < deadline:
-        if not os.path.exists(socket_path):
-            break
-        _time.sleep(0.2)
+    # 2) 短等 socket 消失（旧 app 响应 shutdown 后清理）
+    _time.sleep(0.5)
 
-    # 3) 启动 app
+    # 3) 强制清理残留 socket（旧 app 可能未及时清理或已死）
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+
+    # 4) 启动 app
     if not os.path.exists(script):
         print("错误: 找不到 sha.sh", file=sys.stderr)
         sys.exit(1)
@@ -1184,7 +1186,7 @@ def _app_restart():
         stderr=subprocess.DEVNULL,
     )
 
-    # 4) 等 socket 就绪
+    # 5) 等 socket 就绪
     deadline = _time.time() + 10
     while _time.time() < deadline:
         if os.path.exists(socket_path):
