@@ -59,6 +59,23 @@ ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
 # Material3 暗色主题 — 语义化颜色系统
 # ═══════════════════════════════════════════════════════
 
+import os as _os
+import pwd as _pwd
+
+
+def _detect_sandbox() -> tuple[bool, str]:
+    """检测是否在临时 HOME 下运行（测试/调试模式）。
+
+    Returns:
+        (is_sandbox, sandbox_path) — sandbox_path 是实际工作目录
+    """
+    real_home = _pwd.getpwuid(_os.getuid()).pw_dir
+    current_home = _os.path.expanduser("~")
+    if current_home == real_home:
+        return False, ""
+    return True, current_home
+
+
 class Theme:
     """语义化颜色令牌 — 高对比度暗色主题"""
 
@@ -85,6 +102,10 @@ class Theme:
     new_bg = "#73daca"         # 青
     new_fg = "#1e1e2e"
 
+    # 调试/沙箱模式 — 暖色替代蓝
+    sandbox_bg = "#e5c07b"      # 琥珀色（替代 active_bg 的蓝）
+    sandbox_fg = "#1e1e2e"
+
     @classmethod
     def state_bg(cls, state: str) -> str:
         return {
@@ -106,13 +127,20 @@ class Theme:
         }.get(state, cls.on_surface)
 
 
-def _app_stylesheet() -> str:
-    """全局 Material3 暗色主题 QSS。"""
+def _app_stylesheet(sandbox: bool = False) -> str:
+    """全局 Material3 暗色主题 QSS。
+
+    sandbox=True 时用琥珀色替代蓝色作为强调色，区分调试/生产环境。
+    """
+    accent = Theme.sandbox_bg if sandbox else Theme.active_bg
+    dock_bg = Theme.sandbox_bg if sandbox else Theme.surface_alt
+    tab_bg = Theme.sandbox_bg if sandbox else Theme.surface
+    btn_hover = Theme.sandbox_bg if sandbox else "#585b70"
     return f"""
         QMainWindow {{ background: {Theme.surface}; }}
         QDockWidget {{ background: {Theme.surface}; color: {Theme.on_surface};
                        border: 1px solid {Theme.outline}; titlebar-close-icon: none; }}
-        QDockWidget::title {{ background: {Theme.surface_alt};
+        QDockWidget::title {{ background: {dock_bg};
                               padding: 4px 8px; text-align: left; }}
         QTreeView {{ background: {Theme.surface}; color: {Theme.on_surface};
                      border: none; font-size: 13px;
@@ -128,15 +156,15 @@ def _app_stylesheet() -> str:
         QLineEdit {{ background: {Theme.surface_alt}; color: {Theme.on_surface};
                      border: 1px solid {Theme.outline}; border-radius: 4px;
                      padding: 4px 8px; }}
-        QLineEdit:focus {{ border: 1px solid {Theme.active_bg}; }}
+        QLineEdit:focus {{ border: 1px solid {accent}; }}
         QPushButton {{ background: #45475a; color: {Theme.on_surface};
                        border: none; border-radius: 4px; padding: 4px 12px; }}
-        QPushButton:hover {{ background: #585b70; }}
+        QPushButton:hover {{ background: {btn_hover}; }}
         QTabWidget::pane {{ background: {Theme.surface}; border: 1px solid {Theme.outline}; }}
         QTabBar::tab {{ background: {Theme.surface_alt}; color: {Theme.on_surface_variant};
                        padding: 4px 12px; border: none; }}
-        QTabBar::tab:selected {{ background: {Theme.surface}; color: {Theme.on_surface};
-                                 border-bottom: 2px solid {Theme.active_bg}; }}
+        QTabBar::tab:selected {{ background: {tab_bg}; color: {Theme.on_surface};
+                                 border-bottom: 2px solid {accent}; }}
         QScrollBar:vertical {{ background: {Theme.surface_alt}; width: 10px;
                                border: none; }}
         QScrollBar::handle:vertical {{ background: #45475a; border-radius: 4px;
@@ -340,7 +368,15 @@ class DetailView(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("diy 管控台")
+
+        # ── 沙箱检测（调试/测试模式） ──
+        self._sandbox, self._sandbox_path = _detect_sandbox()
+        if self._sandbox:
+            self.setWindowTitle(
+                f"⚡ diy 管控台 [调试: {self._sandbox_path}]"
+            )
+        else:
+            self.setWindowTitle("diy 管控台")
         self.resize(1000, 650)
 
         self._started_at = time.time()
@@ -915,6 +951,7 @@ class MainWindow(QMainWindow):
             f"timers:    refresh={self._refresh_timer.interval()}ms "
             f"steer={self._steer._timer.interval()}ms",
             f"qt:        {'running' if QApplication.instance() else 'stopped'}",
+            f"sandbox:   {'⚡ ' + self._sandbox_path if self._sandbox else 'no'}",
         ])
 
     @staticmethod
@@ -988,6 +1025,7 @@ class MainWindow(QMainWindow):
 # AppProbe — Unix socket 探针（agent 实时探测/操纵）
 # ═══════════════════════════════════════════════════════
 
+import fcntl
 import socket
 import socketserver
 import threading
@@ -1039,8 +1077,9 @@ class ProbeCLI:
         self._main = MainThread(window)
         self._app = CycloptsApp(name="probe")
 
-        # ── AI 子应用 ──
+        # ── AI 子应用（API 指令） ──
         ai = CycloptsApp(name="ai", help="AI/agent 接口")
+
         @ai.command
         def tree():
             """完整任务树（和 UI 一致）"""
@@ -1077,11 +1116,658 @@ class ProbeCLI:
             sock_ino = getattr(probe, '_sock_ino', None)
             return format_report(run_check(sock_dev, sock_ino))
 
+        # ═══════════════════════════════════════════
+        # AI 子命令：task / subject / state / scan / profile / agent
+        # 从 _dai_cli 导入逻辑函数，注册为 cyclopts 子 App
+        # ═══════════════════════════════════════════
+
+        # ── ai state ──
+        @ai.command
+        def state(
+            json_output: bool = False,
+            set_path: list[str] | None = None,
+            free: bool = False,
+        ):
+            """输出/修改 state.yaml"""
+            from diydev._state import load_state, save_state
+            if free:
+                data = load_state()
+                spaces = data.get("spaces", {})
+                free_paths = [p for p, cfg in spaces.items() if not cfg or cfg.get("lock") is None]
+                return "\n".join(sorted(free_paths))
+            if set_path is not None:
+                if len(set_path) != 2:
+                    return "错误: --set 需要 <path> <value> 两个参数"
+                path, raw_value = set_path
+                import json as _json
+                parsed = _json.loads(raw_value) if raw_value.lower() not in ("true", "false") else raw_value.lower() == "true"
+                try:
+                    parsed = int(raw_value)
+                except ValueError:
+                    pass
+                data = load_state()
+                parts = path.split(".")
+                section, key, field = parts[0], ".".join(parts[1:-1]), parts[-1]
+                section_data = data.setdefault(section, {})
+                entry = section_data.setdefault(key, {})
+                entry[field] = parsed
+                save_state(data)
+                return "OK"
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(load_state(), _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        # ── ai scan ──
+        @ai.command
+        def scan(
+            path: str | None = None,
+            json_output: bool = False,
+        ):
+            """扫描 workspace 与 spaces"""
+            from diydev._dai_scan import find_spaces, find_workspace_root
+            import os as _os
+            start = _os.path.realpath(path) if path else _os.path.realpath(_os.getcwd())
+            ws = find_workspace_root(start)
+            if ws is None:
+                return "错误: 未找到 diy.yaml"
+            spaces = find_spaces(ws)
+            import yaml as _yaml
+            import json as _json
+            result = {"workspace": ws, "spaces": spaces}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            import io as _io
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        # ── ai profile ──
+        profile_app = CycloptsApp(name="profile", help="查询 state.yaml 中的 profile 预设")
+
+        @profile_app.command(name="list")
+        def profile_list(json_output: bool = False):
+            """列出所有 profile"""
+            from diydev._state import load_state
+            import json as _json
+            profiles = load_state().get("profiles", {})
+            if json_output:
+                return _json.dumps(profiles, indent=2, ensure_ascii=False)
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(profiles, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @profile_app.command
+        def profile_show(name: str, json_output: bool = False):
+            """查看单个 profile"""
+            from diydev._state import load_state
+            import yaml as _yaml, json as _json
+            profiles = load_state().get("profiles", {})
+            if name not in profiles:
+                return f"错误: profile {name} 不存在"
+            if json_output:
+                return _json.dumps(profiles[name], indent=2, ensure_ascii=False)
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(profiles[name], _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        ai.command(profile_app)
+
+        # ── ai subject ──
+        subject_app = CycloptsApp(name="subject", help="Subject 树管理")
+
+        def _norm(path: str) -> str:
+            import os as _os
+            home = _os.path.expanduser("~")
+            expanded = _os.path.abspath(_os.path.expanduser(path))
+            if expanded.startswith(home + "/"):
+                return "~" + expanded[len(home):]
+            if expanded == home:
+                return "~"
+            return expanded
+
+        def _subject_is_git(path: str) -> bool:
+            import os as _os
+            full = _os.path.expanduser(path)
+            return _os.path.isdir(_os.path.join(full, ".git")) or _os.path.isfile(_os.path.join(full, ".git"))
+
+        @subject_app.command(name="add")
+        def subject_add(
+            path: str,
+            desc: str | None = None,
+            json_output: bool = False,
+        ):
+            """注册 subject"""
+            from diydev._state import load_state, save_state
+            path_n = _norm(path)
+            data = load_state()
+            subjects = data.setdefault("subjects", {})
+            if path_n in subjects:
+                return f"错误: subject {path_n} 已存在"
+            entry: dict = {}
+            if desc:
+                entry["description"] = desc
+            subjects[path_n] = entry
+            save_state(data)
+            import json as _json, io as _io
+            result = {"status": "success", "data": {"path": path_n, **entry}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @subject_app.command(name="list")
+        def subject_list(json_output: bool = False):
+            """扁平列表"""
+            from diydev._state import load_state
+            import yaml as _yaml, json as _json, io as _io
+            data = load_state()
+            subjects = data.get("subjects", {})
+            enriched = {p: {**entry, "is_git": _subject_is_git(p)} for p, entry in subjects.items()}
+            if json_output:
+                return _json.dumps(enriched, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(enriched, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @subject_app.command(name="remove")
+        def subject_remove(path: str, json_output: bool = False):
+            """删除 subject"""
+            from diydev._state import load_state, save_state
+            import json as _json, io as _io
+            path_n = _norm(path)
+            data = load_state()
+            subjects = data.get("subjects", {})
+            if path_n not in subjects:
+                return f"错误: subject {path_n} 不存在"
+            to_delete = [p for p in subjects if p == path_n or p.startswith(path_n + "/")]
+            for p in to_delete:
+                del subjects[p]
+            save_state(data)
+            result = {"status": "success", "data": {"path": path_n, "removed": len(to_delete)}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @subject_app.command(name="show")
+        def subject_show(path: str, json_output: bool = False):
+            """查看单个 subject（含实时 is_git 检测）"""
+            from diydev._state import load_state
+            import yaml as _yaml, json as _json, io as _io
+            path_n = _norm(path)
+            data = load_state()
+            subjects = data.get("subjects", {})
+            if path_n not in subjects:
+                return f"subject {path_n} 不存在"
+            entry = dict(subjects[path_n])
+            entry["is_git"] = _subject_is_git(path_n)
+            if json_output:
+                return _json.dumps(entry, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(entry, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @subject_app.command(name="tree")
+        def subject_tree(json_output: bool = False):
+            """树状展示 subject（实时 is_git 检测）"""
+            from diydev._state import load_state
+            from diydev._dai_cli import _build_subject_tree
+            import yaml as _yaml, json as _json, io as _io
+            data = load_state()
+            subjects = data.get("subjects", {})
+            enriched = {p: {**entry, "is_git": _subject_is_git(p)} for p, entry in subjects.items()}
+            tree = _build_subject_tree(enriched)
+            if json_output:
+                return _json.dumps(tree, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(tree, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @subject_app.command(name="scan")
+        def subject_scan(root: str, json_output: bool = False):
+            """扫描文件系统，发现 git 仓库作为 subject"""
+            import os as _os
+            from diydev._state import load_state, save_state
+            import yaml as _yaml, json as _json, io as _io
+            root_path = _os.path.abspath(_os.path.expanduser(root))
+            if not _os.path.isdir(root_path):
+                return f"错误: 目录不存在 {root}"
+            found: dict[str, dict] = {}
+            for dirpath, dirs, _ in _os.walk(root_path):
+                if _os.path.isdir(_os.path.join(dirpath, ".git")) or _os.path.isfile(_os.path.join(dirpath, ".git")):
+                    found[_norm(dirpath)] = {}
+                    dirs.clear()
+            data = load_state()
+            subjects = data.setdefault("subjects", {})
+            subjects.update(found)
+            save_state(data)
+            result = {"status": "success", "data": {"found": len(found)}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        ai.command(subject_app)
+
+        # ── ai task ──
+        task_app = CycloptsApp(name="task", help="任务管理")
+
+        @task_app.command(name="list")
+        def task_list(json_output: bool = False):
+            """列出所有任务"""
+            from diydev._state import list_tasks
+            import yaml as _yaml, json as _json, io as _io
+            tasks = dict(list_tasks())
+            if json_output:
+                return _json.dumps({"tasks": tasks}, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump({"tasks": tasks}, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @task_app.command(name="show")
+        def task_show(uri: str, json_output: bool = False):
+            """查看单个任务"""
+            from diydev._state import get_task
+            import yaml as _yaml, json as _json, sys as _sys
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            body = task.pop("body", "") if not json_output else task.get("body", "")
+            if json_output:
+                return _json.dumps(task, indent=2, ensure_ascii=False)
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(task, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            result = _buf.getvalue()
+            if body:
+                result += "\n" + body
+            return result
+
+        @task_app.command(name="create")
+        def task_create(
+            title: str,
+            subject: str,
+            parent: str | None = None,
+            detail: str | None = None,
+            body_file: str | None = None,
+            source_type: str = "local",
+            source_uri: str | None = None,
+            json_output: bool = False,
+        ):
+            """创建任务"""
+            from diydev._state import load_state, get_task, create_task
+            import yaml as _yaml, json as _json, sys as _sys
+            subject_n = _norm(subject)
+            data = load_state()
+            if subject_n not in data.get("subjects", {}):
+                return f"错误: subject {subject_n} 未注册"
+            if parent is not None and get_task(parent) is None:
+                return f"错误: parent {parent} 不存在"
+            body = ""
+            if body_file:
+                try:
+                    from pathlib import Path
+                    body = Path(body_file).read_text(encoding="utf-8")
+                except OSError as exc:
+                    return f"错误: 无法读取 body 文件: {exc}"
+            try:
+                uri = create_task(title=title, subject=subject_n, parent=parent, detail=detail,
+                                  source_type=source_type, source_uri=source_uri, body=body)
+            except ValueError as exc:
+                return f"错误: {exc}"
+            task = get_task(uri) or {}
+            result = {"status": "success", "data": task}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @task_app.command(name="edit")
+        def task_edit(
+            uri: str,
+            title: str | None = None,
+            state: str | None = None,
+            subject: str | None = None,
+            parent: str | None = None,
+            detail: str | None = None,
+            body_file: str | None = None,
+            json_output: bool = False,
+        ):
+            """编辑任务"""
+            from diydev._state import get_task, update_task_field
+            import yaml as _yaml, json as _json, sys as _sys
+            if get_task(uri) is None:
+                return f"错误: 任务 {uri} 不存在"
+            fields: dict = {}
+            if title is not None:
+                fields["title"] = title
+            if state is not None:
+                fields["state"] = state
+            if subject is not None:
+                fields["subject"] = _norm(subject)
+            if parent is not None:
+                if get_task(parent) is None:
+                    return f"错误: parent {parent} 不存在"
+                fields["parent"] = parent
+            if detail is not None:
+                fields["detail"] = detail
+            if body_file is not None:
+                try:
+                    from pathlib import Path
+                    fields["body"] = Path(body_file).read_text(encoding="utf-8")
+                except OSError as exc:
+                    return f"错误: 无法读取 body 文件: {exc}"
+            task = update_task_field(uri, **fields)
+            result = {"status": "success", "data": task}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            import io as _io
+            import yaml as _yaml
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @task_app.command(name="delete")
+        def task_delete(uri: str, json_output: bool = False):
+            """删除本地任务"""
+            from diydev._state import get_task, delete_task
+            import json as _json
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            src = task.get("source", {})
+            if src.get("type") != "local":
+                return f"错误: {uri} 是外部任务，请用 unlink"
+            delete_task(uri)
+            result = {"status": "success"}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            return "已删除"
+
+        @task_app.command(name="link")
+        def task_link(
+            title: str,
+            subject: str,
+            source_uri: str,
+            parent: str | None = None,
+            detail: str | None = None,
+            json_output: bool = False,
+        ):
+            """链接外部任务（GitHub issue / PR 等）。不修改远端，仅建立本地引用。"""
+            from diydev._state import load_state, get_task, create_task
+            import yaml as _yaml, json as _json, io as _io
+            if not source_uri:
+                return "错误: --source-uri 必填"
+            if "github.com" in source_uri:
+                source_type = "github_pr" if "/pull/" in source_uri else "github_issue"
+            else:
+                source_type = "external"
+            subject_n = _norm(subject)
+            data = load_state()
+            if subject_n not in data.get("subjects", {}):
+                return f"错误: subject {subject_n} 未注册"
+            if parent is not None and get_task(parent) is None:
+                return f"错误: parent {parent} 不存在"
+            try:
+                uri = create_task(
+                    title=title, subject=subject_n, parent=parent, detail=detail,
+                    source_type=source_type, source_uri=source_uri,
+                )
+            except ValueError as exc:
+                return f"错误: {exc}"
+            task = get_task(uri) or {}
+            result = {"status": "success", "data": task}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @task_app.command(name="archive")
+        def task_archive(uri: str, json_output: bool = False):
+            """归档任务：从 ~/.diy/d/ 移到 ~/.diy/archive/data/。"""
+            from diydev._state import get_task, archive_task
+            import json as _json
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            try:
+                archive_path = archive_task(uri)
+            except FileNotFoundError:
+                return f"错误: 任务文件不存在: {uri}"
+            except OSError as exc:
+                return f"错误: 归档失败: {exc}"
+            result = {"status": "success", "data": {"uri": uri, "archive_path": str(archive_path)}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            return f"已归档: {archive_path}"
+
+        @task_app.command(name="unlink")
+        def task_unlink(uri: str, json_output: bool = False):
+            """解绑外部任务引用。不删除远端 issue，仅移除本地记录。"""
+            from diydev._state import get_task, delete_task
+            import json as _json
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            src = task.get("source", {})
+            if src.get("type") == "local":
+                return f"错误: {uri} 是本地任务，请用 delete"
+            delete_task(uri)
+            result = {"status": "success"}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            return "已解绑"
+
+        @task_app.command(name="sync")
+        def task_sync(
+            uri: str | None = None,
+            all: bool = False,
+            json_output: bool = False,
+        ):
+            """同步外部任务内容到本地（目前支持：GitHub issue）。"""
+            from diydev._state import get_task, list_tasks, update_task_field, archive_task
+            import json as _json, subprocess, re as _re, yaml as _yaml, io as _io
+
+            if not uri and not all:
+                return "错误: 请指定任务 URI 或使用 --all 同步全部"
+
+            _GH_STATE_MAP = {"OPEN": "active", "CLOSED": "done", "MERGED": "done"}
+
+            def _gh_parse(source_uri: str):
+                m = _re.match(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", source_uri)
+                if not m:
+                    return None
+                return m.group(1), m.group(2), m.group(3)
+
+            def _sync_one(t_uri: str, t_data: dict) -> dict | str:
+                src = t_data.get("source", {})
+                source_uri = src.get("uri", t_uri)
+                parsed = _gh_parse(source_uri)
+                if not parsed:
+                    return f"无法解析 GitHub URI: {source_uri}"
+                owner, repo, number = parsed
+                try:
+                    r = subprocess.run(
+                        ["gh", "issue", "view", number, "--repo", f"{owner}/{repo}",
+                         "--json", "title,body,state,updatedAt"],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                except FileNotFoundError:
+                    return "gh CLI 未安装"
+                except subprocess.TimeoutExpired:
+                    return f"请求 {owner}/{repo}#{number} 超时"
+                if r.returncode != 0:
+                    err = r.stderr.strip()
+                    if "not found" in err.lower():
+                        try:
+                            ap = archive_task(t_uri)
+                            return f"GitHub issue 已不存在，已归档至 {ap}"
+                        except FileNotFoundError:
+                            return "GitHub issue 已不存在（已移除）"
+                    return f"gh 调用失败: {err}"
+                try:
+                    data = _json.loads(r.stdout)
+                except _json.JSONDecodeError:
+                    return f"gh 返回非 JSON: {r.stdout[:200]}"
+                title = data.get("title", t_data.get("title", ""))
+                body = data.get("body", "") or ""
+                gh_state = _GH_STATE_MAP.get(data.get("state", ""), "active")
+                return update_task_field(t_uri, title=title, state=gh_state, body=body)
+
+            if all:
+                tasks = list_tasks()
+                results: dict[str, dict | str] = {}
+                total = 0
+                for t_uri, t_data in sorted(tasks.items()):
+                    src = t_data.get("source", {})
+                    src_type = src.get("type", "")
+                    if src_type not in ("github_issue",):
+                        continue
+                    total += 1
+                    results[t_uri] = _sync_one(t_uri, t_data)
+                ok = sum(1 for v in results.values() if isinstance(v, dict))
+                fail = sum(1 for v in results.values() if isinstance(v, str))
+                if json_output:
+                    return _json.dumps({"synced": ok, "failed": fail, "results": results, "total": total},
+                                       indent=2, ensure_ascii=False)
+                return f"同步完成: {ok} 更新, {fail} 失败, 共 {total} 个外部任务"
+            # 单个同步
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            src = task.get("source", {})
+            src_type = src.get("type", "")
+            if src_type != "github_issue":
+                return f"错误: {uri} 的类型 {src_type} 暂不支持同步"
+            result = _sync_one(uri, task)
+            if isinstance(result, str):
+                return f"错误: {result}"
+            if json_output:
+                return _json.dumps({"status": "success", "data": result}, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump({"status": "success", "data": result}, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        ai.command(task_app)
+
+        # ── ai agent ──
+        agent_app = CycloptsApp(name="agent", help="子 agent 管理 — 文本协议")
+
+        import socket as _sock
+        _AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
+
+        def _agent_send_text(cmd_line: str) -> str:
+            """向 agentd socket 发送一行文本命令，返回全部响应文本。"""
+            s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+            s.settimeout(10)
+            s.connect(_AGENT_SOCKET)
+            s.sendall((cmd_line + "\n").encode("utf-8"))
+            s.shutdown(_sock.SHUT_WR)
+            buf: list[bytes] = []
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                buf.append(data)
+            s.close()
+            return b"".join(buf).decode("utf-8")
+
+        def _check_agent_ok(resp: str) -> str | None:
+            """检查响应首行是否为 OK，返回状态描述或错误信息。"""
+            first = resp.split("\n")[0].strip()
+            if first.startswith("ERROR"):
+                return first[6:].strip()
+            if first.startswith("OK"):
+                return first[3:].strip()
+            return None
+
+        @agent_app.command
+        def agent_spawn(
+            task_uri: str,
+            message: str,
+            model: str | None = None,
+            toolsets: str | None = None,
+            reasoning_budget: int | None = None,
+        ):
+            """为一个 task 创建并启动 agent"""
+            parts = ["spawn", f"--task={task_uri}", f"--message={message}"]
+            if model:
+                parts.append(f"--model={model}")
+            if toolsets:
+                parts.append(f"--toolsets={toolsets}")
+            if reasoning_budget is not None:
+                parts.append(f"--reasoning={reasoning_budget}")
+            cmd = " ".join(parts)
+            resp = _agent_send_text(cmd)
+            err = _check_agent_ok(resp)
+            if err is not None:
+                return f"agent {task_uri}: {err}"
+            return f"agent {task_uri}: 已启动"
+
+        @agent_app.command
+        def agent_send(
+            task_uri: str,
+            message: str,
+        ):
+            """向 agent 发送消息"""
+            cmd = f"send --task={task_uri} --message={message}"
+            resp = _agent_send_text(cmd)
+            err = _check_agent_ok(resp)
+            if err is not None:
+                return f"agent {task_uri}: {err}"
+            return f"agent {task_uri}: 消息已发送"
+
+        @agent_app.command
+        def agent_kill(task_uri: str):
+            """终止 agent"""
+            cmd = f"kill --task={task_uri}"
+            resp = _agent_send_text(cmd)
+            err = _check_agent_ok(resp)
+            if err is not None:
+                return f"agent {task_uri}: {err}"
+            return f"agent {task_uri}: 已终止"
+
+        @agent_app.command
+        def agent_list():
+            """列出所有活跃 agent"""
+            resp = _agent_send_text("list")
+            if resp.startswith("(") or not resp.strip():
+                return "(无活跃 agent)"
+            return resp
+
+        @agent_app.command
+        def agent_show(task_uri: str):
+            """查看 agent 状态和输出"""
+            cmd = f"show --task={task_uri}"
+            resp = _agent_send_text(cmd)
+            if resp.startswith("ERROR"):
+                return resp
+            return resp
+
+        ai.command(agent_app)
+
+        # ── 注册 ai 组 ──
         self._app.command(ai)
 
-        # ── 人类子应用 ──
-        hum = CycloptsApp(name="human", help="人类接口")
-        @hum.command
+        # ── UI 子应用（代替旧 human） ──
+        ui = CycloptsApp(name="ui", help="UI 指令 — 读取/操纵当前 UI 状态")
+        @ui.command
         def notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
@@ -1091,19 +1777,40 @@ class ProbeCLI:
                 Q_ARG(str, text))
             return "OK"
 
-        @hum.command
+        @ui.command
         def title(*text: str):
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: human title <文本...>"
+                return "错误: 缺少参数，用法: ui title <文本...>"
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
 
-        self._app.command(hum)
+        # UI 视图查询命令
+        @ui.command
+        def tree():
+            """当前任务树视图"""
+            return self._main.invoke(self._window.format_tree)
+
+        @ui.command
+        def status():
+            """当前 app 状态"""
+            return self._main.invoke(self._window.format_status)
+
+        @ui.command
+        def agents():
+            """当前 agent 列表视图"""
+            return self._main.invoke(self._window.format_agents)
+
+        @ui.command
+        def node(uri: str):
+            """<uri> 任务节点详情（UI 视图呈现）"""
+            return self._main.invoke(lambda: self._window.format_node(uri))
+
+        self._app.command(ui)
 
         @self._app.default
         def unknown(*tokens: str):
@@ -1162,39 +1869,62 @@ class AppProbe(QObject):
         self._cli = ProbeCLI(window)
 
     def start(self) -> None:
-        # 1) Socket 锁检查 — 连接成功说明有活实例
+        _LOCK_PATH = os.path.join(os.path.dirname(self._path), "app.lock")
+        os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
+        lock_fd = os.open(_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
+
+        # Acquire exclusive lock — serializes startup with _forward.py
         try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(self._path)
-            s.close()
-            raise AppProbeError(
-                f"已有运行中的管控台实例 (socket: {self._path})"
+            fcntl.fcntl(lock_fd, fcntl.LOCK_EX)
+        except OSError:
+            os.close(lock_fd)
+            raise AppProbeError("无法获取 app.lock")
+
+        try:
+            # 1) Socket 锁检查 — 连接成功说明有活实例（锁下重新检查）
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(self._path)
+                s.close()
+                raise AppProbeError(
+                    f"已有运行中的管控台实例 (socket: {self._path})"
+                )
+            except (OSError, socket.timeout):
+                pass  # 连不上 → 残留或不存在
+
+            # 2) 清理残留 socket + 绑定（仍持有锁）
+            try:
+                os.unlink(self._path)
+            except OSError:
+                pass
+
+            self._server = socketserver.UnixStreamServer(
+                self._path, _make_handler(self)
             )
-        except (OSError, socket.timeout):
-            pass  # 连不上 → 残留或不存在
+            self._thread = threading.Thread(
+                target=self._server.serve_forever, daemon=True
+            )
+            self._thread.start()
 
-        # 2) 清理残留 socket + 绑定
-        try:
-            os.unlink(self._path)
-        except OSError:
-            pass
+            # 记下 socket 文件身份
+            self._sock_dev: int | None = None
+            self._sock_ino: int | None = None
+            try:
+                st = os.stat(self._path)
+                self._sock_dev = st.st_dev
+                self._sock_ino = st.st_ino
+            except OSError:
+                pass
 
-        self._server = socketserver.UnixStreamServer(self._path, _make_handler(self))
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
-
-        # 记下 socket 文件身份（stat 而非 fstat，因为 AF_UNIX 两类 inode 不同）
-        self._sock_dev: int | None = None
-        self._sock_ino: int | None = None
-        try:
-            st = os.stat(self._path)
-            self._sock_dev = st.st_dev
-            self._sock_ino = st.st_ino
-        except OSError:
-            pass
-
-        logger.info("AppProbe socket ready → %s  pid=%d", self._path, os.getpid())
+            logger.info(
+                "AppProbe socket ready → %s  pid=%d",
+                self._path,
+                os.getpid(),
+            )
+        finally:
+            # Release lock — socket is bound, others can detect it
+            os.close(lock_fd)
 
     def stop(self) -> None:
         if self._server:
@@ -1288,9 +2018,10 @@ def main():
     elif not _agentd_alive:
         logger.warning("找不到 Hermes Python，agentd 未启动")
 
+    sandbox, sandbox_path = _detect_sandbox()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    app.setStyleSheet(_app_stylesheet())
+    app.setStyleSheet(_app_stylesheet(sandbox))
 
     # Ctrl+C 两次退出（调试模式下 Qt event loop 会吞 SIGINT）
     signal.signal(signal.SIGINT, signal.SIG_DFL)

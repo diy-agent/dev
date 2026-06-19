@@ -7,7 +7,6 @@ AIAgent 的实际创建在 _agent_daemon.py（运行在 Hermes venv 中）。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 
@@ -89,52 +88,3 @@ class AgentStatus:
         )
 
 
-# ════════════════════════════════════════════════════════════════
-# Socket 协议消息
-# ════════════════════════════════════════════════════════════════
-
-@dataclass
-class DaemonCommand:
-    """CLI → Daemon 的命令。"""
-    action: str                # spawn | send | kill | list | show | config
-    task_uri: str = ""
-    message: str = ""
-    config: dict | None = None
-
-    def to_dict(self) -> dict:
-        d: dict[str, Any] = {"action": self.action}
-        if self.task_uri:
-            d["task_uri"] = self.task_uri
-        if self.message:
-            d["message"] = self.message
-        if self.config:
-            d["config"] = self.config
-        return d
-
-    @classmethod
-    def from_dict(cls, d: dict) -> DaemonCommand:
-        return cls(
-            action=d.get("action", ""),
-            task_uri=d.get("task_uri", ""),
-            message=d.get("message", ""),
-            config=d.get("config"),
-        )
-
-
-@dataclass
-class DaemonResponse:
-    """Daemon → CLI 的响应。"""
-    ok: bool = True
-    data: Any = None
-    error: str = ""
-
-    def to_dict(self) -> dict:
-        return {"ok": self.ok, "data": self.data, "error": self.error}
-
-    @classmethod
-    def from_dict(cls, d: dict) -> DaemonResponse:
-        return cls(
-            ok=d.get("ok", True),
-            data=d.get("data"),
-            error=d.get("error", ""),
-        )

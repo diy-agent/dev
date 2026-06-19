@@ -1,7 +1,21 @@
 """Agent Daemon — 后台进程，管理 AIAgent 实例。
 
 作为子进程运行（使用 Hermes venv 的 Python 解释器），
-通过 Unix socket 接收命令。CLI 通过 socket 与之通信。
+通过 Unix socket 接收文本命令。CLI 通过 socket 与之通信。
+
+协议: 纯文本，一行一个命令，shlex 解析
+  spawn --task <uri> --message <msg> [--model <m>] [--toolsets <t1,t2>] [--reasoning <n>]
+  send --task <uri> --message <msg>
+  kill --task <uri>
+  show --task <uri>
+  list
+  config
+  shutdown
+
+输出: 纯文本行，首行是状态行，后续是数据。
+  成功: OK <状态描述>
+  失败: ERROR <错误信息>
+  数据行: <json> 或普通文本
 
 启动:
   /path/to/hermes/python -m diydev._agent_daemon
@@ -12,9 +26,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import shlex
 import socketserver
 import sys
 import threading
@@ -29,8 +45,6 @@ if _pool_dir not in sys.path:
     sys.path.insert(0, _pool_dir)
 import _agent_pool  # noqa: E402
 AgentStatus = _agent_pool.AgentStatus
-DaemonCommand = _agent_pool.DaemonCommand
-DaemonResponse = _agent_pool.DaemonResponse
 TaskAgentConfig = _agent_pool.TaskAgentConfig
 
 logger = logging.getLogger("agentd")
@@ -178,6 +192,15 @@ class _ManagedAgent:
         if self.status.state == "running":
             return "agent 已在运行"
 
+        # Fix: interrupt 或 killed 后重新 spawn 要重建实例
+        if self.status.state in ("interrupted", "killed", "failed"):
+            self.agent = None
+            self._messages = None
+            self._output_buf = []
+            self._output_chunks = []
+            self._exec_thread = None
+            self.status.error = ""  # Fix: 重置 error
+
         if self.agent is None:
             self.build_agent()
 
@@ -236,19 +259,40 @@ class _ManagedAgent:
         return "ok"
 
     def kill(self):
-        """终止 agent。"""
+        """终止 agent。
+
+        Fix: kill 后 error 字段重置。
+        """
         if self.agent is not None:
             try:
                 self.agent.interrupt("用户终止")
             except Exception:
                 pass
         self.status.state = "killed"
+        self.status.error = ""  # Fix: 重置 error
         self._write_bridge_status()
 
     @property
     def output_tail(self) -> list[str]:
         lines = [l for l in self._output_buf if l]
         return lines[-20:]
+
+    def _format_status_block(self) -> str:
+        """将 AgentStatus 格式化为可读文本块。"""
+        s = self.status
+        lines = [
+            f"状态: {s.state}",
+            f"模型: {s.model or self.config.model or ''}",
+            f"启动: {s.started_at}",
+            f"最后消息: {s.last_message[:200]}",
+        ]
+        if s.error:
+            lines.append(f"错误: {s.error}")
+        tail = self.output_tail
+        if tail:
+            lines.append("--- 输出 ---")
+            lines.extend(tail)
+        return "\n".join(lines)
 
 
 class SessionPool:
@@ -268,6 +312,9 @@ class SessionPool:
                 self._agents[task_uri] = agent
             elif agent.status.state == "running":
                 return agent.status
+            else:
+                # Fix: re-spawn 时更新 config（替换旧的，不保留已存在的 agent.config）
+                agent.config = agent_config
         msg = agent.spawn(prompt)
         return agent.status
 
@@ -307,6 +354,157 @@ class SessionPool:
 
 
 # ════════════════════════════════════════════════════════════════
+# 文本协议解析器
+# ════════════════════════════════════════════════════════════════
+
+def _parse_bool(val: str) -> bool:
+    return val.lower() in ("true", "1", "yes")
+
+
+def _parse_config_from_args(
+    args: dict[str, str],
+) -> dict[str, Any]:
+    """从 args dict 提取 agent config 参数。"""
+    config: dict[str, Any] = {}
+    if args.get("model"):
+        config["model"] = args["model"]
+    if args.get("provider"):
+        config["provider"] = args["provider"]
+    if args.get("toolsets"):
+        config["enabled_toolsets"] = [t.strip() for t in args["toolsets"].split(",")]
+    if args.get("max_iterations"):
+        config["max_iterations"] = int(args["max_iterations"])
+    if args.get("skip_context_files"):
+        config["skip_context_files"] = _parse_bool(args["skip_context_files"])
+    if args.get("skip_memory"):
+        config["skip_memory"] = _parse_bool(args["skip_memory"])
+    if args.get("reasoning"):
+        config["reasoning_budget"] = int(args["reasoning"])
+    if args.get("checkpoints"):
+        config["checkpoints"] = _parse_bool(args["checkpoints"])
+    return config
+
+
+def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
+    """解析一行文本命令，执行操作，输出结果到 out。
+
+    输出流式 flush，每行独立。
+    """
+    global _pool
+    pool = _pool
+
+    tokens = shlex.split(cmd_line)
+    if not tokens:
+        out.write("ERROR 空命令\n")
+        out.flush()
+        return
+
+    action = tokens[0]
+
+    # 解析 --key value 参数
+    args: dict[str, str] = {}
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token.startswith("--"):
+            key = token[2:]
+            if i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
+                i += 1
+                args[key] = tokens[i]
+            else:
+                args[key] = "true"
+        i += 1
+
+    if pool is None:
+        out.write("ERROR agentd 未初始化\n")
+        out.flush()
+        return
+
+    try:
+        if action == "spawn":
+            task_uri = args.get("task")
+            message = args.get("message")
+            if not task_uri or not message:
+                out.write("ERROR spawn 需要 --task 和 --message\n")
+                out.flush()
+                return
+            config = _parse_config_from_args(args)
+            status = pool.spawn(task_uri, message, config)
+            out.write(f"OK {status.state}\n")
+            out.flush()
+
+        elif action == "send":
+            task_uri = args.get("task")
+            message = args.get("message")
+            if not task_uri or not message:
+                out.write("ERROR send 需要 --task 和 --message\n")
+                out.flush()
+                return
+            status = pool.send(task_uri, message)
+            out.write(f"OK {status.state}\n")
+            out.flush()
+
+        elif action == "kill":
+            task_uri = args.get("task")
+            if not task_uri:
+                out.write("ERROR kill 需要 --task\n")
+                out.flush()
+                return
+            status = pool.kill(task_uri)
+            out.write(f"OK killed\n")
+            out.flush()
+
+        elif action == "show":
+            task_uri = args.get("task")
+            if not task_uri:
+                out.write("ERROR show 需要 --task\n")
+                out.flush()
+                return
+            status = pool.show(task_uri)
+            if status is None:
+                out.write(f"ERROR agent {task_uri} 不存在\n")
+                out.flush()
+                return
+            # 输出状态块
+            agent = pool._agents.get(task_uri)
+            if agent:
+                out.write(agent._format_status_block() + "\n")
+            else:
+                out.write(f"状态: {status.state}\n")
+            out.flush()
+
+        elif action == "list":
+            agents = pool.list()
+            if not agents:
+                out.write("(无活跃 agent)\n")
+                out.flush()
+                return
+            for a in agents:
+                out.write(f"{a.task_uri:30s} {a.state:10s} {a.model or ''}\n")
+            out.flush()
+
+        elif action == "config":
+            out.write(json.dumps({"default": DEFAULT_CONFIG.to_dict()}, indent=2) + "\n")
+            out.flush()
+
+        elif action == "shutdown":
+            out.write("OK shutdown\n")
+            out.flush()
+            # 在后台线程执行 shutdown，避免 socket write 被截断
+            import _thread
+            _thread.interrupt_main()
+
+        else:
+            out.write(f"ERROR 未知命令: {action}\n")
+            out.flush()
+
+    except Exception as exc:
+        logger.exception("dispatch error: %s", action)
+        out.write(f"ERROR {exc}\n")
+        out.flush()
+
+
+# ════════════════════════════════════════════════════════════════
 # Socket 服务器
 # ════════════════════════════════════════════════════════════════
 
@@ -314,60 +512,20 @@ _pool: SessionPool | None = None
 
 
 class AgentDaemonHandler(socketserver.BaseRequestHandler):
-    """处理 CLI 发来的命令。"""
+    """处理 CLI 发来的文本命令。"""
 
     def handle(self):
-        raw = self.request.recv(65536)
-        if not raw:
+        # 使用 rfile 按行读取，支持流式
+        data = self.rfile.readline()
+        if not data:
             return
-        try:
-            cmd = DaemonCommand.from_dict(json.loads(raw.decode("utf-8")))
-        except (json.JSONDecodeError, Exception) as exc:
-            resp = DaemonResponse(ok=False, error=f"解析失败: {exc}")
-            self.request.sendall(json.dumps(resp.to_dict()).encode("utf-8"))
-            return
+        cmd_line = data.decode("utf-8").strip()
 
-        try:
-            resp = self._dispatch(cmd)
-        except Exception as exc:
-            logger.exception("dispatch error")
-            resp = DaemonResponse(ok=False, error=str(exc))
-
-        self.request.sendall(json.dumps(resp.to_dict()).encode("utf-8"))
-
-    def _dispatch(self, cmd: DaemonCommand) -> DaemonResponse:
-        pool = _pool
-        if pool is None:
-            return DaemonResponse(ok=False, error="agentd 未初始化")
-
-        if cmd.action == "spawn":
-            status = pool.spawn(cmd.task_uri, cmd.message, cmd.config)
-            return DaemonResponse(data=status.to_dict())
-
-        elif cmd.action == "send":
-            status = pool.send(cmd.task_uri, cmd.message)
-            return DaemonResponse(data=status.to_dict())
-
-        elif cmd.action == "kill":
-            status = pool.kill(cmd.task_uri)
-            return DaemonResponse(data=status.to_dict())
-
-        elif cmd.action == "show":
-            status = pool.show(cmd.task_uri)
-            if status is None:
-                return DaemonResponse(ok=False, error=f"agent {cmd.task_uri} 不存在")
-            return DaemonResponse(data=status.to_dict())
-
-        elif cmd.action == "list":
-            agents = pool.list()
-            return DaemonResponse(data=[a.to_dict() for a in agents])
-
-        elif cmd.action == "config":
-            # 目前 daemon 不支持运行时改默认配置
-            return DaemonResponse(data={"default": DEFAULT_CONFIG.to_dict()})
-
-        else:
-            return DaemonResponse(ok=False, error=f"未知 action: {cmd.action}")
+        # 文本输出到 wfile
+        text_out = io.TextIOWrapper(
+            self.wfile, encoding="utf-8", write_through=True
+        )
+        _dispatch_text(cmd_line, text_out)
 
 
 class _ThreadedUnixServer(socketserver.ThreadingUnixStreamServer):

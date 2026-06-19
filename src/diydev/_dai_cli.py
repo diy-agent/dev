@@ -1038,17 +1038,19 @@ app.command(task_app)
 # ════════════════════════════════════════════════════════════════
 # dai agent — 子 agent 管理
 # ════════════════════════════════════════════════════════════════
+# 注意：agent spawn/send/kill/list/show 已通过 ai 前缀转发到 app.sock。
+# 此处只保留 agent daemon（进程生命周期管理）。
 
 _AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
 
 
-def _agent_send(cmd: dict) -> dict:
-    """向 agentd socket 发送 JSON 命令，返回响应。"""
+def _agent_send_text(cmd_line: str) -> str:
+    """向 agentd socket 发送一行文本命令，返回全部响应文本。"""
     import socket as sock
     s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
     s.settimeout(10)
     s.connect(_AGENT_SOCKET)
-    s.sendall(json.dumps(cmd).encode("utf-8"))
+    s.sendall((cmd_line + "\n").encode("utf-8"))
     s.shutdown(sock.SHUT_WR)
     buf = b""
     while True:
@@ -1057,126 +1059,9 @@ def _agent_send(cmd: dict) -> dict:
             break
         buf += data
     s.close()
-    return json.loads(buf.decode("utf-8"))
+    return buf.decode("utf-8")
 
 
-agent_app = App(name="agent", help="子 agent 管理 — spawn/kill/send/log")
-
-
-@agent_app.command
-def agent_spawn(
-    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
-    message: Annotated[str, Parameter(name="--message", help="初始消息")],
-    model: Annotated[str | None, Parameter(name="--model", help="模型名")] = None,
-    toolsets: Annotated[str | None, Parameter(name="--toolsets", help="工具集（逗号分隔）")] = None,
-    reasoning_budget: Annotated[
-        int | None, Parameter(name="--reasoning", help="推理预算 token 数")
-    ] = None,
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = True,
-):
-    """为一个 task 创建并启动 agent。"""
-    config: dict[str, object] = {}
-    if model:
-        config["model"] = model
-    if toolsets:
-        config["enabled_toolsets"] = [t.strip() for t in toolsets.split(",")]
-    if reasoning_budget is not None:
-        config["reasoning_budget"] = reasoning_budget
-
-    cmd = {"action": "spawn", "task_uri": task_uri, "message": message, "config": config}
-    resp = _agent_send(cmd)
-    if json_output:
-        print(json.dumps(resp, indent=2, ensure_ascii=False))
-    else:
-        data = resp.get("data", {})
-        print(f"agent {task_uri}: {data.get('state', '?')}")
-
-
-@agent_app.command
-def agent_send(
-    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
-    message: Annotated[str, Parameter(name="--message", help="消息内容")],
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = True,
-):
-    """向 agent 发送消息（运行时=steer，空闲时=新对话）。"""
-    cmd = {"action": "send", "task_uri": task_uri, "message": message}
-    resp = _agent_send(cmd)
-    if json_output:
-        print(json.dumps(resp, indent=2, ensure_ascii=False))
-    else:
-        data = resp.get("data", {})
-        print(f"agent {task_uri}: {data.get('state', '?')}")
-
-
-@agent_app.command
-def agent_kill(
-    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = True,
-):
-    """终止一个 agent。"""
-    cmd = {"action": "kill", "task_uri": task_uri}
-    resp = _agent_send(cmd)
-    if json_output:
-        print(json.dumps(resp, indent=2, ensure_ascii=False))
-    else:
-        print(f"agent {task_uri}: killed")
-
-
-@agent_app.command
-def agent_list(
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = True,
-):
-    """列出所有活跃 agent。"""
-    cmd = {"action": "list"}
-    resp = _agent_send(cmd)
-    if json_output:
-        print(json.dumps(resp, indent=2, ensure_ascii=False))
-    else:
-        data = resp.get("data", [])
-        if not data:
-            print("无活跃 agent")
-            return
-        for a in data:
-            print(f"  {a['task_uri']:30s} {a['state']:10s} {a['model']}")
-
-
-@agent_app.command
-def agent_show(
-    task_uri: Annotated[str, Parameter(name="--task", help="任务 URI")],
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = True,
-):
-    """查看 agent 状态和输出。"""
-    cmd = {"action": "show", "task_uri": task_uri}
-    resp = _agent_send(cmd)
-    if json_output:
-        print(json.dumps(resp, indent=2, ensure_ascii=False))
-    else:
-        data = resp.get("data")
-        if not data:
-            print(f"agent {task_uri} 不存在")
-            return
-        print(f"状态: {data.get('state')}")
-        print(f"模型: {data.get('model')}")
-        print(f"启动: {data.get('started_at')}")
-        print(f"最后消息: {data.get('last_message', '')[:100]}")
-        tail = data.get("output_tail", [])
-        if tail:
-            print("--- 输出 ---")
-            for line in tail:
-                print(line)
-
-
-@agent_app.command
 def agent_daemon(
     action: Annotated[str, Parameter(name="--action", help="start | stop | status")] = "start",
 ):
@@ -1187,9 +1072,13 @@ def agent_daemon(
     if action == "status":
         if os.path.exists(_AGENT_SOCKET):
             try:
-                resp = _agent_send({"action": "list"})
-                count = len(resp.get("data", []))
-                print(f"agentd 运行中，{count} 个 agent")
+                resp = _agent_send_text("list")
+                first = resp.split("\n")[0].strip()
+                if first.startswith("("):
+                    print("agentd 运行中（无活跃 agent）")
+                else:
+                    lines = [l for l in resp.split("\n") if l.strip()]
+                    print(f"agentd 运行中，{len(lines)} 个 agent")
             except Exception:
                 print("agentd socket 存在但无响应（可能已崩溃）")
         else:
@@ -1199,7 +1088,7 @@ def agent_daemon(
     if action == "stop":
         if os.path.exists(_AGENT_SOCKET):
             try:
-                _agent_send({"action": "shutdown"})
+                _agent_send_text("shutdown")
                 print("agentd 已关闭")
             except Exception:
                 pass
@@ -1212,7 +1101,7 @@ def agent_daemon(
         if os.path.exists(_AGENT_SOCKET):
             # 尝试连接，如果通就跳过
             try:
-                _agent_send({"action": "list"})
+                resp = _agent_send_text("list")
                 print("agentd 已在运行")
                 return
             except Exception:
@@ -1256,87 +1145,9 @@ def agent_daemon(
         sys.exit(1)
 
 
-app.command(agent_app)
-
-
 # ════════════════════════════════════════════════════════════════
 # dai app — PySide6 管控台
 # ════════════════════════════════════════════════════════════════
-
-
-# ════════════════════════════════════════════════════════════════
-# dai app → socket 透传
-# ════════════════════════════════════════════════════════════════
-
-
-def _app_probe(args: list[str]) -> None:
-    """透传参数到 app socket，连不上自动启动 app。"""
-    import socket as sock
-    import subprocess
-    import time as _time
-
-    socket_path = os.path.expanduser("~/.diy/app.sock")
-    # dai app 是 AI 原生接口，所有命令加 ai 前缀
-    if not args:
-        args = ["ai", "--help"]
-    elif args[0] in ("--help", "-h"):
-        args = ["ai"] + args  # ai --help
-    elif args[0] == "ai":
-        pass  # 已有前缀
-    elif args[0] != "--version":
-        args = ["ai"] + args
-
-    def _send() -> int:
-        """发送命令到 socket，返回 exit code（0=成功，1=失败）。"""
-        try:
-            s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
-            s.settimeout(5)
-            s.connect(socket_path)
-            s.sendall((" ".join(args) + "\n").encode("utf-8"))
-            s.shutdown(sock.SHUT_WR)
-            buf: list[bytes] = []
-            while True:
-                data = s.recv(4096)
-                if not data:
-                    break
-                buf.append(data)
-            s.close()
-            sys.stdout.write(b"".join(buf).decode("utf-8"))
-            return 0
-        except (FileNotFoundError, ConnectionRefusedError, OSError):
-            return 1
-
-    if _send() == 0:
-        return
-
-    # 连不上 → 启动 app
-    # __file__ = src/diydev/_dai_cli.py, repo = _diy/
-    srcdir = os.path.dirname(os.path.abspath(__file__))
-    repo = os.path.dirname(os.path.dirname(srcdir))
-    sha_sh = os.path.join(repo, "sha.sh")
-    if not os.path.exists(sha_sh):
-        print("错误: 找不到 sha.sh，无法启动 app", file=sys.stderr)
-        sys.exit(1)
-
-    print("⏳ 正在启动 diy 管控台...", file=sys.stderr)
-    subprocess.Popen(
-        ["bash", sha_sh, "app"],
-        cwd=repo,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # 等待 socket 就绪（最多 10 秒）
-    deadline = _time.time() + 10
-    while _time.time() < deadline:
-        if os.path.exists(socket_path):
-            _time.sleep(0.5)  # 让 app 初始化完
-            if _send() == 0:
-                return
-        _time.sleep(0.3)
-
-    print("错误: app 启动超时，请检查日志", file=sys.stderr)
-    sys.exit(1)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1426,28 +1237,18 @@ def dai_doctor() -> None:
 
 
 def main():
-    # dai app → 透传到 socket，不经过 cyclopts
-    if len(sys.argv) > 1 and sys.argv[1] == "app":
-        _app_probe(sys.argv[2:] if len(sys.argv) > 2 else ["--help"])
-        return
+    from ._forward import forward_to_app
 
-    # dai doctor → 自检
-    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
-        dai_doctor()
-        return
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
 
-    # dai agent daemon → 单独处理（不走 cyclopts，避免 import Hermes 的路径问题）
-    if len(sys.argv) > 1 and sys.argv[1] == "agent" and len(sys.argv) > 2 and sys.argv[2] == "daemon":
+    # agent daemon 管理是唯一本地命令（管理 agentd 子进程）
+    if cmd == "agent" and len(sys.argv) > 2 and sys.argv[2] == "daemon":
         agent_daemon(sys.argv[3] if len(sys.argv) > 3 else "start")
         return
 
-    try:
-        app(sys.argv[1:] if len(sys.argv) > 1 else ["--help"])
-    except SystemExit:
-        raise
-    except Exception as exc:
-        print(f"错误: {exc}", file=sys.stderr)
-        sys.exit(1)
+    # 其他所有命令走 app.sock，自动加 ai 前缀
+    args = ["ai"] + sys.argv[1:]
+    forward_to_app(args)
 
 
 if __name__ == "__main__":
