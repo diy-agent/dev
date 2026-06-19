@@ -407,11 +407,9 @@ class MainWindow(QMainWindow):
         self._filter_text = QLineEdit()
         self._filter_text.setPlaceholderText("搜索任务...")
         self._filter_text.setClearButtonEnabled(True)
-        self._filter_text.textChanged.connect(self._filter_tree)
 
         self._filter_state = QComboBox()
         self._filter_state.addItems(["所有状态", "pending", "active", "done", "blocked", "cancelled"])
-        self._filter_state.currentTextChanged.connect(self._filter_tree)
 
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(4, 4, 4, 0)
@@ -493,6 +491,10 @@ class MainWindow(QMainWindow):
         # ── 数据 ──
         self._nodes: list[TaskNode] = []
         self._load()
+
+        # ── 过滤信号（必须在 _load 之后，否则 proxy 未创建） ──
+        self._filter_text.textChanged.connect(self._filter_tree)
+        self._filter_state.currentTextChanged.connect(self._filter_tree)
 
         # ── 信号 ──
         self._tree.clicked.connect(self._on_select)
