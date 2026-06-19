@@ -382,9 +382,9 @@ class MainWindow(QMainWindow):
         self._started_at = time.time()
         self._last_reload = self._started_at
 
-        # ── AppProbe（Unix socket 探针） ──
-        self._probe = AppProbe(self)
-        self._probe.start()
+        # ── Gateway（Unix socket 入口） ──
+        self._gateway = Gateway(self)
+        self._gateway.start()
 
         # ── Activity Bar（左侧活动栏） ──
         self._activity_bar = ActivityBar(self)
@@ -606,8 +606,8 @@ class MainWindow(QMainWindow):
     # ── 健康自检 ──
     @guarded("health")
     def _on_health_check(self) -> None:
-        sock_dev = getattr(self._probe, '_sock_dev', None)
-        sock_ino = getattr(self._probe, '_sock_ino', None)
+        sock_dev = getattr(self._gateway, '_sock_dev', None)
+        sock_ino = getattr(self._gateway, '_sock_ino', None)
         critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
         if critical:
             logger.warning("[health] 发现 %d 个严重问题, 退出", len(critical))
@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
         anim.finished.connect(popup.deleteLater)
         QTimer.singleShot(3000, anim.start)
 
-    # ── AppProbe 序列化 ──
+    # ── Gateway 序列化 ──
 
     def format_tree(self) -> str:
         """遍历 QStandardItemModel，直接读 DisplayRole — 和 UI 完全一致。"""
@@ -946,7 +946,7 @@ class MainWindow(QMainWindow):
             f"tree:      {subjects} subjects + {tasks} tasks = {subjects + tasks} nodes "
             f"(model rows: {model_rows})",
             f"state:     {state_path} {'✅' if state_exists else '❌ missing'}",
-            f"socket:    {self._probe._path} {'✅' if self._probe._server else '❌'}",
+            f"socket:    {self._gateway._path} {'✅' if self._gateway._server else '❌'}",
             f"watchers:  {len(self._watcher.files()) + len(self._watcher.directories())} paths",
             f"timers:    refresh={self._refresh_timer.interval()}ms "
             f"steer={self._steer._timer.interval()}ms",
@@ -1017,12 +1017,12 @@ class MainWindow(QMainWindow):
         return "(无 agent)"
 
     def closeEvent(self, event):
-        self._probe.stop()
+        self._gateway.stop()
         super().closeEvent(event)
 
 
 # ═══════════════════════════════════════════════════════
-# AppProbe — Unix socket 探针（agent 实时探测/操纵）
+# Gateway — Unix socket 入口
 # ═══════════════════════════════════════════════════════
 
 import fcntl
@@ -1064,56 +1064,55 @@ class MainThread:
         return ret[0]
 
 
-class ProbeCLI:
+class GatewayCLI:
     """Socket 协议层 — 用 cyclopts 解析命令，输出为纯文本。
 
-    命令分两组:
-      ai <cmd>    — AI/agent 接口，无交互，纯数据
-      hum <cmd>   — 人类接口，通知/操控
+    协议前缀:
+      diy <cmd>   — v1 协议
     """
 
     def __init__(self, window: "MainWindow"):
         self._window = window
         self._main = MainThread(window)
-        self._app = CycloptsApp(name="probe")
+        self._app = CycloptsApp(name="gateway")
 
-        # ── AI 子应用（API 指令） ──
-        ai = CycloptsApp(name="ai", help="AI/agent 接口")
+        # ── diy 子应用（协议 v1） ──
+        diy = CycloptsApp(name="diy", help="diy protocol v1")
 
-        @ai.command
+        @diy.command
         def tree():
             """完整任务树（和 UI 一致）"""
             return self._main.invoke(self._window.format_tree)
 
-        @ai.command
+        @diy.command
         def status():
             """健康检查（pid/窗口/树/定时器）"""
             return self._main.invoke(self._window.format_status)
 
-        @ai.command
+        @diy.command
         def agents():
             """agent 列表"""
             return self._main.invoke(self._window.format_agents)
 
-        @ai.command
+        @diy.command
         def reload():
             """热重载 state.yaml"""
-            logger.info("[probe] ai reload 收到 → 全量重载")
+            logger.info("[gateway] diy reload 收到 → 全量重载")
             self._main.invoke(self._window._load)
             return "OK"
 
-        @ai.command
+        @diy.command
         def node(uri: str):
             """<uri> 任务节点详情"""
             return self._main.invoke(lambda: self._window.format_node(uri))
 
-        @ai.command
+        @diy.command
         def doctor():
             """分层健康自检 — app 状态 / socket 健康 / 多实例 / state.yaml"""
             from diydev.app._doctor import format_report, run_check
-            probe = self._window._probe
-            sock_dev = getattr(probe, '_sock_dev', None)
-            sock_ino = getattr(probe, '_sock_ino', None)
+            gw = self._window._gateway
+            sock_dev = getattr(gw, '_sock_dev', None)
+            sock_ino = getattr(gw, '_sock_ino', None)
             return format_report(run_check(sock_dev, sock_ino))
 
         # ═══════════════════════════════════════════
@@ -1121,8 +1120,8 @@ class ProbeCLI:
         # 从 _dai_cli 导入逻辑函数，注册为 cyclopts 子 App
         # ═══════════════════════════════════════════
 
-        # ── ai state ──
-        @ai.command
+        # ── state ──
+        @diy.command
         def state(
             json_output: bool = False,
             set_path: list[str] | None = None,
@@ -1159,8 +1158,8 @@ class ProbeCLI:
             _yaml.dump(load_state(), _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
             return _buf.getvalue()
 
-        # ── ai scan ──
-        @ai.command
+        # ── scan ──
+        @diy.command
         def scan(
             path: str | None = None,
             json_output: bool = False,
@@ -1216,9 +1215,9 @@ class ProbeCLI:
             _yaml.dump(profiles[name], _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
             return _buf.getvalue()
 
-        ai.command(profile_app)
+        diy.command(profile_app)
 
-        # ── ai subject ──
+        # ── subject ──
         subject_app = CycloptsApp(name="subject", help="Subject 树管理")
 
         def _norm(path: str) -> str:
@@ -1358,9 +1357,9 @@ class ProbeCLI:
             _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
             return _buf.getvalue()
 
-        ai.command(subject_app)
+        diy.command(subject_app)
 
-        # ── ai task ──
+        # ── task ──
         task_app = CycloptsApp(name="task", help="任务管理")
 
         @task_app.command(name="list")
@@ -1664,9 +1663,9 @@ class ProbeCLI:
             _yaml.dump({"status": "success", "data": result}, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
             return _buf.getvalue()
 
-        ai.command(task_app)
+        diy.command(task_app)
 
-        # ── ai agent ──
+        # ── agent ──
         agent_app = CycloptsApp(name="agent", help="子 agent 管理 — 文本协议")
 
         import socket as _sock
@@ -1760,14 +1759,10 @@ class ProbeCLI:
                 return resp
             return resp
 
-        ai.command(agent_app)
+        diy.command(agent_app)
 
-        # ── 注册 ai 组 ──
-        self._app.command(ai)
-
-        # ── UI 子应用（代替旧 human） ──
-        ui = CycloptsApp(name="ui", help="UI 指令 — 读取/操纵当前 UI 状态")
-        @ui.command
+        # ── notify / title（通用，AI 和人类都能用） ──
+        @diy.command
         def notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
@@ -1777,40 +1772,20 @@ class ProbeCLI:
                 Q_ARG(str, text))
             return "OK"
 
-        @ui.command
+        @diy.command
         def title(*text: str):
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: ui title <文本...>"
+                return "错误: 缺少参数，用法: diy title <文本...>"
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
 
-        # UI 视图查询命令
-        @ui.command
-        def tree():
-            """当前任务树视图"""
-            return self._main.invoke(self._window.format_tree)
-
-        @ui.command
-        def status():
-            """当前 app 状态"""
-            return self._main.invoke(self._window.format_status)
-
-        @ui.command
-        def agents():
-            """当前 agent 列表视图"""
-            return self._main.invoke(self._window.format_agents)
-
-        @ui.command
-        def node(uri: str):
-            """<uri> 任务节点详情（UI 视图呈现）"""
-            return self._main.invoke(lambda: self._window.format_node(uri))
-
-        self._app.command(ui)
+        # ── 注册 diy 组 ──
+        self._app.command(diy)
 
         @self._app.default
         def unknown(*tokens: str):
@@ -1844,20 +1819,11 @@ class ProbeCLI:
         out.flush()
 
 
-class AppProbeError(Exception):
-    """已有运行中的管控台实例。"""
+class Gateway(QObject):
+    """Unix domain socket server — diy 协议入口。
 
-
-class AppProbe(QObject):
-    """Unix domain socket server，允许外部进程查询/操纵 app 运行状态。
-
-    协议: 纯文本，cyclopts 解析:
-      tree         → 完整任务树
-      node <id>    → 任务详情
-      status       → 健康检查
-      agents       → agent 列表
-      reload       → 重载 state.yaml
-      --help       → 帮助
+    协议: 纯文本，cyclopts 解析。
+    命令前缀 diy = 协议 v1。
     """
 
     def __init__(self, window: "MainWindow", socket_path: str = "~/.diy/app.sock"):
@@ -1866,7 +1832,7 @@ class AppProbe(QObject):
         self._path = os.path.expanduser(socket_path)
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
-        self._cli = ProbeCLI(window)
+        self._cli = GatewayCLI(window)
 
     def start(self) -> None:
         _LOCK_PATH = os.path.join(os.path.dirname(self._path), "app.lock")
@@ -1878,7 +1844,7 @@ class AppProbe(QObject):
             fcntl.fcntl(lock_fd, fcntl.LOCK_EX)
         except OSError:
             os.close(lock_fd)
-            raise AppProbeError("无法获取 app.lock")
+            raise ConnectionError("无法获取 app.lock")
 
         try:
             # 1) Socket 锁检查 — 连接成功说明有活实例（锁下重新检查）
@@ -1887,7 +1853,7 @@ class AppProbe(QObject):
                 s.settimeout(0.5)
                 s.connect(self._path)
                 s.close()
-                raise AppProbeError(
+                raise ConnectionError(
                     f"已有运行中的管控台实例 (socket: {self._path})"
                 )
             except (OSError, socket.timeout):
@@ -1918,7 +1884,7 @@ class AppProbe(QObject):
                 pass
 
             logger.info(
-                "AppProbe socket ready → %s  pid=%d",
+                "Gateway socket ready → %s  pid=%d",
                 self._path,
                 os.getpid(),
             )
@@ -1935,7 +1901,7 @@ class AppProbe(QObject):
             pass
 
 
-def _make_handler(probe: AppProbe):
+def _make_handler(gateway: Gateway):
     import io as _io
 
     class Handler(socketserver.StreamRequestHandler):
@@ -1947,7 +1913,7 @@ def _make_handler(probe: AppProbe):
             # wfile 是 binary，包成 text mode 给 rich
             text_out = _io.TextIOWrapper(self.wfile, encoding="utf-8", write_through=True)
             try:
-                probe._cli.dispatch(cmd, text_out)
+                gateway._cli.dispatch(cmd, text_out)
             except Exception:
                 import traceback
                 text_out.write(f"\n内部错误: {traceback.format_exc()}")
@@ -2028,7 +1994,7 @@ def main():
 
     try:
         window = MainWindow()
-    except AppProbeError as e:
+    except ConnectionError as e:
         logger.error(str(e))
         return
 

@@ -1036,116 +1036,6 @@ app.command(task_app)
 
 
 # ════════════════════════════════════════════════════════════════
-# dai agent — 子 agent 管理
-# ════════════════════════════════════════════════════════════════
-# 注意：agent spawn/send/kill/list/show 已通过 ai 前缀转发到 app.sock。
-# 此处只保留 agent daemon（进程生命周期管理）。
-
-_AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
-
-
-def _agent_send_text(cmd_line: str) -> str:
-    """向 agentd socket 发送一行文本命令，返回全部响应文本。"""
-    import socket as sock
-    s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
-    s.settimeout(10)
-    s.connect(_AGENT_SOCKET)
-    s.sendall((cmd_line + "\n").encode("utf-8"))
-    s.shutdown(sock.SHUT_WR)
-    buf = b""
-    while True:
-        data = s.recv(4096)
-        if not data:
-            break
-        buf += data
-    s.close()
-    return buf.decode("utf-8")
-
-
-def agent_daemon(
-    action: Annotated[str, Parameter(name="--action", help="start | stop | status")] = "start",
-):
-    """管理 agentd 守护进程。"""
-    import subprocess
-    import time as _time
-
-    if action == "status":
-        if os.path.exists(_AGENT_SOCKET):
-            try:
-                resp = _agent_send_text("list")
-                first = resp.split("\n")[0].strip()
-                if first.startswith("("):
-                    print("agentd 运行中（无活跃 agent）")
-                else:
-                    lines = [l for l in resp.split("\n") if l.strip()]
-                    print(f"agentd 运行中，{len(lines)} 个 agent")
-            except Exception:
-                print("agentd socket 存在但无响应（可能已崩溃）")
-        else:
-            print("agentd 未运行")
-        return
-
-    if action == "stop":
-        if os.path.exists(_AGENT_SOCKET):
-            try:
-                _agent_send_text("shutdown")
-                print("agentd 已关闭")
-            except Exception:
-                pass
-            _AGENT_SOCKET and os.path.exists(_AGENT_SOCKET) and os.unlink(_AGENT_SOCKET)
-        else:
-            print("agentd 未运行")
-        return
-
-    if action == "start":
-        if os.path.exists(_AGENT_SOCKET):
-            # 尝试连接，如果通就跳过
-            try:
-                resp = _agent_send_text("list")
-                print("agentd 已在运行")
-                return
-            except Exception:
-                # socket 残留 → 清理
-                os.unlink(_AGENT_SOCKET)
-
-        # 找到 Hermes 的 Python
-        hermes_python = os.path.expanduser(
-            "~/.hermes/hermes-agent/venv/bin/python3"
-        )
-        if not os.path.exists(hermes_python):
-            print("错误: 找不到 Hermes Python", file=sys.stderr)
-            sys.exit(1)
-
-        print("⏳ 正在启动 agentd...", file=sys.stderr)
-
-        # 设置 PYTHONPATH 指向 _diy 的 src/，让 daemon 能找到 diydev 包
-        srcdir = os.path.dirname(os.path.abspath(__file__))
-        src_parent = os.path.dirname(srcdir)  # src/
-        env = os.environ.copy()
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{src_parent}:{existing}" if existing else src_parent
-
-        proc = subprocess.Popen(
-            [hermes_python, "-m", "diydev._agent_daemon"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=env,
-        )
-
-        # 等待 socket 就绪
-        deadline = _time.time() + 10
-        while _time.time() < deadline:
-            if os.path.exists(_AGENT_SOCKET):
-                _time.sleep(0.3)
-                print(f"agentd 已启动 (pid={proc.pid})")
-                return
-            _time.sleep(0.3)
-
-        print("错误: agentd 启动超时", file=sys.stderr)
-        sys.exit(1)
-
-
-# ════════════════════════════════════════════════════════════════
 # dai app — PySide6 管控台
 # ════════════════════════════════════════════════════════════════
 
@@ -1239,15 +1129,8 @@ def dai_doctor() -> None:
 def main():
     from ._forward import forward_to_app
 
-    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
-
-    # agent daemon 管理是唯一本地命令（管理 agentd 子进程）
-    if cmd == "agent" and len(sys.argv) > 2 and sys.argv[2] == "daemon":
-        agent_daemon(sys.argv[3] if len(sys.argv) > 3 else "start")
-        return
-
-    # 其他所有命令走 app.sock，自动加 ai 前缀
-    args = ["ai"] + sys.argv[1:]
+    # 所有命令走 app.sock，协议前缀 diy = v1
+    args = ["diy"] + sys.argv[1:]
     forward_to_app(args)
 
 
