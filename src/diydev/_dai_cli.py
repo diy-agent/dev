@@ -1105,7 +1105,7 @@ def dai_doctor() -> None:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(3)
         s.connect(socket_path)
-        s.sendall(b"ai doctor\n")
+        s.sendall(b"diy doctor\n")
         s.shutdown(_sock.SHUT_WR)
         buf: list[bytes] = []
         while True:
@@ -1124,6 +1124,22 @@ def dai_doctor() -> None:
     print(format_report(issues))
     if any(i.severity == "critical" for i in issues):
         sys.exit(1)
+
+
+def dai_doctor_metrics() -> None:
+    """查看运行中 app 的指标快照。
+    
+    需要 app 正在运行。
+    """
+    resp = _send_to_socket("diy metrics", timeout=5.0)
+    if resp is None:
+        print("管控台未运行，无法获取指标", file=sys.stderr)
+        sys.exit(1)
+    import re  # noqa: PLC0415
+    clean = re.sub(r"\x1b\[\d+(;\d+)*m", "", resp).strip()
+    sys.stdout.write(clean)
+    if not clean.endswith("\n"):
+        sys.stdout.write("\n")
 
 
 def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
@@ -1205,9 +1221,12 @@ def main():
 
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
 
-    # 重启：本地执行（先关 app 再开，不走 forward_to_app）
+    # 本地执行（不走 app.sock）
     if cmd == "restart":
         _app_restart()
+        return
+    if cmd == "doctor" and len(sys.argv) > 2 and sys.argv[2] == "metrics":
+        dai_doctor_metrics()
         return
 
     # 所有命令走 app.sock，协议前缀 diy = v1

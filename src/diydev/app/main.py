@@ -55,6 +55,7 @@ from diydev.app.agent_bridge import (
 )
 from diydev.app.task_tree import TaskNode, load_task_tree
 from diydev.app._doctor import HealthIssue, is_locked, run_check, set_locked
+from diydev.app._metrics import MetricsStore
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -636,6 +637,7 @@ class MainWindow(QMainWindow):
         self._setup_menu()
 
         # ── 数据 ──
+        self._metrics = MetricsStore()
         self._nodes: list[TaskNode] = []
         self._load()
 
@@ -783,10 +785,11 @@ class MainWindow(QMainWindow):
                 changed = True
 
         if changed:
+            self._metrics.counter("agent.changes")
             logger.debug("[timer] agent 状态变化 → 重绘树 (%d agent)", len(agents))
             self._render_tree()
-        elif agents:
-            logger.debug("[timer] agent 无变化 (%d agent)", len(agents))
+        self._metrics.gauge("agent.count", len(agents))
+        self._metrics.counter("agent.refresh")
 
     def _iter_nodes(self, nodes: list[TaskNode]):
         for n in nodes:
@@ -831,15 +834,18 @@ class MainWindow(QMainWindow):
         sock_dev = getattr(self._gateway, '_sock_dev', None)
         sock_ino = getattr(self._gateway, '_sock_ino', None)
         critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
+        self._metrics.gauge("health.critical", len(critical))
+        self._metrics.counter("health.checks")
         if critical:
+            self._metrics.counter("health.crashes")
             logger.warning("[health] 发现 %d 个严重问题, 退出", len(critical))
+            # ... 退出逻辑不变
             for iss in critical:
                 logger.warning("[health]   [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
             self._health_timer.stop()
             # 直接退出，不留错误面板
             QApplication.instance().quit()
             return
-        logger.debug("[health] 自检通过")
 
     def _enter_lockdown(self, issues: list[HealthIssue]) -> None:
         """严重故障 → 锁定界面并显示告示。"""
@@ -2046,6 +2052,15 @@ class GatewayCLI:
                 QtCore.ConnectionType.QueuedConnection,
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
+
+        @diy.command
+        def metrics():
+            """返回当前指标快照（YAML）。"""
+            import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
+            # 去除 YAML 颜色标记
+            raw = yaml.dump(self._window._metrics.snapshot(), default_flow_style=False, sort_keys=False, allow_unicode=True)
+            import re  # noqa: PLC0415
+            return re.sub(r"\x1b\[\d+(;\d+)*m", "", raw)
 
         @diy.command
         def shutdown():
