@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import (  # type: ignore[import-untyped]
+    QEvent,
     QFileSystemWatcher,
     QItemSelectionModel,
     QSortFilterProxyModel,
@@ -571,7 +572,6 @@ class MainWindow(QMainWindow):
 
         # ── Gateway（Unix socket 入口） ──
         self._gateway = Gateway(self)
-        self._gateway.start()
 
         # ── Activity Bar（左侧活动栏） ──
         self._activity_bar = ActivityBar(self)
@@ -621,6 +621,9 @@ class MainWindow(QMainWindow):
         self._detail = DetailView()
         self._detail.task_saved.connect(self._on_task_saved)
         self.setCentralWidget(self._detail)
+
+        # _detail 就绪后再启动 socket（防止 GatewayCLI 命令在 _detail 未创建时到达）
+        self._gateway.start()
 
         # ── 底部面板（输出 / Agent 列表等） ──
         self._log_panel = LogPanel(self)
@@ -687,6 +690,13 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(30000, lambda: self._health_timer.start(10000))
 
         logger.info("MainWindow 初始化完成, pid=%s", os.getpid())
+
+    def event(self, evt: QEvent | None) -> bool:
+        """处理跨线程 _InvokeEvent。"""
+        if evt and isinstance(evt, _InvokeEvent):
+            evt.execute()
+            return True
+        return super().event(evt)
 
     def _setup_menu(self):
         """构建菜单栏。"""
@@ -1302,11 +1312,34 @@ from typing import Callable, TypeVar
 
 from cyclopts import App as CycloptsApp
 from cyclopts.exceptions import UnknownCommandError
-from PySide6.QtCore import QEventLoop, QMetaObject, Qt as QtCore, Q_ARG, QTimer  # type: ignore[import-untyped]
+from PySide6.QtCore import QMetaObject, Qt as QtCore, Q_ARG, QTimer  # type: ignore[import-untyped]
 from PySide6.QtCore import QObject  # type: ignore[import-untyped]
 
 
 T = TypeVar("T")
+
+
+class _InvokeEvent(QEvent):
+    """跨线程调用 QEvent — 用 threading.Event 可靠信令。"""
+
+    _EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
+
+    def __init__(self, fn: Callable[[], T], ret: list[T], done: threading.Event):
+        super().__init__(self._EVENT_TYPE)
+        self.fn = fn
+        self.ret = ret
+        self.done = done
+
+    def execute(self) -> None:
+        try:
+            self.ret.append(self.fn())
+        except Exception as e:
+            self.ret.append(e)
+        self.done.set()
+
+    @classmethod
+    def create(cls, fn: Callable[[], T], ret: list[T], done: threading.Event) -> "_InvokeEvent":
+        return cls(fn, ret, done)
 
 
 class MainThread:
@@ -1321,16 +1354,21 @@ class MainThread:
     def __init__(self, window: QObject):
         self._window = window
 
-    def invoke(self, fn: Callable[[], T]) -> T:
+    def invoke(self, fn: Callable[[], T], timeout: float = 20.0) -> T:
         """阻塞等待 fn 在 Qt 主线程执行完毕，返回结果。
 
-        PySide6 6.8 兼容：QTimer.singleShot + QEventLoop，
-        代替 QMetaObject.invokeMethod(obj, callable, conn_type)（6.9+ 才支持）。
+        用 QApplication.postEvent + threading.Event 的跨线程方案，
+        timeout 超时后抛出 TimeoutError。
         """
+        import threading
         ret: list[T] = []
-        loop = QEventLoop()
-        QTimer.singleShot(0, lambda: [ret.append(fn()), loop.quit()])
-        loop.exec()
+        done = threading.Event()
+        evt = _InvokeEvent.create(fn, ret, done)
+        QApplication.instance().postEvent(self._window, evt)
+        if not done.wait(timeout=timeout):
+            raise TimeoutError(f"UI 操作超时（{timeout}s）")
+        if isinstance(ret[0], Exception):
+            raise ret[0]
         return ret[0]
 
 
@@ -1384,6 +1422,104 @@ class GatewayCLI:
             sock_dev = getattr(gw, '_sock_dev', None)
             sock_ino = getattr(gw, '_sock_ino', None)
             return format_report(run_check(sock_dev, sock_ino))
+
+        # ── ui ── 聊天面板交互 ──
+        ui_app = CycloptsApp(name="ui", help="UI 视图操纵")
+
+        chat_app = CycloptsApp(name="chat", help="AgentChatPanel 交互")
+
+        @chat_app.command
+        def state() -> str:
+            """当前 AgentChatPanel 状态（task_uri, mode, sessions）。"""
+            import yaml as _yaml
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            panel_state = self._main.invoke(panel.ui_state)
+            import io as _io
+            buf = _io.StringIO()
+            _yaml.dump(panel_state, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return buf.getvalue()
+
+        @chat_app.command
+        def sessions() -> str:
+            """当前 task 的 session 列表。"""
+            import yaml as _yaml
+            import io as _io
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            panel_state = self._main.invoke(panel.ui_state)
+            sessions_list = panel_state.get("sessions", [])
+            if not sessions_list:
+                return "sessions: []"
+            buf = _io.StringIO()
+            _yaml.dump({"sessions": sessions_list, "count": len(sessions_list)}, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return buf.getvalue()
+
+        @chat_app.command
+        def read(task: str | None = None):
+            """读取当前对话文本（UI 层 _log）。"""
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            text = self._main.invoke(panel.ui_chat_log)
+            return text or "(无对话)"
+
+        @chat_app.command
+        def wait(task: str | None = None, timeout: int = 60):
+            """等待 agent 完成，轮询 UI 层 _log 文本。"""
+            import time as _time
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            out = getattr(self, "_stream_out", None)
+            deadline = _time.time() + timeout
+            last_text = ""
+            while _time.time() < deadline:
+                cur = self._main.invoke(panel.ui_chat_log) or ""
+                if cur != last_text:
+                    delta = cur[len(last_text):]
+                    last_text = cur
+                    if out:
+                        out.write(delta)
+                        out.flush()
+                    else:
+                        return delta  # 非流式模式，只返回增量
+                # 检查 session 是否已完成
+                state = self._main.invoke(panel.ui_state)
+                sessions = state.get("sessions", [])
+                all_done = all(s.get("state") in ("done", "failed") for s in sessions)
+                if sessions and all_done:
+                    if out:
+                        out.write("\n[done]\n")
+                        out.flush()
+                    return
+                _time.sleep(2)
+            return f"[timeout] agent 未在 {timeout}s 内完成"
+
+        @chat_app.command
+        def select(task_uri: str):
+            """选中任务，显示其 AgentChatPanel。"""
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            self._main.invoke(lambda: panel.set_task(task_uri))
+            return f"OK: chat set to {task_uri}"
+
+        @chat_app.command
+        def send(text: str, task: str | None = None):
+            """向 task 发送消息（走 UI 层）。"""
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI 尚未初始化"
+            if task:
+                self._main.invoke(lambda: panel.set_task(task))
+            self._main.invoke(lambda: panel.send_text(text))
+            return "OK: 已发送"
+
+        ui_app.command(chat_app)
+        diy.command(ui_app)
 
         # ═══════════════════════════════════════════
         # AI 子命令：task / subject / state / scan / profile / agent
@@ -1941,21 +2077,36 @@ class GatewayCLI:
         import socket as _sock
         _AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
 
-        def _agent_send_text(cmd_line: str) -> str:
+        def _agent_send_text(cmd_line: str, retries: int = 10) -> str:
             """向 agentd socket 发送一行文本命令，返回全部响应文本。"""
-            s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
-            s.settimeout(10)
-            s.connect(_AGENT_SOCKET)
-            s.sendall((cmd_line + "\n").encode("utf-8"))
-            s.shutdown(_sock.SHUT_WR)
-            buf: list[bytes] = []
-            while True:
-                data = s.recv(4096)
-                if not data:
-                    break
-                buf.append(data)
-            s.close()
-            return b"".join(buf).decode("utf-8")
+            for attempt in range(retries):
+                try:
+                    s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+                    s.settimeout(10)
+                    s.connect(_AGENT_SOCKET)
+                    s.sendall((cmd_line + "\n").encode("utf-8"))
+                    s.shutdown(_sock.SHUT_WR)
+                    buf: list[bytes] = []
+                    while True:
+                        data = s.recv(4096)
+                        if not data:
+                            break
+                        buf.append(data)
+                    s.close()
+                    return b"".join(buf).decode("utf-8")
+                except FileNotFoundError:
+                    if attempt < retries - 1:
+                        import time as _time
+                        _time.sleep(0.5)
+                        continue
+                    raise
+                except OSError:
+                    if attempt < retries - 1:
+                        import time as _time
+                        _time.sleep(0.5)
+                        continue
+                    raise
+            return ""
 
         def _check_agent_ok(resp: str) -> str | None:
             """检查响应首行是否为 OK，返回状态描述或错误信息。"""
@@ -2077,13 +2228,17 @@ class GatewayCLI:
         def unknown(*tokens: str):
             return f"未知命令: {' '.join(tokens)!r}  试试 --help"
 
-    def dispatch(self, line: str, out) -> None:
+    def dispatch(self, line: str, out: _io.TextIOWrapper) -> None:
         """流式输出 — 直接写 out，不缓冲。"""
         import io
+        import shlex
         from rich.console import Console
 
-        tokens = line.split() if line else ["--help"]
+        tokens = shlex.split(line) if line else ["--help"]
         console = Console(file=out, force_terminal=True, width=80)
+
+        # 保存 stream_out 供流式命令（如 wait）使用
+        self._stream_out = out
 
         # cyclopts 错误写入 stderr，重定向到 out
         old_stderr = sys.stderr
@@ -2094,13 +2249,13 @@ class GatewayCLI:
         except SystemExit:
             pass
         except UnknownCommandError:
-            # cyclopts 已经写了错误信息到 stderr，不需要重复
             pass
         except Exception as exc:
             logger.error("dispatch 异常: %s\n%s", exc, traceback.format_exc())
             out.write(f"\n内部错误: {exc}\n")
         finally:
             sys.stderr = old_stderr
+            self._stream_out = None
 
         err_text = err_buf.getvalue()
         if err_text:
@@ -2436,7 +2591,7 @@ def main():
 
     if not _agentd_alive and os.path.exists(hermes_python):
         srcdir = os.path.dirname(os.path.abspath(__file__))  # diydev/app/
-        src_parent = os.path.dirname(srcdir)  # src/
+        src_parent = os.path.dirname(os.path.dirname(srcdir))  # src/<zipper>
         env = os.environ.copy()
         env["PYTHONPATH"] = src_parent
         _agentd_proc = subprocess.Popen(

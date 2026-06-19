@@ -12,9 +12,8 @@ Agent 启动时写 status.json，GUI 用 QFileSystemWatcher 监控。
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 _AGENTS_DIR = Path.home() / ".diy" / "agents"
@@ -66,7 +65,7 @@ def write_status(status: AgentStatus) -> None:
     d = _task_dir(status.task_id)
     d.mkdir(parents=True, exist_ok=True)
 
-    status.started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    status.started_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     tmp = d / "status.json.tmp"
     with open(tmp, "w") as fh:
         json.dump(status.to_dict(), fh, indent=2)
@@ -93,22 +92,18 @@ def read_progress(task_id: str, tail: int = 20) -> str:
 
 
 def list_agents() -> list[AgentStatus]:
-    """列出所有活跃 agent。"""
+    """列出所有活跃 agent（递归扫描 ~/.diy/agents/）。"""
     result: list[AgentStatus] = []
     if not _AGENTS_DIR.exists():
         return result
 
-    for d in sorted(_AGENTS_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        sf = d / "status.json"
-        if sf.exists():
-            try:
-                with open(sf) as fh:
-                    status = AgentStatus.from_dict(json.load(fh))
-                result.append(status)
-            except (json.JSONDecodeError, KeyError):
-                pass
+    for p in _AGENTS_DIR.rglob("status.json"):
+        try:
+            with open(p) as fh:
+                status = AgentStatus.from_dict(json.load(fh))
+            result.append(status)
+        except (json.JSONDecodeError, KeyError):
+            pass
     return result
 
 
@@ -128,7 +123,7 @@ def steer_send(task_uri: str, message: str) -> None:
     d = _AGENTS_DIR / task_uri
     d.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    ts = datetime.now().strftime("%H:%M:%S")
     with open(d / "steer.log", "a") as fh:
         fh.write(f"[{ts}] ← {message}\n")
 
@@ -147,7 +142,7 @@ def steer_reply(task_uri: str, message: str) -> None:
     d = _AGENTS_DIR / task_uri
     d.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    ts = datetime.now().strftime("%H:%M:%S")
     with open(d / "steer.log", "a") as fh:
         fh.write(f"[{ts}] → {message}\n")
 
@@ -158,4 +153,4 @@ def steer_reply(task_uri: str, message: str) -> None:
 
 def make_agent_id(task_uri: str) -> str:
     """生成 agent ID。"""
-    return f"agent-{task_uri}-{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    return f"agent-{task_uri}-{datetime.now().strftime('%H%M%S')}"

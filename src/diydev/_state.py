@@ -17,7 +17,7 @@ from __future__ import annotations
 import fcntl
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +111,7 @@ def acquire_lock(
     lock = {
         "by": task_uri,
         "area": area,
-        "since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "since": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     }
     space["lock"] = lock
     save_state(state)
@@ -326,7 +326,7 @@ def create_task(
     if _uri_to_path(uri).parent.exists():
         raise ValueError(f"URI 已存在: {uri}")
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     meta: dict[str, Any] = {
         "title": title,
@@ -366,7 +366,7 @@ def update_task_field(uri: str, **fields: Any) -> dict[str, Any]:
         body = _read_body(md)
 
     meta.update(fields)
-    meta["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    meta["updated"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     _write_agents_md(uri, meta, body)
     return _meta_to_task_dict(uri, meta)
@@ -397,7 +397,7 @@ def archive_task(uri: str) -> Path:
         raise FileNotFoundError(f"任务 {uri} 不存在")
 
     dst_base = _archive_root() / uri
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
 
     # 尝试 base.20260618-074801，同秒碰撞则递增
     stamp = now.strftime("%Y%m%d-%H%M%S")

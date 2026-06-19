@@ -22,27 +22,33 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import sys
 from contextlib import suppress
+from pathlib import Path
 from typing import Annotated, Any
 
 import yaml
 from cyclopts import App, Parameter
 
 from ._dai_scan import find_spaces, find_workspace_root
-from ._state import archive_task, create_task, delete_task, get_task, list_tasks, load_state, save_state, update_task_field
+from ._state import (
+    archive_task,
+    create_task,
+    delete_task,
+    get_task,
+    list_tasks,
+    load_state,
+    save_state,
+    update_task_field,
+)
 
 app = App(
     name="dai",
     help="diy agent 接口 — state 查询与同步\n\n  子命令 dai app ... → 管控台探针（透传到 app socket）",
     version_flags=[],
 )
-
-_BEGIN_MARKER = "<!-- diy:tree:begin -->"
-_END_MARKER = "<!-- diy:tree:end -->"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -240,102 +246,6 @@ def show(
             sort_keys=False,
             explicit_start=True,
         )
-
-
-app.command(profile_app)
-
-
-# ════════════════════════════════════════════════════════════════
-# dai tree --sync
-# ════════════════════════════════════════════════════════════════
-
-
-def _find_agents_md() -> str | None:
-    """在项目根目录查找 AGENTS.md"""
-    cwd = os.getcwd()
-    for candidate in [
-        os.path.join(cwd, "AGENTS.md"),
-    ]:
-        if os.path.isfile(candidate):
-            return candidate
-    return None
-
-
-def _build_tree_json(state_data: dict) -> str:
-    """从 state.yaml + ~/.diy/d/ 任务数据构建注入到 AGENTS.md 的 JSON block。"""
-    # 从任务目录加载，而非 state.yaml
-    tasks_data = list_tasks()
-    spaces_data = state_data.get("spaces", {})
-
-    # 构建简化的任务树
-    task_list = []
-    # local task 先按编号排，再按 URI 排
-    for uri, task in sorted(tasks_data.items()):
-        entry = {
-            "uri": uri,
-            "title": task.get("title", ""),
-            "state": task.get("state", "pending"),
-        }
-        src = task.get("source", {})
-        entry["source"] = src
-        if task.get("parent"):
-            entry["parent"] = task["parent"]
-        task_list.append(entry)
-
-    # 构建空间锁状态
-    lock_map = {}
-    for path, cfg in sorted(spaces_data.items()):
-        lock = cfg.get("lock") if cfg else None
-        lock_map[path] = lock
-
-    tree = {
-        "tasks": task_list,
-        "locks": lock_map,
-    }
-    return json.dumps(tree, indent=2, ensure_ascii=False)
-
-
-@app.command
-def tree(
-    sync: Annotated[
-        bool,
-        Parameter(name=["--sync"], help="注入 AGENTS.md json block"),
-    ] = True,
-):
-    """注入 AGENTS.md json block。
-
-    在 AGENTS.md 中查找 <!-- diy:tree:begin --> / <!-- diy:tree:end -->
-    之间的区域，替换为当前 state.yaml 的 JSON 投影。
-    """
-    agents_path = _find_agents_md()
-    if not agents_path:
-        print("错误: 当前目录未找到 AGENTS.md", file=sys.stderr)
-        sys.exit(1)
-
-    with open(agents_path, encoding="utf-8") as fh:
-        content = fh.read()
-
-    state_data = load_state()
-    tree_json = _build_tree_json(state_data)
-
-    # 构建替换 block
-    block = f"{_BEGIN_MARKER}\n```json\n{tree_json}\n```\n{_END_MARKER}"
-
-    pattern = re.compile(
-        rf"{re.escape(_BEGIN_MARKER)}.*?{re.escape(_END_MARKER)}",
-        re.DOTALL,
-    )
-
-    if pattern.search(content):
-        new_content = pattern.sub(block, content)
-    else:
-        # 追加到文件末尾
-        new_content = content.rstrip("\n") + "\n\n" + block + "\n"
-
-    with open(agents_path, "w", encoding="utf-8") as fh:
-        fh.write(new_content)
-
-    print(f"已同步: {agents_path}")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -745,7 +655,7 @@ def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
                 archive_path = archive_task(uri)
                 return f"GitHub issue 已不存在，已归档至 {archive_path}"
             except FileNotFoundError:
-                return f"GitHub issue 已不存在（本地数据同步前已移除）"
+                return "GitHub issue 已不存在（本地数据同步前已移除）"
         return f"gh 调用失败: {err}"
 
     try:
@@ -1092,10 +1002,10 @@ def dai_doctor() -> None:
     有 app 运行时走 socket 获取完整上下文（含 inode 对比），
     无 app 运行时降级为客户端探针（检测 sock 残留/缺失）。
     """
-    from diydev.app._doctor import format_report, run_check
-
     # 优先走 socket（运行中的 app 有完整上下文）
     import socket as _sock
+
+    from diydev.app._doctor import format_report, run_check
     socket_path = os.path.expanduser("~/.diy/app.sock")
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
@@ -1164,14 +1074,28 @@ def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
 
 
 def _local_shutdown():
-    """关闭管控台（本地执行，不自动启动 app）。"""
+    """关闭管控台（本地执行，不自动启动 app）。
+
+    先试 socket 优雅关闭，socket 不存在或连不上时
+    用 pkill 兜底杀 diydev.app.main 进程。
+    """
+    from ._forward import _send_to_socket
+
     socket_path = os.path.expanduser("~/.diy/app.sock")
-    if not os.path.exists(socket_path):
-        print("管控台未运行", file=sys.stderr)
-        return
-    resp = _send_to_socket("diy shutdown", timeout=2.0)
-    if resp is not None:
-        print(resp, file=sys.stderr)
+    if os.path.exists(socket_path):
+        resp = _send_to_socket(socket_path, "diy shutdown")
+        if resp is not None:
+            print(resp, file=sys.stderr)
+            return
+
+    # socket 不存在或不通 → 进程级兜底
+    import subprocess
+    kill = subprocess.run(
+        ["pkill", "-f", "diydev.app.main"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if kill.returncode == 0:
+        print("管控台已强制关闭", file=sys.stderr)
     else:
         print("管控台未运行", file=sys.stderr)
 
@@ -1228,7 +1152,12 @@ def _app_restart():
 def main():
     from ._forward import forward_to_app
 
-    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    tokens = sys.argv[1:] if len(sys.argv) > 1 else []
+    if not tokens:
+        forward_to_app(["diy", "--help"])
+        return
+
+    cmd = tokens[0]
 
     # 本地执行（不走 app.sock，生命周期类命令不应自动启动 app）
     if cmd == "restart":
@@ -1237,12 +1166,12 @@ def main():
     if cmd == "shutdown":
         _local_shutdown()
         return
-    if cmd == "doctor" and len(sys.argv) > 2 and sys.argv[2] == "metrics":
+    if cmd == "doctor" and len(tokens) > 1 and tokens[1] == "metrics":
         dai_doctor_metrics()
         return
 
     # 所有命令走 app.sock，协议前缀 diy = v1
-    args = ["diy"] + sys.argv[1:]
+    args = ["diy"] + tokens
     forward_to_app(args)
 
 

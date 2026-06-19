@@ -35,7 +35,7 @@ import socketserver
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,12 @@ if _pool_dir not in sys.path:
 import _agent_pool  # noqa: E402
 AgentStatus = _agent_pool.AgentStatus
 TaskAgentConfig = _agent_pool.TaskAgentConfig
+
+# 导入 steer_reply 用于写入 steer.log
+_app_dir = str(Path(__file__).resolve().parent / "app")
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)  # FIXME 临时设置sys.path
+from agent_bridge import steer_reply  # noqa: E402
 
 logger = logging.getLogger("agentd")
 
@@ -75,8 +81,9 @@ def _import_hermes():
 # ════════════════════════════════════════════════════════════════
 
 DEFAULT_CONFIG = TaskAgentConfig(
-    model="",
-    enabled_toolsets=["terminal", "file"],
+    model="deepseek-v4-flash-202605",
+    provider="diy-tencent-tokenhub",
+    enabled_toolsets=[],
     max_iterations=50,
     skip_context_files=True,
     skip_memory=True,
@@ -98,7 +105,7 @@ class _ManagedAgent:
         self.status = AgentStatus(
             task_uri=task_uri,
             state="idle",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now().isoformat(),
         )
         self.agent = None  # AIAgent 实例（懒创建）
         self._lock = threading.Lock()
@@ -153,10 +160,13 @@ class _ManagedAgent:
             "tool_progress_callback": self._on_tool_progress,
         }
 
-        if self.config.model:
-            kwargs["model"] = self.config.model
-        if self.config.provider:
-            kwargs["provider"] = self.config.provider
+        # 回退到 DEFAULT_CONFIG（在 spawn 无 CLI 参数时生效）
+        model = self.config.model or DEFAULT_CONFIG.model
+        provider = self.config.provider or DEFAULT_CONFIG.provider
+        if model:
+            kwargs["model"] = model
+        if provider:
+            kwargs["provider"] = provider
         if self.config.enabled_toolsets is not None:
             kwargs["enabled_toolsets"] = self.config.enabled_toolsets
         if self.config.max_iterations is not None:
@@ -230,7 +240,11 @@ class _ManagedAgent:
                 self.status.error = "agent 执行失败"
             else:
                 self.status.state = "done"
-            self.status.last_message = (result.get("final_response") or "")[:200]
+            final_response = result.get("final_response") or ""
+            self.status.last_message = final_response[:200]
+            # 写入 steer.log 让 GUI 能读到回复（仅 done 状态）
+            if self.status.state == "done" and final_response:
+                steer_reply(self.task_uri, final_response)
         except Exception as exc:
             logger.exception("agent %s 执行异常", self.task_uri)
             self.status.state = "failed"
@@ -401,14 +415,18 @@ def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
 
     action = tokens[0]
 
-    # 解析 --key value 参数
+    # 解析 --key value 或 --key=value 参数
     args: dict[str, str] = {}
     i = 1
     while i < len(tokens):
         token = tokens[i]
         if token.startswith("--"):
             key = token[2:]
-            if i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
+            # 支持 --key=value 语法
+            if "=" in key:
+                k, v = key.split("=", 1)
+                args[k] = v
+            elif i + 1 < len(tokens) and not tokens[i + 1].startswith("--"):
                 i += 1
                 args[key] = tokens[i]
             else:
@@ -511,7 +529,7 @@ def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
 _pool: SessionPool | None = None
 
 
-class AgentDaemonHandler(socketserver.BaseRequestHandler):
+class AgentDaemonHandler(socketserver.StreamRequestHandler):
     """处理 CLI 发来的文本命令。"""
 
     def handle(self):
@@ -521,7 +539,7 @@ class AgentDaemonHandler(socketserver.BaseRequestHandler):
             return
         cmd_line = data.decode("utf-8").strip()
 
-        # 文本输出到 wfile
+        # 文本输出到 wfile（二进制流 → TextIOWrapper）
         text_out = io.TextIOWrapper(
             self.wfile, encoding="utf-8", write_through=True
         )

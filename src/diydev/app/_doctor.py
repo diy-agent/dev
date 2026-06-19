@@ -152,7 +152,7 @@ def _check_runtime(sock_dev: int | None, sock_ino: int | None) -> list[HealthIss
 
         if st.st_dev != sock_dev or st.st_ino != sock_ino:
             results.append(HealthIssue(
-                severity="critical",
+                severity="warning",  # 降级：macOS AF_UNIX inode 比较不可靠
                 code="socket_hijacked",
                 message="Socket 文件已被其他进程替换",
                 detail=(
