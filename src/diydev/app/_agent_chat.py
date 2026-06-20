@@ -62,6 +62,51 @@ _border = "#313244"
 _MSG_PATTERN = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\] ([←→]) (.*)$")
 
 
+# ═══════════════════════════════════════════════════════
+# Progress.log 增量读取
+# ═══════════════════════════════════════════════════════
+
+
+def _read_progress_incremental(task_uri: str, last_offset: int) -> tuple[str, int]:
+    """增量读取 progress.log，返回 (新内容, 新偏移量)。"""
+    p = Path.home() / ".diy" / "agents" / task_uri / "progress.log"
+    if not p.exists():
+        return "", last_offset
+    try:
+        size = p.stat().st_size
+        if size <= last_offset:
+            return "", last_offset
+        with open(p) as fh:
+            fh.seek(last_offset)
+            new_content = fh.read()
+        return new_content, size
+    except Exception:
+        return "", last_offset
+
+
+def _read_tool_events(task_uri: str, last_line: int) -> tuple[list[dict], int]:
+    """增量读取 tool_events.jsonl，返回 (新事件列表, 新行号)。"""
+    p = Path.home() / ".diy" / "agents" / task_uri / "tool_events.jsonl"
+    if not p.exists():
+        return [], last_line
+    try:
+        import contextlib
+        import json as _json
+
+        with open(p) as fh:
+            lines = fh.readlines()
+        new_lines = lines[last_line:]
+        events = []
+        for line in new_lines:
+            line = line.strip()
+            if line:
+                with contextlib.suppress(_json.JSONDecodeError):
+                    events.append(_json.loads(line))
+        return events, len(lines)
+    except Exception:
+        return [], last_line
+
+
 @dataclass
 class ChatMessage:
     role: str  # "user" | "assistant"
@@ -497,6 +542,10 @@ class AgentChatPanel(QWidget):
         self._thinking_indicator: ThinkingIndicator | None = None
         self._auto_scroll = True
         self._streaming_text: str = ""
+        self._streaming_widget: ChatMessageWidget | None = None
+        self._progress_offset: int = 0  # progress.log 读取偏移
+        self._tool_events_line: int = 0  # tool_events.jsonl 已读行数
+        self._active_tool_indicators: list[ToolIndicator] = []
 
         self._setup_ui()
         self._setup_timers()
@@ -611,17 +660,33 @@ class AgentChatPanel(QWidget):
     # ═══════════════════════════════════════════════════
 
     def _poll_steer_log(self) -> None:
-        """轮询 steer.log，增量添加新消息。"""
+        """轮询 steer.log + progress.log + tool_events.jsonl，实时更新。"""
         if not self._task_uri:
             return
 
+        # 1) steer.log — 完成的消息
         content = steer_read(self._task_uri)
-        if content == self._last_steer_content:
-            return  # 无变化
+        steer_changed = content != self._last_steer_content
+        if steer_changed:
+            self._last_steer_content = content
+            messages = parse_steer_log(content)
+            self._render_messages_incremental(messages)
+            # steer.log 有新 → 行时，清除流式状态（agent 完成了）
+            self._clear_streaming()
 
-        self._last_steer_content = content
-        messages = parse_steer_log(content)
-        self._render_messages_incremental(messages)
+        # 2) progress.log — 流式 token（agent 执行中）
+        new_progress, self._progress_offset = _read_progress_incremental(
+            self._task_uri, self._progress_offset
+        )
+        if new_progress:
+            self._append_streaming(new_progress)
+
+        # 3) tool_events.jsonl — 工具执行事件
+        events, self._tool_events_line = _read_tool_events(
+            self._task_uri, self._tool_events_line
+        )
+        for ev in events:
+            self._handle_tool_event(ev)
 
     def _render_messages_incremental(self, messages: list[ChatMessage]) -> None:
         """增量渲染：只添加新消息，不重建已有消息。"""
@@ -644,6 +709,45 @@ class AgentChatPanel(QWidget):
         self._message_widgets.append(widget)
         # 插入到 stretch 之前
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
+
+    # ═══════════════════════════════════════════════════
+    # 流式显示（progress.log 增量）
+    # ═══════════════════════════════════════════════════
+
+    def _append_streaming(self, text: str) -> None:
+        """追加流式 token 到实时消息气泡。"""
+        self._streaming_text += text
+        if self._streaming_widget is None:
+            # 创建流式消息气泡
+            from datetime import datetime
+
+            ts = datetime.now().strftime("%H:%M:%S")
+            msg = ChatMessage(role="assistant", timestamp=ts, text=self._streaming_text)
+            self._streaming_widget = ChatMessageWidget(msg)
+            self._messages_layout.insertWidget(
+                self._messages_layout.count() - 1, self._streaming_widget
+            )
+        else:
+            # 更新现有气泡内容
+            self._streaming_widget._msg.text = self._streaming_text
+            self._streaming_widget._msg._html_cache = ""
+            body = self._streaming_widget.findChild(QTextEdit)
+            if body:
+                body.setHtml(self._streaming_widget._msg.to_html())
+                # 自适应高度
+                doc = body.document()
+                doc.setTextWidth(500)
+                body.setMaximumHeight(max(60, int(doc.size().height()) + 16))
+        self._auto_scroll = True
+        self._scroll_to_bottom()
+
+    def _clear_streaming(self) -> None:
+        """agent 完成后，清除流式气泡（steer.log 的 → 行会替代它）。"""
+        self._streaming_text = ""
+        if self._streaming_widget is not None:
+            self._messages_layout.removeWidget(self._streaming_widget)
+            self._streaming_widget.deleteLater()
+            self._streaming_widget = None
 
     # ═══════════════════════════════════════════════════
     # 思考/工具指示器
@@ -675,6 +779,30 @@ class AgentChatPanel(QWidget):
     def _remove_tool_indicator(self, indicator: ToolIndicator) -> None:
         self._messages_layout.removeWidget(indicator)
         indicator.deleteLater()
+
+    def _handle_tool_event(self, event: dict) -> None:
+        """处理 tool_events.jsonl 中的事件。"""
+        ev_type = event.get("event", "")
+        if ev_type == "tool.started":
+            tool_name = event.get("tool", "")
+            preview = event.get("preview", "")
+            label = f"{tool_name}({preview})" if preview else tool_name
+            self._show_tool_indicator(label)
+        elif ev_type == "tool.completed":
+            tool_name = event.get("tool", "")
+            duration = event.get("duration", 0)
+            is_error = event.get("is_error", False)
+            # 工具完成时短暂显示结果
+            status = "✗ 失败" if is_error else "✓ 完成"
+            if duration:
+                status += f" ({duration:.1f}s)"
+            # 可以在这里添加完成提示，但目前先静默
+        elif ev_type in ("_thinking", "reasoning.available"):
+            text = event.get("text", "")
+            if text:
+                self._show_thinking()
+                if self._thinking_indicator:
+                    self._thinking_indicator.set_thinking_text(text[:60])
 
     # ═══════════════════════════════════════════════════
     # Session 列表
@@ -790,6 +918,9 @@ class AgentChatPanel(QWidget):
             w.deleteLater()
         self._message_widgets.clear()
         self._hide_thinking()
+        self._clear_streaming()
+        self._progress_offset = 0
+        self._tool_events_line = 0
 
     # ═══════════════════════════════════════════════════
     # 模式切换

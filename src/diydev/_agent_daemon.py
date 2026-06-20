@@ -194,8 +194,34 @@ class _ManagedAgent:
     def output_text(self) -> str:
         return "".join(self._output_chunks)
 
-    def _on_tool_progress(self, *args, **kwargs):
-        pass
+    def _on_tool_progress(self, event: str, *args, **kwargs):
+        """工具进度回调 — 写入 tool_events.jsonl 供 GUI 实时显示。
+
+        事件类型:
+          tool.started   — args: (name, preview, full_args)
+          tool.completed — args: (name, None, None), kwargs: duration, is_error, result
+          _thinking      — args: (first_line,)
+          reasoning.available — args: ("_thinking", text, None)
+        """
+        import json as _json
+        try:
+            self._bridge_dir.mkdir(parents=True, exist_ok=True)
+            entry = {"event": event, "ts": datetime.now().strftime("%H:%M:%S")}
+            if event == "tool.started" and len(args) >= 2:
+                entry["tool"] = args[0]
+                entry["preview"] = args[1] or ""
+            elif event == "tool.completed" and len(args) >= 1:
+                entry["tool"] = args[0]
+                entry["duration"] = kwargs.get("duration", 0)
+                entry["is_error"] = kwargs.get("is_error", False)
+            elif event in ("_thinking", "reasoning.available"):
+                entry["text"] = args[0] if args else ""
+            else:
+                entry["args"] = [str(a) for a in args]
+            with open(self._bridge_dir / "tool_events.jsonl", "a") as fh:
+                fh.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # 写失败不阻塞 agent
 
     def spawn(self, prompt: str) -> str:
         """在后台线程启动 agent。"""
