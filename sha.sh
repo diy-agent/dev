@@ -105,11 +105,4 @@ panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 # PySide6 管控台
 app() {  run uv run python -m diydev.app.main; }
 
-# 隔离实验模式（数据在 .diy-dev/）
-dev() {
-  export DIY_HOME="$SCRIPT_DIR/.diy-dev"
-  mkdir -p "$DIY_HOME"
-  run uv run python -m diydev.app.main
-}
-
 sha "$@"
