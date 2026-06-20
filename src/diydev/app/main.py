@@ -1031,7 +1031,7 @@ class MainWindow(QMainWindow):
             steer_act = menu.addAction("💬 /steer 通信")
             steer_act.triggered.connect(lambda checked, t=task_uri: self._open_steer(t))
 
-            del_act = menu.addAction("🗑 删除任务")
+            del_act = menu.addAction("📦 归档任务")
             del_act.triggered.connect(lambda checked, t=task_uri: self._delete_task(t))
 
         menu.addSeparator()
@@ -1052,11 +1052,12 @@ class MainWindow(QMainWindow):
 
     @guarded("action.delete")
     def _delete_task(self, uri: str) -> None:
-        import subprocess
-        subprocess.run(
-            ["dai", "task", "delete", uri],
-            capture_output=True,
-        )
+        """归档任务（替代删除）"""
+        from diydev._state import get_task, archive_task
+        task = get_task(uri)
+        if not task:
+            return
+        archive_task(uri)
         self._load()
 
     @guarded("action.spawn")
