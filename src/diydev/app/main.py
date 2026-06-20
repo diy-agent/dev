@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QTabWidget,
     QTextBrowser,
     QTextEdit,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -142,6 +143,11 @@ class Theme:
         }.get(state, cls.on_surface)
 
 
+def _icons_dir() -> Path:
+    """返回 app/icons 目录路径（pkg 内打包）。"""
+    return Path(__file__).resolve().parent / "icons"
+
+
 def _app_stylesheet(sandbox: bool = False) -> str:
     """全局 Material3 暗色主题 QSS。
 
@@ -164,6 +170,8 @@ def _app_stylesheet(sandbox: bool = False) -> str:
         QTreeView::item:selected {{ background: #45475a; color: #cdd6f4; }}
         QTreeView::item:hover {{ background: #313244; }}
         QTreeView::branch {{ background: {Theme.surface}; }}
+        QTreeView::branch:has-children:closed {{ image: url({_icons_dir() / "branch-closed.png"}); }}
+        QTreeView::branch:has-children:open {{ image: url({_icons_dir() / "branch-open.png"}); }}
         QTextBrowser {{ background: {Theme.surface}; color: {Theme.on_surface};
                         border: none; font-size: 14px; padding: 8px; }}
         QPlainTextEdit {{ background: {Theme.surface_alt}; color: {Theme.on_surface};
@@ -602,10 +610,50 @@ class MainWindow(QMainWindow):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
+        # ── 树头部栏（标题 + 刷新按钮） ──
+        tree_header = QWidget()
+        tree_header_lay = QHBoxLayout(tree_header)
+        tree_header_lay.setContentsMargins(8, 4, 4, 4)
+        tree_header_lay.setSpacing(0)
+        tree_header_label = QLabel("任务树")
+        tree_header_label.setStyleSheet(
+            f"color: {Theme.on_surface}; font-size: 11px; font-weight: bold;"
+        )
+        tree_header_lay.addWidget(tree_header_label)
+        tree_header_lay.addStretch()
+        self._refresh_btn = QToolButton()
+        self._refresh_btn.setText("🔄")
+        self._refresh_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._refresh_btn.setFixedSize(22, 22)
+        self._refresh_btn.setToolTip("刷新任务树")
+        self._refresh_btn.setStyleSheet(
+            "QToolButton { background: transparent; border: none;"
+            " font-size: 13px; border-radius: 4px; }"
+            "QToolButton:hover { background: #45475a; }"
+        )
+        self._refresh_btn.clicked.connect(self._load)
+        tree_header_lay.addWidget(self._refresh_btn)
+
+        # ── 展开/折叠切换按钮 ──
+        self._expand_all = True  # 当前状态：已展开
+        self._expand_btn = QToolButton()
+        self._expand_btn.setText("▼")
+        self._expand_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._expand_btn.setFixedSize(22, 22)
+        self._expand_btn.setToolTip("折叠所有")
+        self._expand_btn.setStyleSheet(
+            "QToolButton { background: transparent; border: none;"
+            " font-size: 11px; border-radius: 4px; }"
+            "QToolButton:hover { background: #45475a; }"
+        )
+        self._expand_btn.clicked.connect(self._toggle_expand)
+        tree_header_lay.addWidget(self._expand_btn)
+
         tree_container = QWidget()
         tree_layout = QVBoxLayout(tree_container)
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(0)
+        tree_layout.addWidget(tree_header)
         tree_layout.addLayout(filter_row)
         tree_layout.addWidget(self._tree)
 
@@ -771,8 +819,37 @@ class MainWindow(QMainWindow):
         self._proxy.setRecursiveFilteringEnabled(True)
         self._tree.setModel(self._proxy)
         self._tree.expandAll()
+        self._expand_all = True
+        self._expand_btn.setText("▼")
+        self._expand_btn.setToolTip("折叠所有")
+        self._expand_subjects()
         # setModel() 会重建 selectionModel，重新连接信号
         self._tree.selectionModel().selectionChanged.connect(self._on_select)
+
+    def _toggle_expand(self) -> None:
+        """切换全部展开/折叠。"""
+        if self._expand_all:
+            self._tree.collapseAll()
+            self._expand_subjects()
+            self._expand_all = False
+            self._expand_btn.setText("▶")
+            self._expand_btn.setToolTip("展开所有")
+        else:
+            self._tree.expandAll()
+            self._expand_all = True
+            self._expand_btn.setText("▼")
+            self._expand_btn.setToolTip("折叠所有")
+
+    def _expand_subjects(self) -> None:
+        """展开所有 subject 节点。"""
+        model = self._tree.model()
+        if model is None:
+            return
+        for row in range(model.rowCount()):
+            idx = model.index(row, 0)
+            kind = model.data(idx.sibling(row, 0), ROLE_KIND)
+            if kind == "subject":
+                self._tree.expand(idx)
 
     @guarded("filter")
     def _filter_tree(self) -> None:
