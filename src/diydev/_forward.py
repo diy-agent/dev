@@ -8,10 +8,14 @@ import shlex
 import socket as _sock
 import subprocess
 import sys
+from diydev._state import diy_home
 import time as _time
 
 
-_LOCK_PATH = os.path.expanduser("~/.diy/app.lock")
+
+def _lock_path() -> str:
+    """获取 app.lock 路径。"""
+    return os.path.join(str(diy_home()), "app.lock")
 
 
 def _acquire_lock(timeout: float = 3.0) -> int | None:
@@ -19,8 +23,9 @@ def _acquire_lock(timeout: float = 3.0) -> int | None:
 
     LOCK_NB first, then fall back to blocking with timeout.
     """
-    os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
-    fd = os.open(_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
+    lock_path = _lock_path()
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     deadline = _time.time() + timeout
     while _time.time() < deadline:
         try:
@@ -62,12 +67,15 @@ def _send_to_socket(socket_path: str, payload: str) -> str | None:
         return None
 
 
+def _socket_path() -> str:
+    """获取 app.sock 路径。"""
+    return os.path.join(str(diy_home()), "app.sock")
+
+
 def forward_to_app(args: list[str]) -> None:
     """Send args to app.sock. Start app if needed. Print response or error."""
-    socket_path = os.path.expanduser("~/.diy/app.sock")
+    socket_path = _socket_path()
     payload = shlex.join(args) + "\n"
-    script = os.path.join(os.path.dirname(__file__), "..", "..", "sha.sh")
-    script = os.path.abspath(script)
 
     # Step 1: try immediately — app may already be running
     resp = _send_to_socket(socket_path, payload)
@@ -98,15 +106,11 @@ def forward_to_app(args: list[str]) -> None:
         return
 
     # Step 4: launch app (socket不可达，锁下启动唯一实例)
-    if not os.path.exists(script):
-        os.close(lock_fd)
-        print("错误: 找不到 sha.sh", file=sys.stderr)
-        sys.exit(1)
-
     print("⏳ 正在启动 diy 管控台...", file=sys.stderr)
     subprocess.Popen(
-        ["bash", script, "app"],
+        [sys.executable, "-m", "diydev.app.main"],
         stdout=subprocess.DEVNULL,
+        env={**os.environ},
     )
 
     # Step 5: wait for socket — lock keeps other launchers waiting

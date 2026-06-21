@@ -17,6 +17,7 @@ import os
 import socket as _sock
 import subprocess
 from dataclasses import dataclass
+from diydev._state import diy_home
 
 
 @dataclass
@@ -54,7 +55,7 @@ def set_locked(v: bool) -> None:
 #
 # ═══════════════════════════════════════════════════════
 
-_SOCKET_PATH = os.path.expanduser("~/.diy/app.sock")
+_SOCKET_PATH = str(diy_home() / "app.sock")
 
 
 def run_check(sock_dev: int | None = None, sock_ino: int | None = None) -> list[HealthIssue]:
@@ -228,7 +229,7 @@ def _check_multiple_instances() -> list[HealthIssue]:
 
 def _check_state_file() -> list[HealthIssue]:
     results: list[HealthIssue] = []
-    state_path = os.path.expanduser("~/.diy/state.yaml")
+    state_path = str(diy_home() / "state.yaml")
 
     if not os.path.exists(state_path):
         results.append(HealthIssue(

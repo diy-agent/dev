@@ -37,10 +37,15 @@ from ._state import (
     archive_task,
     create_task,
     delete_task,
+    diy_home,
     get_task,
+    is_starred,
+    list_starred,
     list_tasks,
     load_state,
     save_state,
+    star_task,
+    unstar_task,
     update_task_field,
 )
 
@@ -481,7 +486,7 @@ def _notify_app_reload() -> None:
     """通知 GUI app 刷新任务树（如果正在运行）。失败静默。"""
     import socket as _sock
     socket_path = os.path.join(
-        os.environ.get("DIY_HOME", os.path.expanduser("~/.diy")),
+        diy_home(),
         "app.sock",
     )
     try:
@@ -493,6 +498,60 @@ def _notify_app_reload() -> None:
         s.close()
     except OSError:
         pass
+
+
+# ════════════════════════════════════════════════════════════════
+# dai task star / unstar
+# ════════════════════════════════════════════════════════════════
+
+@task_app.command(name="star")
+def task_star(
+    uri: Annotated[str, Parameter(help="任务 URI")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """star 任务（创建 symlink 到 ~/.diy/star/）。"""
+    task = get_task(uri)
+    if task is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        star_task(uri)
+    except FileNotFoundError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    _notify_app_reload()
+    result = {"status": "success", "data": {"uri": uri, "starred": True}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+@task_app.command(name="unstar")
+def task_unstar(
+    uri: Annotated[str, Parameter(help="任务 URI")],
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
+):
+    """unstar 任务（删除 symlink，数据不动）。"""
+    task = get_task(uri)
+    if task is None:
+        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
+        sys.exit(1)
+
+    unstar_task(uri)
+
+    _notify_app_reload()
+    result = {"status": "success", "data": {"uri": uri, "starred": False}}
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
 @task_app.command(name="create")
@@ -538,7 +597,11 @@ def task_create(
         print(f"错误: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # 自动 star 新任务
+    star_task(uri)
+
     task = get_task(uri) or {}
+    task["starred"] = True
     result = {"status": "success", "data": task}
     _notify_app_reload()
     if json_output:
@@ -799,14 +862,25 @@ def task_archive(
 
 @task_app.command(name="list")
 def task_list(
+    all: Annotated[
+        bool, Parameter(name=["--all", "-a"], help="显示全部任务（含未 star 的）")
+    ] = False,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """列出所有任务。"""
+    """列出任务。默认只显示 starred，--all 显示全部。"""
+    if all:
+        tasks = list_tasks()
+    else:
+        tasks = list_starred()
+
     tasks_out: dict[str, Any] = {}
-    for k, v in list_tasks().items():
-        tasks_out[k] = dict(v)
+    for k, v in tasks.items():
+        task_data = dict(v)
+        task_data["starred"] = is_starred(k)
+        tasks_out[k] = task_data
+
     output = {"tasks": tasks_out}
     if json_output:
         print(json.dumps(output, indent=2, ensure_ascii=False))
@@ -1006,7 +1080,7 @@ def dai_doctor() -> None:
     import socket as _sock
 
     from diydev.app._doctor import format_report, run_check
-    socket_path = os.path.expanduser("~/.diy/app.sock")
+    socket_path = str(diy_home() / "app.sock")
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(3)
@@ -1054,7 +1128,7 @@ def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
     用于 restart/shutdown 等需要控制 app 生命周期的命令。
     """
     import socket as sock
-    socket_path = os.path.expanduser("~/.diy/app.sock")
+    socket_path = str(diy_home() / "app.sock")
     try:
         s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
         s.settimeout(timeout)
@@ -1081,7 +1155,7 @@ def _local_shutdown():
     """
     from ._forward import _send_to_socket
 
-    socket_path = os.path.expanduser("~/.diy/app.sock")
+    socket_path = str(diy_home() / "app.sock")
     if os.path.exists(socket_path):
         resp = _send_to_socket(socket_path, "diy shutdown")
         if resp is not None:
@@ -1105,7 +1179,7 @@ def _app_restart():
     import subprocess
     import time as _time
 
-    socket_path = os.path.expanduser("~/.diy/app.sock")
+    socket_path = str(diy_home() / "app.sock")
     script = os.path.join(os.path.dirname(__file__), "..", "..", "sha.sh")
     script = os.path.abspath(script)
 

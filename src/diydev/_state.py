@@ -40,11 +40,16 @@ DEFAULT_STATE: dict[str, Any] = {
 }
 
 
-def _state_path() -> Path:
-    """~/.diy/state.yaml（可通过 DIY_HOME 环境变量覆盖目录，供测试用）"""
+def diy_home() -> Path:
+    """获取 DIY 数据根目录（可通过 DIY_HOME 环境变量覆盖）。"""
     if home := os.environ.get("DIY_HOME"):
-        return Path(home) / "state.yaml"
-    return Path(os.path.expanduser("~/.diy/state.yaml"))
+        return Path(home)
+    return Path(os.path.expanduser("~/.diy"))
+
+
+def _state_path() -> Path:
+    """state.yaml 路径。"""
+    return diy_home() / "state.yaml"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -135,7 +140,7 @@ _FRONT_MATTER_SEP = "---"
 
 def _data_root() -> Path:
     """~/.diy/d/（可通过 DIY_HOME 覆盖，和 state.yaml 同级）"""
-    return _state_path().parent / "d"
+    return diy_home() / "d"
 
 
 def _uri_to_path(uri: str) -> Path:
@@ -155,6 +160,64 @@ def _path_to_uri(path: Path) -> str | None:
         return str(rel)
     except ValueError:
         return None
+
+
+# ════════════════════════════════════════════════════════════════
+# Star 视图 — ~/.diy/star/
+# ════════════════════════════════════════════════════════════════
+
+def _star_root() -> Path:
+    """~/.diy/star/（可通过 DIY_HOME 覆盖）"""
+    return diy_home() / "star"
+
+
+def star_task(uri: str) -> None:
+    """star 任务：创建 symlink 到 ~/.diy/star/<uri>。"""
+    src = _uri_to_path(uri).parent  # ~/.diy/d/<uri>
+    if not src.exists():
+        raise FileNotFoundError(f"任务 {uri} 不存在")
+
+    dst = _star_root() / uri
+    if dst.exists() or dst.is_symlink():
+        return  # 幂等：已 star
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.symlink_to(src)
+
+
+def unstar_task(uri: str) -> None:
+    """unstar 任务：删除 symlink，数据不动。"""
+    dst = _star_root() / uri
+    if dst.is_symlink():
+        dst.unlink()
+    elif dst.exists():
+        dst.rmdir()  # 非 symlink 目录，清理
+
+
+def is_starred(uri: str) -> bool:
+    """检查任务是否 starred。"""
+    return (_star_root() / uri).is_symlink()
+
+
+def list_starred() -> dict[str, dict[str, Any]]:
+    """列出所有 starred 任务。"""
+    root = _star_root()
+    if not root.exists():
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for d in sorted(root.rglob("*")):
+        if not d.is_symlink():
+            continue
+        # 从 symlink 反推 URI
+        try:
+            rel = d.relative_to(root)
+            uri = str(rel)
+        except ValueError:
+            continue
+        task = get_task(uri)
+        if task is not None:
+            result[uri] = task
+    return result
 
 
 # ════════════════════════════════════════════════════════════════
@@ -381,7 +444,7 @@ def delete_task(uri: str) -> None:
 
 def _archive_root() -> Path:
     """~/.diy/archive/data/（和 state.yaml 同级）"""
-    return _state_path().parent / "archive" / "data"
+    return diy_home() / "archive" / "data"
 
 
 def archive_task(uri: str) -> Path:

@@ -33,9 +33,11 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
+import os
 import re
 from collections import deque
 from pathlib import Path
+from diydev._state import diy_home
 
 from PySide6.QtCore import QObject, Signal  # type: ignore[import-untyped]
 
@@ -177,7 +179,9 @@ def setup_app_logger(
     """
     global _qt_handler
 
-    log_path = Path(file_path or (Path.home() / ".diy" / "app.log"))
+    log_path = Path(file_path or (
+        diy_home() / "app.log"
+    ))
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger("diy.app")

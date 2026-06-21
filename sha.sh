@@ -69,8 +69,6 @@ link() {
     # ln dev version
     run uv tool install -e ./
     run mkdir -p ~/.agents/skills/
-#    [ -d ~/.agents/skills/diy-dev ]  || run   skills add ./skills/diy-dev -g -y
-    [ -d ~/.agents/skills/diy-context-refactor ] || run skills add ./skills/diy-context-refactor -g -y
     [ -d ~/.agents/skills/git-cleanup ]  || run   skills add ./skills/git-cleanup -g -y
     if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
       [ -d ~/.agents/skills/win-file-unlock ] || run skills add ./skills/win-file-unlock -g -y
@@ -103,6 +101,14 @@ test-all() { test; test-headless;}
 panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
 
 # PySide6 管控台
-app() {  run uv run python -m diydev.app.main; }
+app() {
+  DIY_HOME="${DIY_HOME:-.diy-dev}" uv run python -m diydev.app.main
+}
+
+dai() {
+  local diy_home="${DIY_HOME:-.diy-dev}"
+  DIY_HOME="$diy_home" uv run dai "$@"
+}
+
 
 sha "$@"

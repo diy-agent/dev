@@ -60,6 +60,7 @@ from diydev.app.agent_bridge import (
 from diydev.app.task_tree import TaskNode, load_task_tree
 from diydev.app._doctor import HealthIssue, is_locked, run_check, set_locked
 from diydev.app._metrics import MetricsStore
+from diydev._state import diy_home
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -80,16 +81,26 @@ import pwd as _pwd
 
 
 def _detect_sandbox() -> tuple[bool, str]:
-    """检测是否在临时 HOME 下运行（测试/调试模式）。
+    """检测是否在隔离模式下运行（测试/调试/多实例）。
+
+    判定条件：
+    1. $HOME ≠ 真实 HOME（临时目录模式）
+    2. $DIY_HOME 已设置（项目级隔离模式）
 
     Returns:
-        (is_sandbox, sandbox_path) — sandbox_path 是实际工作目录
+        (is_sandbox, data_path) — data_path 是数据目录路径
     """
+    # 检查是否设置了 DIY_HOME（非默认值）
+    if _os.environ.get("DIY_HOME"):
+        return True, str(diy_home())
+
+    # 检查 HOME 是否被覆盖
     real_home = _pwd.getpwuid(_os.getuid()).pw_dir
     current_home = _os.path.expanduser("~")
-    if current_home == real_home:
-        return False, ""
-    return True, current_home
+    if current_home != real_home:
+        return True, current_home
+
+    return False, str(diy_home())
 
 
 class Theme:
@@ -565,14 +576,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # ── 沙箱检测（调试/测试模式） ──
+        # ── 沙箱检测（调试/测试/多实例模式） ──
         self._sandbox, self._sandbox_path = _detect_sandbox()
         if self._sandbox:
             self.setWindowTitle(
-                f"⚡ diy 管控台 [调试: {self._sandbox_path}]"
+                f"🧪 diy 管控台 [测试: {self._sandbox_path}]"
             )
         else:
-            self.setWindowTitle("diy 管控台")
+            self.setWindowTitle(f"diy 管控台 [{self._sandbox_path}]")
         self.resize(1000, 650)
 
         self._started_at = time.time()
@@ -1141,6 +1152,7 @@ class MainWindow(QMainWindow):
         if node and node.body:
             from markdown_it import MarkdownIt
             md = MarkdownIt("gfm-like", {"breaks": True, "html": True})
+            md.disable("linkify")  # 不依赖 linkify-it-py
             rendered = md.render(node.body)
             full_body_html = f"""<hr><div class="section-title">📄 文档</div><div class="md-body">{rendered}</div>"""
 
@@ -1846,6 +1858,38 @@ class GatewayCLI:
         # ── task ──
         task_app = CycloptsApp(name="task", help="任务管理")
 
+        @task_app.command(name="star")
+        def task_star(uri: str, json_output: bool = False):
+            """star 任务（创建 symlink）"""
+            from diydev._state import get_task, star_task
+            import yaml as _yaml, json as _json, io as _io
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            star_task(uri)
+            result = {"status": "success", "data": {"uri": uri, "starred": True}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
+        @task_app.command(name="unstar")
+        def task_unstar(uri: str, json_output: bool = False):
+            """unstar 任务（删除 symlink）"""
+            from diydev._state import get_task, unstar_task
+            import yaml as _yaml, json as _json, io as _io
+            task = get_task(uri)
+            if task is None:
+                return f"错误: 任务 {uri} 不存在"
+            unstar_task(uri)
+            result = {"status": "success", "data": {"uri": uri, "starred": False}}
+            if json_output:
+                return _json.dumps(result, indent=2, ensure_ascii=False)
+            _buf = _io.StringIO()
+            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return _buf.getvalue()
+
         @task_app.command(name="list")
         def task_list(json_output: bool = False):
             """列出所有任务"""
@@ -2153,7 +2197,7 @@ class GatewayCLI:
         agent_app = CycloptsApp(name="agent", help="子 agent 管理 — 文本协议")
 
         import socket as _sock
-        _AGENT_SOCKET = os.path.expanduser("~/.diy/agentd.sock")
+        _AGENT_SOCKET = str(diy_home() / "agentd.sock")
 
         def _agent_send_text(cmd_line: str, retries: int = 10) -> str:
             """向 agentd socket 发送一行文本命令，返回全部响应文本。"""
@@ -2488,10 +2532,13 @@ class Gateway(QObject):
     命令前缀 diy = 协议 v1。
     """
 
-    def __init__(self, window: "MainWindow", socket_path: str = "~/.diy/app.sock"):
+    def __init__(self, window: "MainWindow", socket_path: str | None = None):
         super().__init__(window)
         self._window = window
-        self._path = os.path.expanduser(socket_path)
+        if socket_path:
+            self._path = os.path.expanduser(socket_path)
+        else:
+            self._path = str(diy_home() / "app.sock")
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
         self._cli = GatewayCLI(window)
@@ -2652,7 +2699,7 @@ def main():
     # ── 连接 agentd（已有则复用，没有则启动） ──
     hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")
     _agentd_proc = None
-    agentd_sock = os.path.expanduser("~/.diy/agentd.sock")
+    agentd_sock = str(diy_home() / "agentd.sock")
 
     # 先试试能不能连上已存在的 agentd
     _agentd_alive = False

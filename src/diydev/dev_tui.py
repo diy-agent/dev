@@ -11,9 +11,10 @@ import os
 import shutil
 import socket
 import sys
+from diydev._state import diy_home
 
 
-SOCK = os.path.expanduser("~/.diy/app.sock")
+SOCK = str(diy_home() / "app.sock")
 
 
 def _raw_send(line: str) -> str:
