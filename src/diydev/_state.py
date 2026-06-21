@@ -1,14 +1,12 @@
 """state.yaml 全局状态系统
 
 ~/.diy/state.yaml 是 diy 生态全局状态真相源。
-
 结构:
   手改区: profiles（人直接编辑）
-  机器区: spaces（dai 维护，人只读）
+  机器区: tasks（dai 维护）
 
 任务数据存储在 ~/.diy/task/<uri-path>/AGENTS.md（YAML frontmatter + markdown body）。
 每个任务对应一个 URI，URI 也是文件系统路径和身份标识。
-
 star/unstar 替代了归档：取消关注后 symlink 删除，数据保留在原位。
 """
 
@@ -35,8 +33,6 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
 
 DEFAULT_STATE: dict[str, Any] = {
     "profiles": dict(DEFAULT_PROFILES),
-    "tasks": {},
-    "spaces": {},
 }
 
 
@@ -53,7 +49,7 @@ def _state_path() -> Path:
 
 
 # ════════════════════════════════════════════════════════════════
-# 加载 / 保存（state.yaml — 仅 profiles + spaces）
+# 加载 / 保存（state.yaml — profiles + tasks）
 # ════════════════════════════════════════════════════════════════
 
 
@@ -81,54 +77,6 @@ def save_state(data: dict[str, Any]) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         yaml.dump(data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
     tmp.replace(path)
-
-
-# ════════════════════════════════════════════════════════════════
-# 锁操作（空间锁 — state.yaml）
-# ════════════════════════════════════════════════════════════════
-
-
-def get_lock(space_path: str) -> dict[str, Any] | None:
-    """获取 space 当前锁状态。无锁返回 None。"""
-    state = load_state()
-    space = state["spaces"].get(space_path)
-    if space and space.get("lock"):
-        return space["lock"]
-    return None
-
-
-def acquire_lock(
-    space_path: str,
-    task_uri: str,
-    area: str = "branch",
-) -> dict[str, Any]:
-    """申请锁。如已锁则抛出 RuntimeError。"""
-    state = load_state()
-    space = state["spaces"].setdefault(space_path, {"lock": None})
-
-    existing = space.get("lock")
-    if existing:
-        raise RuntimeError(
-            f"Space {space_path} 已被 {existing['by']} 锁定 "
-            f"(area={existing.get('area', '?')}, since={existing.get('since', '?')})"
-        )
-
-    lock = {
-        "by": task_uri,
-        "area": area,
-        "since": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    space["lock"] = lock
-    save_state(state)
-    return lock
-
-
-def release_lock(space_path: str) -> None:
-    """释放锁。无锁时静默成功。"""
-    state = load_state()
-    if space_path in state["spaces"]:
-        state["spaces"][space_path]["lock"] = None
-        save_state(state)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -175,7 +123,7 @@ def _star_root() -> Path:
 
 def star_task(uri: str) -> None:
     """star 任务：创建 symlink 到 ~/.diy/star/<uri>。"""
-    src = _uri_to_path(uri).parent  # ~/.diy/d/<uri>
+    src = _uri_to_path(uri).parent  # ~/.diy/task/<uri>
     if not src.exists():
         raise FileNotFoundError(f"任务 {uri} 不存在")
 
@@ -466,11 +414,3 @@ def list_tasks() -> dict[str, dict[str, Any]]:
         task_dict["body"] = _read_body(md)
         result[uri] = task_dict
     return result
-
-
-def get_task_spaces(task_uri: str) -> list[str]:
-    """获取任务声明的 spaces。"""
-    task = get_task(task_uri)
-    if not task:
-        return []
-    return task.get("spaces", [])

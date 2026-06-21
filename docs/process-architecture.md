@@ -33,7 +33,7 @@ agentd 是 app 的子进程，app 负责 spawn/kill。app 启动时先尝试连�
 ```
 diy CLI（协议平面）  ← dai 是过渡名，后续合并回 diy
   ├── core.sock    → "diy task/state/scan/subject/profile"（业务命令）
-  ├── ui.sock      → "diy tree/status/agents/node/doctor"（UI 操纵）
+  ├── ui.sock      → "diy ui tree/status/agents/node" + "diy doctor"（UI 操纵 + 诊断）
   └── agentd.sock  → "diy agent spawn/send/kill/list/stream"（AIAgent 管理）
 
 所有 socket 统一以 `diy` 为协议前缀。

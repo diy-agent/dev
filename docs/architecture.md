@@ -74,7 +74,7 @@ diy <args>  →  forward_to_app(["diy", ...<args>])   →  <socket>.dispatch("di
 当前实现（`_forward.py`）：
 
 ```
-dai tree          →  app.sock → GatewayCLI.dispatch("diy tree")
+dai ui tree       →  app.sock → GatewayCLI.dispatch("diy ui tree")
 dai task list     →  app.sock → GatewayCLI.dispatch("diy task list")
 dai doctor        →  app.sock → GatewayCLI.dispatch("diy doctor")
 ```

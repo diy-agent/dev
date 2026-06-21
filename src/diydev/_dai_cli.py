@@ -1,22 +1,11 @@
 """dai CLI — diy agent 接口
 
 命令:
-  dai state          全量输出 state.yaml（YAML，默认）
-  dai state --json   全量输出 state.yaml（JSON）
-  dai tree --sync    注入 AGENTS.md json block
-  dai doctor         健康自检（Socket/多实例/state.yaml）
-
-  dai task list              列出任务（默认只显示 starred）
-  dai task show <uri>        查看任务（含 body）
-  dai task create ...        创建任务（自动 star）
-  dai task star <uri>        关注任务
-  dai task unstar <uri>      取消关注
-  dai task link ...          链接外部任务（GitHub issue 等）
-  dai task edit ...          编辑任务
-  dai task sync <uri>       同步单个外部任务内容
-  dai task sync --all        同步所有已 link 的外部任务
-  dai task delete <uri>      删除本地任务
-  dai task unlink <uri>      解绑外部任务引用
+  dai task ...         任务 CRUD（star/unstar/list/show/create/edit/delete/link/unlink/sync）
+  dai subject ...      subject 树管理（add/list/tree/show/remove/scan）
+  dai profile ...      profile 预设管理
+  dai ui ...           UI 交互（tree/status/agents/node/reload/title/notify/metrics/shutdown/chat）
+  dai doctor           健康自检
 """
 
 from __future__ import annotations
@@ -54,98 +43,6 @@ app = App(
     help="diy agent 接口 — state 查询与同步\n\n  子命令 dai app ... → 管控台探针（透传到 app socket）",
     version_flags=[],
 )
-
-
-# ════════════════════════════════════════════════════════════════
-# dai state
-# ════════════════════════════════════════════════════════════════
-
-
-@app.command
-def state(
-    json_output: Annotated[
-        bool,
-        Parameter(name=["--json"], help="JSON 格式输出"),
-    ] = False,
-    set_path: Annotated[
-        list[str] | None,
-        Parameter(
-            name=["--set"],
-            help="设置值: --set <path> <value>（如 --set tasks.73.title 新标题）",
-            consume_multiple=2,
-        ),
-    ] = None,
-    free: Annotated[
-        bool,
-        Parameter(name=["--free"], help="列出 lock 为 null 或未注册的 space"),
-    ] = False,
-):
-    """输出/修改 state.yaml。"""
-    # ── --free ──
-    if free:
-        data = load_state()
-        spaces = data.get("spaces", {})
-        free_paths = [
-            p for p, cfg in spaces.items()
-            if not cfg or cfg.get("lock") is None
-        ]
-        for p in sorted(free_paths):
-            print(p)
-        return
-
-    # ── --set ──
-    if set_path is not None:
-        if len(set_path) != 2:
-            print(
-                "错误: --set 需要 <path> <value> 两个参数",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        path, raw_value = set_path
-        try:
-            section, key, field = _parse_path(path)
-        except ValueError as e:
-            print(f"错误: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        if section not in ("profiles", "tasks", "spaces"):
-            print(
-                f"错误: section 必须是 profiles/tasks/spaces，"
-                f"收到 {shlex.quote(section)}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        # 类型转换：布尔 / 整数 / JSON 列表 / 字符串
-        parsed: object = _parse_value(raw_value)
-
-        data = load_state()
-        section_data = data.setdefault(section, {})
-        entry: dict[str, object] = section_data.setdefault(key, {})
-        if not isinstance(entry, dict):
-            print(
-                f"错误: {shlex.quote(path)} 的目标不是 dict 类型",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        entry[field] = parsed
-        save_state(data)
-        return
-
-    # ── 默认：全量输出 ──
-    data = load_state()
-    if json_output:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(
-            data,
-            sys.stdout,
-            allow_unicode=True,
-            default_flow_style=False,
-            sort_keys=False,
-            explicit_start=True,
-        )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -493,7 +390,7 @@ def _notify_app_reload() -> None:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(2)
         s.connect(socket_path)
-        s.sendall(b"diy reload\n")
+        s.sendall(b"diy ui reload\n")
         s.shutdown(_sock.SHUT_WR)
         s.close()
     except OSError:
@@ -991,35 +888,6 @@ app.command(task_app)
 # ════════════════════════════════════════════════════════════════
 
 
-def _parse_path(raw: str) -> tuple[str, str, str]:
-    """解析 --set path 为 (section, key, field)。
-
-    path 格式：<section>.<key>.<field>，从右边第二个 . 分割。
-    section=第一个.之前，field=最后一个.之后，key=中间部分。
-    """
-    parts = raw.split(".")
-    if len(parts) < 3:
-        raise ValueError(
-            f"path 格式必须为 <section>.<key>.<field>，收到 {raw!r}"
-        )
-    return parts[0], ".".join(parts[1:-1]), parts[-1]
-
-
-def _parse_value(raw: str) -> object:
-    """智能解析 --set-val 值：JSON → int → bool → 字符串。"""
-    # 试 JSON（列表、字典、数字、布尔、null）
-    with suppress(ValueError):
-        return json.loads(raw)
-    # 试整数
-    with suppress(ValueError):
-        return int(raw)
-    # 试布尔关键字
-    if raw.lower() in ("true", "false"):
-        return raw.lower() == "true"
-    # 兜底字符串
-    return raw
-
-
 def _short_uri(uri: str) -> str:
     """URI 短显示：local/task/58 → local#58, github.com/.../58 → github#58"""
     if uri.startswith("local/"):
@@ -1077,7 +945,7 @@ def dai_doctor_metrics() -> None:
     
     需要 app 正在运行。
     """
-    resp = _send_to_socket("diy metrics", timeout=5.0)
+    resp = _send_to_socket("diy ui metrics", timeout=5.0)
     if resp is None:
         print("管控台未运行，无法获取指标", file=sys.stderr)
         sys.exit(1)
@@ -1123,7 +991,7 @@ def _local_shutdown():
 
     socket_path = str(diy_home() / "app.sock")
     if os.path.exists(socket_path):
-        resp = _send_to_socket(socket_path, "diy shutdown")
+        resp = _send_to_socket(socket_path, "diy ui shutdown")
         if resp is not None:
             print(resp, file=sys.stderr)
             return
@@ -1150,7 +1018,7 @@ def _app_restart():
     # 1) shutdown — 不管成功与否，只发一次
     if os.path.exists(socket_path):
         print("⏳ 正在关闭管控台...", file=sys.stderr)
-        _send_to_socket("diy shutdown", timeout=1.0)
+        _send_to_socket("diy ui shutdown", timeout=1.0)
 
     # 2) 短等 socket 消失（旧 app 响应 shutdown 后清理）
     _time.sleep(0.5)

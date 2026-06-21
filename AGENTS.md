@@ -21,7 +21,6 @@ diy 生态的开发工具项目。包含 `dai` CLI、`dev` TUI、PySide6 桌面 
 运行 `dai --help` 查看命令。主要分类：
 - `dai task ...` — 任务 CRUD（create/list/show/edit/delete/link/unlink/star/unstar/sync）
 - `dai subject ...` — subject 树管理（add/list/tree/show/remove/scan）
-- `dai state` — 全量输出 state.yaml
 - `dai profile ...` — profile 预设管理
 - `dai ui ...` — UI 交互（chat state/sessions/read/send）
 - `dai doctor` — 健康自检

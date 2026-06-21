@@ -1524,33 +1524,6 @@ class GatewayCLI:
         diy = CycloptsApp(name="diy", help="diy protocol v1")
 
         @diy.command
-        def tree():
-            """完整任务树（和 UI 一致）"""
-            return self._main.invoke(self._window.format_tree)
-
-        @diy.command
-        def status():
-            """健康检查（pid/窗口/树/定时器）"""
-            return self._main.invoke(self._window.format_status)
-
-        @diy.command
-        def agents():
-            """agent 列表"""
-            return self._main.invoke(self._window.format_agents)
-
-        @diy.command
-        def reload():
-            """热重载 state.yaml"""
-            logger.info("[gateway] diy reload 收到 → 全量重载")
-            self._main.invoke(self._window._load)
-            return "OK"
-
-        @diy.command
-        def node(uri: str):
-            """<uri> 任务节点详情"""
-            return self._main.invoke(lambda: self._window.format_node(uri))
-
-        @diy.command
         def doctor():
             """分层健康自检 — app 状态 / socket 健康 / 多实例 / state.yaml"""
             from diydev.app._doctor import format_report, run_check
@@ -1561,6 +1534,33 @@ class GatewayCLI:
 
         # ── ui ── 聊天面板交互 ──
         ui_app = CycloptsApp(name="ui", help="UI 视图操纵")
+
+        @ui_app.command(name="tree")
+        def ui_tree():
+            """完整任务树（和 UI 一致）"""
+            return self._main.invoke(self._window.format_tree)
+
+        @ui_app.command(name="status")
+        def ui_status():
+            """健康检查（pid/窗口/树/定时器）"""
+            return self._main.invoke(self._window.format_status)
+
+        @ui_app.command(name="agents")
+        def ui_agents():
+            """agent 列表"""
+            return self._main.invoke(self._window.format_agents)
+
+        @ui_app.command(name="reload")
+        def ui_reload():
+            """热重载 state.yaml"""
+            logger.info("[gateway] diy ui reload 收到 → 全量重载")
+            self._main.invoke(self._window._load)
+            return "OK"
+
+        @ui_app.command(name="node")
+        def ui_node(uri: str):
+            """<uri> 任务节点详情"""
+            return self._main.invoke(lambda: self._window.format_node(uri))
 
         chat_app = CycloptsApp(name="chat", help="AgentChatPanel 交互")
 
@@ -1658,47 +1658,9 @@ class GatewayCLI:
         diy.command(ui_app)
 
         # ═══════════════════════════════════════════
-        # AI 子命令：task / subject / state / scan / profile / agent
+        # AI 子命令：task / subject / scan / profile / agent
         # 从 _dai_cli 导入逻辑函数，注册为 cyclopts 子 App
         # ═══════════════════════════════════════════
-
-        # ── state ──
-        @diy.command
-        def state(
-            json_output: bool = False,
-            set_path: list[str] | None = None,
-            free: bool = False,
-        ):
-            """输出/修改 state.yaml"""
-            from diydev._state import load_state, save_state
-            if free:
-                data = load_state()
-                spaces = data.get("spaces", {})
-                free_paths = [p for p, cfg in spaces.items() if not cfg or cfg.get("lock") is None]
-                return "\n".join(sorted(free_paths))
-            if set_path is not None:
-                if len(set_path) != 2:
-                    return "错误: --set 需要 <path> <value> 两个参数"
-                path, raw_value = set_path
-                import json as _json
-                parsed = _json.loads(raw_value) if raw_value.lower() not in ("true", "false") else raw_value.lower() == "true"
-                try:
-                    parsed = int(raw_value)
-                except ValueError:
-                    pass
-                data = load_state()
-                parts = path.split(".")
-                section, key, field = parts[0], ".".join(parts[1:-1]), parts[-1]
-                section_data = data.setdefault(section, {})
-                entry = section_data.setdefault(key, {})
-                entry[field] = parsed
-                save_state(data)
-                return "OK"
-            import io as _io
-            import yaml as _yaml
-            _buf = _io.StringIO()
-            _yaml.dump(load_state(), _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            return _buf.getvalue()
 
         # ── scan ──
         @diy.command
@@ -2335,9 +2297,9 @@ class GatewayCLI:
 
         diy.command(agent_app)
 
-        # ── notify / title（通用，AI 和人类都能用） ──
-        @diy.command
-        def notify(*message: str):
+        # ── notify / title / metrics / shutdown（UI 操纵） ──
+        @ui_app.command(name="notify")
+        def ui_notify(*message: str):
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
             QMetaObject.invokeMethod(
@@ -2346,31 +2308,29 @@ class GatewayCLI:
                 Q_ARG(str, text))
             return "OK"
 
-        @diy.command
-        def title(*text: str):
+        @ui_app.command(name="title")
+        def ui_title(*text: str):
             """<文本...> 改窗口标题"""
             title_text = " ".join(text)
             if not title_text:
-                return "错误: 缺少参数，用法: diy title <文本...>"
+                return "错误: 缺少参数，用法: dai ui title <文本...>"
             QMetaObject.invokeMethod(
                 self._window, "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
                 Q_ARG(str, title_text))
             return f"标题已改为: {title_text}"
 
-        @diy.command
-        def metrics():
+        @ui_app.command(name="metrics")
+        def ui_metrics():
             """返回当前指标快照（YAML）。"""
             import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
-            # 去除 YAML 颜色标记
             raw = yaml.dump(self._window._metrics.snapshot(), default_flow_style=False, sort_keys=False, allow_unicode=True)
             import re  # noqa: PLC0415
             return re.sub(r"\x1b\[\d+(;\d+)*m", "", raw)
 
-        @diy.command
-        def shutdown():
+        @ui_app.command(name="shutdown")
+        def ui_shutdown():
             """关闭管控台。app 退出后下次 dai 命令会自动启动。"""
-            # QApp.quit() 线程安全 — 直接调用，不经过 QTimer
             QApplication.instance().quit()
             return "OK app 正在退出"
 
