@@ -17,7 +17,6 @@ from datetime import datetime
 from pathlib import Path
 
 _AGENTS_DIR = Path.home() / ".diy" / "agents"
-_DIY_DATA_DIR = Path.home() / ".diy" / "d"
 
 
 # ═══════════════════════════════════════════════════════

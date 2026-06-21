@@ -160,6 +160,6 @@ def test_build_hierarchy_by_depth():
 
 
 def test_load_task_tree():
-    """集成测试: 加载真实 ~/.diy/d/ + state.yaml。"""
+    """集成测试: 加载真实 ~/.diy/task/ + state.yaml。"""
     nodes = load_task_tree()
     assert len(nodes) > 0

@@ -6,14 +6,16 @@
   dai tree --sync    注入 AGENTS.md json block
   dai doctor         健康自检（Socket/多实例/state.yaml）
 
-  dai task list              列出所有任务
+  dai task list              列出任务（默认只显示 starred）
   dai task show <uri>        查看任务（含 body）
-  dai task create ...        创建任务
+  dai task create ...        创建任务（自动 star）
+  dai task star <uri>        关注任务
+  dai task unstar <uri>      取消关注
   dai task link ...          链接外部任务（GitHub issue 等）
   dai task edit ...          编辑任务
   dai task sync <uri>       同步单个外部任务内容
-  dai task sync --all        同步所有已 link 的外部任务（内容 + 归档已删除）
-  dai task archive <uri>     归档任务到 ~/.diy/archive/data/
+  dai task sync --all        同步所有已 link 的外部任务
+  dai task archive <uri>     归档任务（已废弃，请用 unstar）
   dai task delete <uri>      删除本地任务
   dai task unlink <uri>      解绑外部任务引用
 """
@@ -833,11 +835,13 @@ def task_archive(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """归档任务：从 ~/.diy/d/ 移到 ~/.diy/archive/data/。
+    """归档任务（已废弃 — 请用 unstar）。
 
-    保留完整 AGENTS.md（含 body）。归档目录名带日期时间后缀。
-    归档后从任务树中移除。
+    数据移到 ~/.diy/archive/data/ 并取消关注。
+    新代码请用 `dai task unstar <uri>` 替代。
     """
+    print("⚠️  archive 已废弃，请用 unstar 替代", file=sys.stderr)
+
     task = get_task(uri)
     if task is None:
         print(f"错误: 任务 {uri} 不存在", file=sys.stderr)

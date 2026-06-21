@@ -733,10 +733,15 @@ class MainWindow(QMainWindow):
         # state.yaml 变化 → 自动 reload
         state_path = str(diy_home() / "state.yaml")
         self._watcher.addPath(state_path)
-        # ~/.diy/d/ 目录变化（CLI 创建/删除任务）→ 自动 reload
-        data_path = str(diy_home() / "d")
+        # ~/.diy/task/ 目录变化（CLI 创建/删除任务）→ 自动 reload
+        from diydev._state import _data_root
+        data_path = str(_data_root())
         os.makedirs(data_path, exist_ok=True)
         self._watcher.addPath(data_path)
+        # 兼容：旧 d/ 目录（迁移前）
+        d_path = str(diy_home() / "d")
+        if os.path.isdir(d_path):
+            self._watcher.addPath(d_path)
         # ~/.diy/star/ 目录变化（CLI star/unstar）→ 自动 reload
         star_path = str(diy_home() / "star")
         os.makedirs(star_path, exist_ok=True)
@@ -914,10 +919,15 @@ class MainWindow(QMainWindow):
         # 启动 3 秒内不响应目录变化（macOS 初始化会触发一次）
         if time.time() - self._started_at < 3.0:
             return
-        tasks_dir = str(diy_home() / "d")
+        from diydev._state import _data_root
+        tasks_dir = str(_data_root())
+        d_dir = str(diy_home() / "d")
         star_dir = str(diy_home() / "star")
         if _path == tasks_dir or _path.startswith(tasks_dir + "/"):
-            logger.info("[watcher] ~/.diy/d/ 目录变化 → 全量重载")
+            logger.info("[watcher] ~/.diy/task/ 目录变化 → 全量重载")
+            self._load()
+        elif d_dir and (_path == d_dir or _path.startswith(d_dir + "/")):
+            logger.info("[watcher] ~/.diy/d/ 目录变化（兼容）→ 全量重载")
             self._load()
         elif _path == star_dir or _path.startswith(star_dir + "/"):
             logger.info("[watcher] ~/.diy/star/ 目录变化 → 全量重载")

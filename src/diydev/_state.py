@@ -6,10 +6,10 @@
   手改区: profiles（人直接编辑）
   机器区: spaces（dai 维护，人只读）
 
-任务数据存储在 ~/.diy/d/<uri-path>/AGENTS.md（YAML frontmatter + markdown body）。
+任务数据存储在 ~/.diy/task/<uri-path>/AGENTS.md（YAML frontmatter + markdown body）。
 每个任务对应一个 URI，URI 也是文件系统路径和身份标识。
 
-归档任务移入 ~/.diy/archive/data/<uri-path>.YYYYMMDD-HHMMSS/ 保留完整数据。
+star/unstar 替代了归档：取消关注后 symlink 删除，数据保留在原位。
 """
 
 from __future__ import annotations
@@ -132,15 +132,49 @@ def release_lock(space_path: str) -> None:
 
 
 # ════════════════════════════════════════════════════════════════
-# 数据根 — ~/.diy/d/
+# 数据根 — ~/.diy/task/
 # ════════════════════════════════════════════════════════════════
 
 _FRONT_MATTER_SEP = "---"
 
 
 def _data_root() -> Path:
-    """~/.diy/d/（可通过 DIY_HOME 覆盖，和 state.yaml 同级）"""
-    return diy_home() / "d"
+    """~/.diy/task/（可通过 DIY_HOME 覆盖），自动从 ~/.diy/d/ 迁移。"""
+    task_root = diy_home() / "task"
+    d_root = diy_home() / "d"
+
+    # 自动迁移：d/ 存在且 task/ 不存在 → 改名并更新 star/ symlink
+    if d_root.exists() and not task_root.exists():
+        _migrate_d_to_task(d_root, task_root)
+
+    task_root.mkdir(parents=True, exist_ok=True)
+    return task_root
+
+
+def _migrate_d_to_task(src: Path, dst: Path) -> None:
+    """将 d/ 迁移到 task/，同时更新 star/ symlink 目标路径。"""
+    import logging
+    logger = logging.getLogger("diy.app.state")
+    logger.warning("迁移 ~/.diy/d/ → ~/.diy/task/")
+
+    shutil.move(str(src), str(dst))
+
+    # 更新 star/ symlink：指向 d/ 的改为指向 task/
+    star_root = _star_root()
+    if star_root.exists():
+        src_str = str(src)
+        for sym in sorted(star_root.rglob("*")):
+            if not sym.is_symlink():
+                continue
+            try:
+                target = os.readlink(str(sym))
+                if target.startswith(src_str):
+                    new_target = target.replace(src_str, str(dst), 1)
+                    os.unlink(str(sym))
+                    sym.symlink_to(new_target)
+                    logger.debug("  更新 symlink: %s → %s", sym, new_target)
+            except OSError:
+                pass
 
 
 def _uri_to_path(uri: str) -> Path:
@@ -443,18 +477,21 @@ def delete_task(uri: str) -> None:
 
 
 def _archive_root() -> Path:
-    """~/.diy/archive/data/（和 state.yaml 同级）"""
+    """~/.diy/archive/data/（已废弃，archive 被 unstar 替代）。"""
     return diy_home() / "archive" / "data"
 
 
 def archive_task(uri: str) -> Path:
-    """归档任务：从 ~/.diy/d/<uri>/ 移到 ~/.diy/archive/data/<uri>/。
+    """归档任务（已废弃 — 请用 unstar 替代）。
 
-    保留完整目录结构和 AGENTS.md（含 body）。
-    归档目录名带日期-时间后缀如 57.20260618-074801。
-    同秒碰撞时递增时间保证目录名不重复。
+    此函数保留以支持已有数据迁移。
+    归档后自动取消关注（unstar），数据移入 archive/。
     返回归档后的路径。
     """
+    import logging
+    logger = logging.getLogger("diy.app.state")
+    logger.warning("archive_task 已废弃，请用 unstar 替代")
+
     src = _uri_to_path(uri).parent
     if not src.exists():
         raise FileNotFoundError(f"任务 {uri} 不存在")
@@ -474,6 +511,10 @@ def archive_task(uri: str) -> Path:
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
+
+    # 归档后自动取消关注
+    unstar_task(uri)
+
     return dst
 
 
