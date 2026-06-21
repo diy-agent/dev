@@ -143,21 +143,48 @@ def _data_root() -> Path:
     task_root = diy_home() / "task"
     d_root = diy_home() / "d"
 
-    # 自动迁移：d/ 存在且 task/ 不存在 → 改名并更新 star/ symlink
-    if d_root.exists() and not task_root.exists():
-        _migrate_d_to_task(d_root, task_root)
+    # 自动迁移：d/ 存在且包含任务数据 → 合并到 task/
+    if d_root.exists():
+        _merge_d_to_task(d_root, task_root)
 
     task_root.mkdir(parents=True, exist_ok=True)
     return task_root
 
 
-def _migrate_d_to_task(src: Path, dst: Path) -> None:
-    """将 d/ 迁移到 task/，同时更新 star/ symlink 目标路径。"""
+def _merge_d_to_task(src: Path, dst: Path) -> None:
+    """将 d/ 中的任务数据合并到 task/，同时更新 star/ symlink。
+
+    只移动 AGENTS.md 目录（任务数据），跳过 .DS_Store 等文件。
+    如果 task/ 已有同名任务则不覆盖。
+    """
     import logging
     logger = logging.getLogger("diy.app.state")
-    logger.warning("迁移 ~/.diy/d/ → ~/.diy/task/")
 
-    shutil.move(str(src), str(dst))
+    # 检查 d/ 下是否有实际任务数据（AGENTS.md）
+    has_data = any(src.rglob("AGENTS.md"))
+    if not has_data:
+        return  # d/ 是空的或只有非任务文件，跳过
+
+    # 检查是否需要合并（task/ 缺少 d/ 中的任务）
+    needs_merge = False
+    for md in src.rglob("AGENTS.md"):
+        rel = md.relative_to(src)
+        if not (dst / rel).exists():
+            needs_merge = True
+            break
+    if not needs_merge:
+        return  # 已经合并过
+
+    logger.warning("合并 ~/.diy/d/ → ~/.diy/task/")
+
+    for md in sorted(src.rglob("AGENTS.md")):
+        rel = md.relative_to(src)
+        task_dir = dst / rel.parent
+        dst_md = task_dir / "AGENTS.md"
+        if dst_md.exists():
+            continue  # task/ 已有，不覆盖
+        task_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(md), str(dst_md))
 
     # 更新 star/ symlink：指向 d/ 的改为指向 task/
     star_root = _star_root()
