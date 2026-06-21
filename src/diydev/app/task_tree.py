@@ -1,7 +1,7 @@
 """任务树数据解析 — 纯 Python，无 Qt 依赖。
 
-数据流: ~/.diy/d/ 任务目录 → TaskNode 树
-加任务用 `dai task create --subject <path>`。
+数据流: ~/.diy/star/ symlink → TaskNode 树
+默认只显示 starred 任务。tree 加任务用 `dai task create --subject <path>`。
 AGENTS.md 是渲染输出，不解析。
 """
 
@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from diydev._state import list_tasks, load_state
+from diydev._state import list_starred, list_tasks, load_state
 
 
 @dataclass
@@ -58,13 +58,15 @@ class TaskNode:
 # 公共入口
 # ═══════════════════════════════════════════════════════
 
-def load_task_tree(agents_path: str | None = None) -> list[TaskNode]:
-    """加载任务树 — ~/.diy/d/ 目录 + state.yaml subjects 驱动。
+def load_task_tree(agents_path: str | None = None, all_tasks: bool = False) -> list[TaskNode]:
+    """加载任务树 — star/ symlink 目录 + state.yaml subjects 驱动。
+
+    默认只加载 starred 任务。all_tasks=True 加载全部任务。
 
     subject 字段决定任务挂载位置。parent 字段决定层级。
     """
     state_data = load_state()
-    tasks_data = list_tasks()
+    tasks_data = list_tasks() if all_tasks else list_starred()
     return _build_nodes_from_state(state_data, tasks_data)
 
 

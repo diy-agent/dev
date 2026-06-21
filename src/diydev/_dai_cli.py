@@ -713,10 +713,10 @@ def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
     if result.returncode != 0:
         err = result.stderr.strip()
         if "issue not found" in err.lower() or "not found" in err.lower():
-            # GitHub issue 已删除 → 归档本地数据
+            # GitHub issue 已删除 → 取消关注（数据不动）
             try:
-                archive_path = archive_task(uri)
-                return f"GitHub issue 已不存在，已归档至 {archive_path}"
+                unstar_task(uri)
+                return f"GitHub issue 已不存在，已取消关注（unstar）"
             except FileNotFoundError:
                 return "GitHub issue 已不存在（本地数据同步前已移除）"
         return f"gh 调用失败: {err}"

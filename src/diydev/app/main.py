@@ -731,12 +731,16 @@ class MainWindow(QMainWindow):
         self._setup_agent_watcher()
 
         # state.yaml 变化 → 自动 reload
-        state_path = str(Path.home() / ".diy" / "state.yaml")
+        state_path = str(diy_home() / "state.yaml")
         self._watcher.addPath(state_path)
         # ~/.diy/d/ 目录变化（CLI 创建/删除任务）→ 自动 reload
-        data_path = str(Path.home() / ".diy" / "d")
+        data_path = str(diy_home() / "d")
         os.makedirs(data_path, exist_ok=True)
         self._watcher.addPath(data_path)
+        # ~/.diy/star/ 目录变化（CLI star/unstar）→ 自动 reload
+        star_path = str(diy_home() / "star")
+        os.makedirs(star_path, exist_ok=True)
+        self._watcher.addPath(star_path)
 
         # ── 定时刷新（agent 状态 5s） ──
         self._refresh_timer = QTimer(self)
@@ -900,7 +904,7 @@ class MainWindow(QMainWindow):
 
     # ── Agent 文件监控 ──
     def _setup_agent_watcher(self) -> None:
-        agents_dir = str(Path.home() / ".diy" / "agents")
+        agents_dir = str(diy_home() / "agents")
         os.makedirs(agents_dir, exist_ok=True)
         if agents_dir not in self._watcher.directories():
             self._watcher.addPath(agents_dir)
@@ -910,9 +914,13 @@ class MainWindow(QMainWindow):
         # 启动 3 秒内不响应目录变化（macOS 初始化会触发一次）
         if time.time() - self._started_at < 3.0:
             return
-        tasks_dir = str(Path.home() / ".diy" / "d")
+        tasks_dir = str(diy_home() / "d")
+        star_dir = str(diy_home() / "star")
         if _path == tasks_dir or _path.startswith(tasks_dir + "/"):
             logger.info("[watcher] ~/.diy/d/ 目录变化 → 全量重载")
+            self._load()
+        elif _path == star_dir or _path.startswith(star_dir + "/"):
+            logger.info("[watcher] ~/.diy/star/ 目录变化 → 全量重载")
             self._load()
         else:
             logger.info("[watcher] agents/ 目录变化 → 刷新 agent 状态")
@@ -1042,8 +1050,8 @@ class MainWindow(QMainWindow):
             steer_act = menu.addAction("💬 /steer 通信")
             steer_act.triggered.connect(lambda checked, t=task_uri: self._open_steer(t))
 
-            del_act = menu.addAction("📦 归档任务")
-            del_act.triggered.connect(lambda checked, t=task_uri: self._delete_task(t))
+            del_act = menu.addAction("⭐ 取消关注 / unstar")
+            del_act.triggered.connect(lambda checked, t=task_uri: self._unstar_task(t))
 
         menu.addSeparator()
         refresh_act = menu.addAction("🔄 刷新")
@@ -1061,14 +1069,14 @@ class MainWindow(QMainWindow):
         )
         self._load()
 
-    @guarded("action.delete")
-    def _delete_task(self, uri: str) -> None:
-        """归档任务（替代删除）"""
-        from diydev._state import get_task, archive_task
+    @guarded("action.unstar")
+    def _unstar_task(self, uri: str) -> None:
+        """取消关注（unstar）任务 — 删除 symlink，数据不动。"""
+        from diydev._state import get_task, unstar_task
         task = get_task(uri)
         if not task:
             return
-        archive_task(uri)
+        unstar_task(uri)
         self._load()
 
     @guarded("action.spawn")
@@ -1303,7 +1311,7 @@ class MainWindow(QMainWindow):
         model = self._tree.model()
         model_rows = model.rowCount() if model else 0
 
-        state_path = str(Path.home() / ".diy" / "state.yaml")
+        state_path = str(diy_home() / "state.yaml")
         state_exists = os.path.isfile(state_path)
 
         return "\n".join([
@@ -1891,11 +1899,14 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="list")
-        def task_list(json_output: bool = False):
-            """列出所有任务"""
-            from diydev._state import list_tasks
+        def task_list(json_output: bool = False, all: bool = False):
+            """列出任务。默认只显示 starred，--all 显示全部。"""
+            from diydev._state import is_starred, list_starred, list_tasks
             import yaml as _yaml, json as _json, io as _io
-            tasks = dict(list_tasks())
+            tasks = dict(list_tasks() if all else list_starred())
+            if not all:
+                for k in tasks:
+                    tasks[k]["starred"] = is_starred(k)
             if json_output:
                 return _json.dumps({"tasks": tasks}, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
@@ -2065,25 +2076,6 @@ class GatewayCLI:
             _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
             return _buf.getvalue()
 
-        @task_app.command(name="archive")
-        def task_archive(uri: str, json_output: bool = False):
-            """归档任务：从 ~/.diy/d/ 移到 ~/.diy/archive/data/。"""
-            from diydev._state import get_task, archive_task
-            import json as _json
-            task = get_task(uri)
-            if task is None:
-                return f"错误: 任务 {uri} 不存在"
-            try:
-                archive_path = archive_task(uri)
-            except FileNotFoundError:
-                return f"错误: 任务文件不存在: {uri}"
-            except OSError as exc:
-                return f"错误: 归档失败: {exc}"
-            result = {"status": "success", "data": {"uri": uri, "archive_path": str(archive_path)}}
-            if json_output:
-                return _json.dumps(result, indent=2, ensure_ascii=False)
-            return f"已归档: {archive_path}"
-
         @task_app.command(name="unlink")
         def task_unlink(uri: str, json_output: bool = False):
             """解绑外部任务引用。不删除远端 issue，仅移除本地记录。"""
@@ -2108,7 +2100,7 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """同步外部任务内容到本地（目前支持：GitHub issue）。"""
-            from diydev._state import get_task, list_tasks, update_task_field, archive_task
+            from diydev._state import get_task, list_tasks, update_task_field
             import json as _json, subprocess, re as _re, yaml as _yaml, io as _io
 
             if not uri and not all:
@@ -2143,8 +2135,9 @@ class GatewayCLI:
                     err = r.stderr.strip()
                     if "not found" in err.lower():
                         try:
-                            ap = archive_task(t_uri)
-                            return f"GitHub issue 已不存在，已归档至 {ap}"
+                            from diydev._state import unstar_task
+                            unstar_task(t_uri)
+                            return f"GitHub issue 已不存在，已取消关注（unstar）"
                         except FileNotFoundError:
                             return "GitHub issue 已不存在（已移除）"
                     return f"gh 调用失败: {err}"
