@@ -1184,8 +1184,6 @@ def _app_restart():
     import time as _time
 
     socket_path = str(diy_home() / "app.sock")
-    script = os.path.join(os.path.dirname(__file__), "..", "..", "sha.sh")
-    script = os.path.abspath(script)
 
     # 1) shutdown — 不管成功与否，只发一次
     if os.path.exists(socket_path):
@@ -1201,15 +1199,12 @@ def _app_restart():
     except FileNotFoundError:
         pass
 
-    # 4) 启动 app
-    if not os.path.exists(script):
-        print("错误: 找不到 sha.sh", file=sys.stderr)
-        sys.exit(1)
-
+    # 4) 启动 app — 直接用当前 Python 解释器，不依赖 sha.sh
     print("⏳ 正在启动管控台...", file=sys.stderr)
     proc = subprocess.Popen(
-        ["bash", script, "app"],
+        [sys.executable, "-m", "diydev.app.main"],
         stdout=subprocess.DEVNULL,
+        env={**os.environ},
     )
 
     # 5) 等 socket 就绪（文件存在 + 可连接）

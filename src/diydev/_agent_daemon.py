@@ -55,7 +55,13 @@ from agent_bridge import steer_reply  # noqa: E402
 
 logger = logging.getLogger("agentd")
 
-_SOCKET_PATH = Path.home() / ".diy" / "agentd.sock"
+def _diy_home() -> Path:
+    """获取 DIY 数据根目录。独立实现，避免循环导入。"""
+    if home := os.environ.get("DIY_HOME"):
+        return Path(home)
+    return Path(os.path.expanduser("~/.diy"))
+
+_SOCKET_PATH = _diy_home() / "agentd.sock"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -115,7 +121,7 @@ class _ManagedAgent:
         self._output_chunks: list[str] = []  # 单个 delta
         self._exec_thread: threading.Thread | None = None
         self._interrupt_event = threading.Event()
-        self._bridge_dir = Path.home() / ".diy" / "agents" / task_uri
+        self._bridge_dir = _diy_home() / "agents" / task_uri
 
     def _write_bridge_status(self):
         """写 status.json / progress.log，让 GUI agent_bridge 能读到。"""

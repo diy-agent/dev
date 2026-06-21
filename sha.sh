@@ -108,6 +108,7 @@ app() {
 dai() {
   local diy_home="${DIY_HOME:-.diy-dev}"
   DIY_HOME="$diy_home" uv run dai "$@"
+  unset DIY_HOME  # 防止变量泄漏到 sha 框架的父 shell
 }
 
 
