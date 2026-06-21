@@ -1292,13 +1292,41 @@ class MainWindow(QMainWindow):
 
     # ── Gateway 序列化 ──
 
-    def format_tree(self) -> str:
-        """遍历 QStandardItemModel，直接读 DisplayRole — 和 UI 完全一致。"""
-        model = self._tree.model()
-        if model is None:
+    def format_tree(self, all_tasks: bool = False) -> str:
+        """遍历 QStandardItemModel，直接读 DisplayRole — 和 UI 完全一致。
+
+        all_tasks=True 时加载全部任务（CLI dai tree 使用）。
+        """
+        if all_tasks:
+            from diydev.app.task_tree import load_task_tree
+            nodes = load_task_tree(all_tasks=True)
+            return self._render_nodes_text(nodes)
+        proxy = self._tree.model()
+        if proxy is None:
             return "(空)"
+        # proxy 是 TaskFilterProxy（QSortFilterProxyModel），需取 sourceModel
+        source = proxy.sourceModel() if hasattr(proxy, "sourceModel") else proxy
         lines: list[str] = []
-        self._dump_model_rows(model, None, lines, 0)
+        self._dump_model_rows(source, None, lines, 0)
+        return "\n".join(lines) if lines else "(空)"
+
+    @staticmethod
+    def _render_nodes_text(nodes: list) -> str:
+        """将 TaskNode 树渲染为缩进文本。"""
+        lines: list[str] = []
+
+        def _walk(ns, depth=0):
+            for n in ns:
+                prefix = "  " * depth
+                icon = n.state_icon if n.is_task else "📁"
+                label = n.title or n.label or n.uri
+                if n.is_task:
+                    lines.append(f"{prefix}{icon} [{n.state}] {label}  ({n.uri})")
+                else:
+                    lines.append(f"{prefix}{icon} {label}")
+                _walk(n.children, depth + 1)
+
+        _walk(nodes)
         return "\n".join(lines) if lines else "(空)"
 
     def format_status(self) -> str:

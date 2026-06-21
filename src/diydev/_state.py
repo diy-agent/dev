@@ -139,76 +139,17 @@ _FRONT_MATTER_SEP = "---"
 
 
 def _data_root() -> Path:
-    """~/.diy/task/（可通过 DIY_HOME 覆盖），自动从 ~/.diy/d/ 迁移。"""
-    task_root = diy_home() / "task"
-    d_root = diy_home() / "d"
-
-    # 自动迁移：d/ 存在且包含任务数据 → 合并到 task/
-    if d_root.exists():
-        _merge_d_to_task(d_root, task_root)
-
-    task_root.mkdir(parents=True, exist_ok=True)
-    return task_root
-
-
-def _merge_d_to_task(src: Path, dst: Path) -> None:
-    """将 d/ 中的任务数据合并到 task/，同时更新 star/ symlink。
-
-    只移动 AGENTS.md 目录（任务数据），跳过 .DS_Store 等文件。
-    如果 task/ 已有同名任务则不覆盖。
-    """
-    import logging
-    logger = logging.getLogger("diy.app.state")
-
-    # 检查 d/ 下是否有实际任务数据（AGENTS.md）
-    has_data = any(src.rglob("AGENTS.md"))
-    if not has_data:
-        return  # d/ 是空的或只有非任务文件，跳过
-
-    # 检查是否需要合并（task/ 缺少 d/ 中的任务）
-    needs_merge = False
-    for md in src.rglob("AGENTS.md"):
-        rel = md.relative_to(src)
-        if not (dst / rel).exists():
-            needs_merge = True
-            break
-    if not needs_merge:
-        return  # 已经合并过
-
-    logger.warning("合并 ~/.diy/d/ → ~/.diy/task/")
-
-    for md in sorted(src.rglob("AGENTS.md")):
-        rel = md.relative_to(src)
-        task_dir = dst / rel.parent
-        dst_md = task_dir / "AGENTS.md"
-        if dst_md.exists():
-            continue  # task/ 已有，不覆盖
-        task_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(md), str(dst_md))
-
-    # 更新 star/ symlink：指向 d/ 的改为指向 task/
-    star_root = _star_root()
-    if star_root.exists():
-        src_str = str(src)
-        for sym in sorted(star_root.rglob("*")):
-            if not sym.is_symlink():
-                continue
-            try:
-                target = os.readlink(str(sym))
-                if target.startswith(src_str):
-                    new_target = target.replace(src_str, str(dst), 1)
-                    os.unlink(str(sym))
-                    sym.symlink_to(new_target)
-                    logger.debug("  更新 symlink: %s → %s", sym, new_target)
-            except OSError:
-                pass
+    """~/.diy/task/（可通过 DIY_HOME 覆盖）。"""
+    root = diy_home() / "task"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _uri_to_path(uri: str) -> Path:
     """将任务 URI 映射为 AGENTS.md 路径。
 
-    local/task/23 → ~/.diy/d/local/task/23/AGENTS.md
-    github.com/diy-agent/diy/issues/58 → ~/.diy/d/github.com/diy-agent/diy/issues/58/AGENTS.md
+    local/task/23 → ~/.diy/task/local/task/23/AGENTS.md
+    github.com/diy-agent/diy/issues/58 → ~/.diy/task/github.com/diy-agent/diy/issues/58/AGENTS.md
     """
     return _data_root() / uri / "AGENTS.md"
 
@@ -503,50 +444,8 @@ def delete_task(uri: str) -> None:
         shutil.rmtree(d)
 
 
-def _archive_root() -> Path:
-    """~/.diy/archive/data/（已废弃，archive 被 unstar 替代）。"""
-    return diy_home() / "archive" / "data"
-
-
-def archive_task(uri: str) -> Path:
-    """归档任务（已废弃 — 请用 unstar 替代）。
-
-    此函数保留以支持已有数据迁移。
-    归档后自动取消关注（unstar），数据移入 archive/。
-    返回归档后的路径。
-    """
-    import logging
-    logger = logging.getLogger("diy.app.state")
-    logger.warning("archive_task 已废弃，请用 unstar 替代")
-
-    src = _uri_to_path(uri).parent
-    if not src.exists():
-        raise FileNotFoundError(f"任务 {uri} 不存在")
-
-    dst_base = _archive_root() / uri
-    now = datetime.now()
-
-    # 尝试 base.20260618-074801，同秒碰撞则递增
-    stamp = now.strftime("%Y%m%d-%H%M%S")
-    counter = 0
-    while True:
-        suffix = f".{stamp}" if counter == 0 else f".{stamp}.{counter}"
-        dst = dst_base.with_name(f"{dst_base.name}{suffix}")
-        if not dst.exists():
-            break
-        counter += 1
-
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src), str(dst))
-
-    # 归档后自动取消关注
-    unstar_task(uri)
-
-    return dst
-
-
 def list_tasks() -> dict[str, dict[str, Any]]:
-    """列出所有任务。递归扫描 ~/.diy/d/ 下所有目录。"""
+    """列出所有任务。递归扫描 ~/.diy/task/ 下所有目录。"""
     root = _data_root()
     if not root.exists():
         return {}

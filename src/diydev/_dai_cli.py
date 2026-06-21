@@ -15,7 +15,6 @@
   dai task edit ...          编辑任务
   dai task sync <uri>       同步单个外部任务内容
   dai task sync --all        同步所有已 link 的外部任务
-  dai task archive <uri>     归档任务（已废弃，请用 unstar）
   dai task delete <uri>      删除本地任务
   dai task unlink <uri>      解绑外部任务引用
 """
@@ -36,7 +35,6 @@ from cyclopts import App, Parameter
 
 from ._dai_scan import find_spaces, find_workspace_root
 from ._state import (
-    archive_task,
     create_task,
     delete_task,
     diy_home,
@@ -826,42 +824,6 @@ def task_sync(
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
         yaml.dump(output, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-
-@task_app.command(name="archive")
-def task_archive(
-    uri: Annotated[str, Parameter(help="任务 URI")],
-    json_output: Annotated[
-        bool, Parameter(name=["--json"], help="JSON 格式输出")
-    ] = False,
-):
-    """归档任务（已废弃 — 请用 unstar）。
-
-    数据移到 ~/.diy/archive/data/ 并取消关注。
-    新代码请用 `dai task unstar <uri>` 替代。
-    """
-    print("⚠️  archive 已废弃，请用 unstar 替代", file=sys.stderr)
-
-    task = get_task(uri)
-    if task is None:
-        print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        archive_path = archive_task(uri)
-    except FileNotFoundError:
-        print(f"错误: 任务文件不存在: {uri}", file=sys.stderr)
-        sys.exit(1)
-    except OSError as exc:
-        print(f"错误: 归档失败: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    _notify_app_reload()
-    result = {"status": "success", "data": {"uri": uri, "archive_path": str(archive_path)}}
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
 @task_app.command(name="list")
