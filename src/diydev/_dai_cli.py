@@ -1027,6 +1027,31 @@ def _agent_print_help(backend: str = "hermes") -> None:
 """)
 
 
+def _get_session_counts(task_uri: str) -> tuple[int, int]:
+    """返回 (活跃 session 数, 总历史 session 数)。"""
+    alive = 0
+    total = 0
+    from diydev.core.agent_manager import get_manager
+    if get_manager().get(task_uri):
+        alive = 1
+    # 从 Hermes DB 统计历史 session
+    db = Path.home() / ".hermes" / "state.db"
+    if db.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db), timeout=1)
+            sid = f"agent-{task_uri}"
+            rows = conn.execute(
+                "SELECT COUNT(DISTINCT session_id) FROM messages WHERE session_id=?", (sid,)
+            ).fetchone()
+            if rows and rows[0]:
+                total = rows[0]
+            conn.close()
+        except Exception:
+            pass
+    return alive, total
+
+
 def _agent_cmd_list() -> None:
     """列出存活 agent（当前进程）。"""
     from diydev.core.agent_manager import get_manager
@@ -1035,10 +1060,12 @@ def _agent_cmd_list() -> None:
     if not agents:
         print("(无活跃 ACP agent)")
         return
-    print(f"{'TASK':<40s} {'SESSION':<38s} {'STATE':<10s} {'MSG'}")
-    print("-" * 95)
+    print(f"{'TASK':<35s}  {'SESSION':<10s}  {'MSG'}")
+    print("-" * 60)
     for a in agents:
-        print(f"{a.task_uri:<40s} {a.session_id:<38s} {a.state:<10s} {a.message_count}")
+        live, total = _get_session_counts(a.task_uri)
+        cnt = f"{live}/{total}" if total else "—"
+        print(f"{a.task_uri:<35s}  {cnt:<10s}  {a.message_count}条")
 
 
 def _agent_cmd_status(args: list[str]) -> None:
@@ -1053,10 +1080,11 @@ def _agent_cmd_status(args: list[str]) -> None:
         print(f"agent {task_uri} 不活跃")
         return
     s = a.state_snapshot()
+    live, total = _get_session_counts(task_uri)
     print(f"Task:     {s.task_uri}")
-    print(f"Session:  {s.session_id}")
+    print(f"会话:     {live}/{total}  (活跃/总计)")
     print(f"状态:     {s.state}")
-    print(f"消息数:   {s.message_count}")
+    print(f"消息:     {s.message_count} 条")
     print(f"历史:")
     for m in a.history[-6:]:
         tag = "◈" if m.role == "assistant" else "✦"
@@ -1241,6 +1269,15 @@ def _app_restart():
     sys.exit(1)
 
 
+def _dai_ui() -> None:
+    """启动 PySide6 管控台。"""
+    import subprocess, sys
+    from pathlib import Path
+
+    app_main = Path(__file__).resolve().parent / "app" / "main.py"
+    subprocess.run([sys.executable, str(app_main)] + sys.argv[2:])
+
+
 def main():
     from ._forward import forward_to_app
 
@@ -1265,6 +1302,11 @@ def main():
     # ACP agent 命令（本地运行，不依赖 app socket）
     if cmd == "agent":
         _dai_agent_dispatch(tokens[1:])
+        return
+
+    # UI 桌面 app 启动
+    if cmd == "ui":
+        _dai_ui()
         return
 
     # 所有命令走 app.sock，协议前缀 diy = v1

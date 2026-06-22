@@ -55,10 +55,7 @@ from diydev.app._activity_bar import ActivityBar
 from diydev.app._agent_chat import AgentChatPanel
 from diydev.app._app_log import get_logger, logger, setup_app_logger
 from diydev.app._log_panel import LogPanel
-from diydev.app.agent_bridge import (
-    AgentStatus,
-    list_agents,
-)
+from diydev.core.agent_manager import get_manager
 from diydev.app.task_tree import TaskNode, load_task_tree
 from diydev.app._doctor import HealthIssue, is_locked, run_check, set_locked
 from diydev.app._metrics import MetricsStore
@@ -900,27 +897,30 @@ class MainWindow(QMainWindow):
 
     @guarded("timer.refresh")
     def _refresh_agents(self) -> None:
-        """从文件系统读取 agent 状态并挂到任务节点上。"""
-        agents = list_agents()
-        by_task: dict[str, list[AgentStatus]] = {}
-        for a in agents:
-            by_task.setdefault(a.task_id, []).append(a)
+        """从 AgentManager 读取 agent 状态并挂到任务节点上。"""
+        from diydev.app.task_tree import AgentInfo
+
+        states = get_manager().list()
+        by_task: dict[str, Any] = {}
+        for s in states:
+            by_task[s.task_uri] = s
 
         changed = False
         for n in self._iter_nodes(self._nodes):
-            new_agents = [
-                AgentInfo(a.agent_id, a.state, a.pid)
-                for a in by_task.get(n.uri or "", [])
-            ]
+            uri = n.uri or ""
+            state = by_task.get(uri)
+            new_agents: list[AgentInfo] = []
+            if state is not None:
+                new_agents = [AgentInfo(agent_id=uri, state=state.state)]
             if n.agents != new_agents:
                 n.agents = new_agents
                 changed = True
 
         if changed:
             self._metrics.counter("agent.changes")
-            logger.debug("[timer] agent 状态变化 → 重绘树 (%d agent)", len(agents))
+            logger.debug("[timer] agent 状态变化 → 重绘树 (%d agent)", len(states))
             self._render_tree()
-        self._metrics.gauge("agent.count", len(agents))
+        self._metrics.gauge("agent.count", len(states))
         self._metrics.counter("agent.refresh")
 
     def _iter_nodes(self, nodes: list[TaskNode]):
@@ -1442,13 +1442,12 @@ class MainWindow(QMainWindow):
                 lines.append(f"{n.uri} {a.agent_id} pid={a.pid} state={a.state}")
         if lines:
             return "\n".join(lines)
-        # 兜底：直接从 ~/.diy/agents/ 读
-        from diydev.app.agent_bridge import list_agents
-        all_agents = list_agents()
-        if all_agents:
+        # 兜底：从 AgentManager 读
+        states = get_manager().list()
+        if states:
             lines = []
-            for a in all_agents:
-                lines.append(f"{a.task_id} agentd pid={a.pid} state={a.state}")
+            for s in states:
+                lines.append(f"{s.task_uri} state={s.state}")
             return "\n".join(lines)
         return "(无 agent)"
 

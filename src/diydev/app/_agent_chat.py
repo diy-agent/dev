@@ -39,12 +39,10 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
 )
 
 from diydev.app._app_log import logger as _logger
-from diydev.app.agent_bridge import list_agents
-
+from diydev.app.agent_bridge_qt import SignalBridge
 from diydev._state import diy_home
 
 _HERMES_DB = Path.home() / ".hermes" / "state.db"
-_AGENTD_SOCK = diy_home() / "agentd.sock"
 
 # ═══════════════════════════════════════════════════════
 # 色彩常量（Catppuccin Mocha）
@@ -419,60 +417,11 @@ def _session_icon(state: str) -> str:
     return _SESSION_ICONS.get(state, "○")
 
 
-def _list_sessions_for_task(task_uri: str) -> list[dict]:
-    agents = list_agents()
-    return [a.to_dict() for a in agents if a.task_id == task_uri]
-
-
-def _spawn_agent(task_uri: str, message: str) -> str | None:
-    import socket as _sock
-
-    agentd_sock = str(_AGENTD_SOCK)
-    cmd = f"spawn --task={task_uri} --message={message}\n"
-    try:
-        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
-        s.settimeout(5.0)
-        s.connect(agentd_sock)
-        s.sendall(cmd.encode("utf-8"))
-        s.shutdown(_sock.SHUT_WR)
-        buf = b""
-        while True:
-            data = s.recv(4096)
-            if not data:
-                break
-            buf += data
-        s.close()
-        resp = buf.decode("utf-8").strip()
-        _logger.info("[agent] spawn: %s → %s", task_uri, resp)
-        return resp
-    except Exception as exc:
-        _logger.error("[agent] spawn 失败: %s", exc)
-        return None
-
-
-def _kill_agent(task_uri: str) -> None:
-    import socket as _sock
-
-    agentd_sock = str(_AGENTD_SOCK)
-    cmd = f"kill --task={task_uri}\n"
-    try:
-        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
-        s.settimeout(3.0)
-        s.connect(agentd_sock)
-        s.sendall(cmd.encode("utf-8"))
-        s.shutdown(_sock.SHUT_WR)
-        s.close()
-        _logger.info("[agent] kill: %s", task_uri)
-    except Exception as exc:
-        _logger.error("[agent] kill 失败: %s", exc)
-
-
 class AgentChatPanel(QWidget):
-    """Agent 对话面板 — 支持 ACP 实时流（默认）和 agentd DB 轮询（回退）。
+    """Agent 对话面板 — 使用 core.AgentManager + SignalBridge。
 
-    ACP 模式：每个 task 有独立的 AcpManager（独立 hermes acp 子进程），
-    在第一次发送消息时懒创建。实时事件通过 Qt Signal → UI 渲染。
-    agentd 模式（回退）：通过 Hermes state.db 轮询获取完整消息。
+    每个 task 对应一个 AgentBackend 实例（通过 AgentManager 管理），
+    实时事件通过 SignalBridge 发 Qt Signal，再也不用 QTimer 轮询。
     """
 
     title_changed = Signal(str)
@@ -480,10 +429,8 @@ class AgentChatPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._task_uri: str | None = None
-        # 每个 task 独立的 ACP 管理器
-        self._acp_managers: dict[str, "AcpManager"] = {}  # task_uri → manager
-        self._current_acp: "AcpManager | None" = None      # 当前 task 的活跃管理器
-        self._acp_starting: set[str] = set()               # 正在启动 ACP 的 task
+        self._agent = None  # AgentBackend | None
+        self._bridge: SignalBridge | None = None
         self._sessions_list: list[dict] = []
         self._selected_idx: int | None = None
         self._placeholder_row: int | None = None
@@ -498,7 +445,7 @@ class AgentChatPanel(QWidget):
         # 已渲染的消息数（惰性加载用）
         self._rendered_count: int = 0
         self._load_more_btn: QPushButton | None = None
-        # 流式缓冲：当前正在接收的 assistant 消息（ACP delta 累积）
+        # 流式缓冲：当前正在接收的 assistant 消息
         self._stream_buffer: str = ""
         self._reasoning_buffer: str = ""
 
@@ -609,83 +556,58 @@ class AgentChatPanel(QWidget):
             self._send()
 
     def _stop_agent(self) -> None:
-        if not self._task_uri:
-            return
-        # ACP 模式：通过当前 task 的 AcpManager 取消
-        acp = self._acp_managers.get(self._task_uri)
-        if acp is not None:
+        """停止当前 agent 的 prompt（通过 AgentBackend）。"""
+        if self._agent is not None:
             try:
-                asyncio.ensure_future(acp.cancel())
+                asyncio.ensure_future(self._agent.stop())
             except RuntimeError:
                 pass
-        else:
-            # agentd 模式：通过 socket 发送 kill 命令
-            _kill_agent(self._task_uri)
         self._agent_running = False
         self._switch_to_send_btn()
 
     # ═══════════════════════════════════════════════════
-    # ACP 管理器生命周期 — 每个 task 独立 AcpManager
+    # Agent 生命周期 — 每个 task 一个 AgentBackend
     # ═══════════════════════════════════════════════════
 
-    def _ensure_acp_for_task(self, task_uri: str) -> None:
-        """确保 task 有 ACP 连接（已存在或懒创建）。"""
-        if task_uri in self._acp_managers:
-            self._switch_acp(task_uri)
+    async def _ensure_agent(self, task_uri: str) -> None:
+        """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。"""
+        from diydev.core.agent_manager import get_manager
+
+        # 断开旧的 bridge
+        if self._bridge is not None:
+            self._disconnect_bridge()
+
+        mgr = get_manager()
+        agent = await mgr.get_or_create(task_uri, callbacks=SignalBridge().callbacks())
+        self._agent = agent
+        self._bridge = SignalBridge()
+        self._bridge.bind(agent)
+        self._connect_bridge()
+
+    def _connect_bridge(self) -> None:
+        """连接 SignalBridge 的信号。"""
+        if self._bridge is None:
             return
-        if task_uri in self._acp_starting:
-            return  # 已在启动中
-        self._acp_starting.add(task_uri)
-        asyncio.ensure_future(self._lazy_start_acp(task_uri))
+        self._bridge.delta_received.connect(self._on_acp_delta)
+        self._bridge.reasoning_received.connect(self._on_acp_reasoning)
+        self._bridge.tool_started.connect(self._on_acp_tool)
+        self._bridge.finished.connect(self._on_acp_finished)
+        self._bridge.error_occurred.connect(self._on_acp_error)
 
-    async def _lazy_start_acp(self, task_uri: str) -> None:
-        """为 task 异步启动 ACP 子进程并建立连接。"""
-        from diydev.app._acp_client import AcpManager  # noqa: PLC0415
-
-        manager = AcpManager()
+    def _disconnect_bridge(self) -> None:
+        """断开 SignalBridge 的信号。"""
+        if self._bridge is None:
+            return
         try:
-            await manager.start()
-            await manager.new_session()
-            self._acp_managers[task_uri] = manager
-            # 如果当前还是这个 task，激活连接
-            if self._task_uri == task_uri:
-                self._switch_acp(task_uri)
-            _logger.info("[acp] task %s ACP 就绪 (pid=%s)", task_uri,
-                         manager._proc.pid if manager._proc else "?")
-        except Exception as exc:
-            _logger.warning("[acp] task %s ACP 启动失败（回退 agentd 模式）: %s", task_uri, exc)
-        finally:
-            self._acp_starting.discard(task_uri)
-
-    def _switch_acp(self, task_uri: str) -> None:
-        """切换当前 task 的 ACP 连接，重新绑定信号。"""
-        # 断开旧管理器
-        if self._current_acp is not None:
-            self._disconnect_acp_signals(self._current_acp)
-        # 连接新管理器
-        manager = self._acp_managers.get(task_uri)
-        self._current_acp = manager
-        if manager is not None:
-            self._connect_acp_signals(manager)
-
-    def _connect_acp_signals(self, manager: "AcpManager") -> None:
-        """连接指定 AcpManager 的实时事件信号。"""
-        manager.delta_received.connect(self._on_acp_delta)
-        manager.reasoning_received.connect(self._on_acp_reasoning)
-        manager.tool_started.connect(self._on_acp_tool)
-        manager.finished.connect(self._on_acp_finished)
-        manager.error_occurred.connect(self._on_acp_error)
-
-    def _disconnect_acp_signals(self, manager: "AcpManager") -> None:
-        """断开指定 AcpManager 的信号。"""
-        try:
-            manager.delta_received.disconnect(self._on_acp_delta)
-            manager.reasoning_received.disconnect(self._on_acp_reasoning)
-            manager.tool_started.disconnect(self._on_acp_tool)
-            manager.finished.disconnect(self._on_acp_finished)
-            manager.error_occurred.disconnect(self._on_acp_error)
+            self._bridge.delta_received.disconnect(self._on_acp_delta)
+            self._bridge.reasoning_received.disconnect(self._on_acp_reasoning)
+            self._bridge.tool_started.disconnect(self._on_acp_tool)
+            self._bridge.finished.disconnect(self._on_acp_finished)
+            self._bridge.error_occurred.disconnect(self._on_acp_error)
         except RuntimeError:
-            pass  # 信号未连接
+            pass
+        self._bridge.deleteLater()
+        self._bridge = None
 
     def _on_acp_error(self, msg: str) -> None:
         """ACP 错误日志。"""
@@ -801,15 +723,10 @@ class AgentChatPanel(QWidget):
     # ═══════════════════════════════════════════════════
 
     def _check_agent_state(self) -> None:
-        """独立 agent 状态检查（每 3s），不走消息轮询热路径。"""
+        """检查当前 agent 状态（每 3s）。"""
         if not self._task_uri:
             return
-        agents = list_agents()
-        running = any(
-            a.task_id == self._task_uri and a.state == "running"
-            for a in agents
-        )
-        if running:
+        if self._agent is not None and self._agent.is_alive:
             self._agent_running = True
             self._switch_to_stop_btn()
         elif self._agent_running:
@@ -891,11 +808,8 @@ class AgentChatPanel(QWidget):
     def _refresh_sessions(self) -> None:
         if not self._task_uri:
             return
-        s = _list_sessions_for_task(self._task_uri)
-        if s != self._sessions_list:
-            self._sessions_list = s
-            self._rebuild_list(s)
-            self._remove_placeholder()
+        # 1:1 会话，无需刷新列表
+        pass
 
     def _on_session_selected(self, row: int) -> None:
         item = self._session_list.item(row)
@@ -935,16 +849,10 @@ class AgentChatPanel(QWidget):
 
         # 渲染最近 PAGE_SIZE 条
         self._render_window(task_uri)
-
-        # Session 列表
-        s = _list_sessions_for_task(task_uri)
-        self._sessions_list = s
-        self._rebuild_list(s)
-        self._add_placeholder()
         self._input.setFocus()
 
-        # 懒启动 ACP（不阻塞 UI）
-        self._ensure_acp_for_task(task_uri)
+        # 异步获取 agent（SignalBridge 自动连接）
+        asyncio.ensure_future(self._ensure_agent(task_uri))
 
     def _render_window(self, task_uri: str) -> None:
         """渲染 task 的消息窗口（惰性加载，最近 _MAX_RENDER_LINES 行）。"""
@@ -1049,37 +957,37 @@ class AgentChatPanel(QWidget):
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
         self._scroll_to_bottom()
 
-        # ACP 模式：通过当前 task 的 AcpManager 异步发送（实时事件通过 Qt Signal 返回）
-        acp = self._acp_managers.get(self._task_uri)
-        if acp is not None:
+        # 通过 SignalBridge + AgentBackend 异步发送（实时事件通过 Qt Signal 返回）
+        if self._agent is not None:
             try:
-                # asyncio.ensure_future 在当前运行的事件循环上调度协程
-                asyncio.ensure_future(acp.prompt(text))
+                asyncio.ensure_future(self._run_prompt(text))
                 self._agent_running = True
                 self._switch_to_stop_btn()
             except RuntimeError as exc:
-                _logger.error("[acp] 发送失败（asyncio loop 未运行）: %s", exc)
+                _logger.error("[agent] 发送失败（asyncio loop 未运行）: %s", exc)
             return
 
-        # 回退：agentd 模式（通过 socket 通信 + DB 轮询）
-        resp = _spawn_agent(self._task_uri, text)
-        if resp is None:
-            _logger.error("[agent] 发送失败")
+    async def _run_prompt(self, text: str) -> None:
+        """在 event loop 上执行 agent.send()。"""
+        if self._agent is None:
             return
+        try:
+            await self._agent.send(text)
+        except Exception as exc:
+            _logger.error("[agent] prompt 失败: %s", exc)
 
         self._agent_running = True
         self._switch_to_stop_btn()
 
     def send_text(self, text: str) -> None:
-        self._send(text)
+        self._on_send_or_stop()
+        self._input.setText(text)
+        self._send()
 
     def ui_state(self) -> dict:
         return {
             "task_uri": self._task_uri,
-            "sessions": [
-                {"id": s.get("agent_id", s.get("id", "?")), "state": s.get("state", "")}
-                for s in self._sessions_list
-            ],
+            "sessions": [] if not self._agent else [{"id": self._agent.session_id, "state": self._agent.state}],
         }
 
     def ui_chat_log(self) -> str:
