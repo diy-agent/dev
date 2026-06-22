@@ -577,10 +577,14 @@ class AgentChatPanel(QWidget):
         if self._bridge is not None:
             self._disconnect_bridge()
 
-        mgr = get_manager()
-        agent = await mgr.get_or_create(task_uri, callbacks=SignalBridge().callbacks())
-        self._agent = agent
         self._bridge = SignalBridge()
+        mgr = get_manager()
+        agent = await mgr.get_or_create(
+            task_uri,
+            backend="pi",
+            callbacks=self._bridge.callbacks(),
+        )
+        self._agent = agent
         self._bridge.bind(agent)
         self._connect_bridge()
 
@@ -980,26 +984,34 @@ class AgentChatPanel(QWidget):
         self._switch_to_stop_btn()
 
     def send_text(self, text: str) -> None:
-        self._on_send_or_stop()
+        if self._agent_running:
+            self._stop_agent()
         self._input.setText(text)
         self._send()
 
     def ui_state(self) -> dict:
+        agent_state = self._agent.state if self._agent else None
         return {
             "task_uri": self._task_uri,
-            "sessions": [] if not self._agent else [{"id": self._agent.session_id, "state": self._agent.state}],
+            "agent_running": self._agent_running,
+            "agent_state": agent_state,
+            "agent_alive": self._agent.is_alive if self._agent else False,
+            "sessions": [] if not self._agent else [{
+                "id": self._agent.session_id,
+                "state": self._agent.state,
+                "messages": len(self._agent.history),
+            }],
         }
 
     def ui_chat_log(self) -> str:
-        """读取 Hermes 会话文本（gateway 用）。"""
-        if not self._task_uri or not _HERMES_DB.exists():
+        """读取当前 agent 历史对话文本。"""
+        if not self._agent:
             return ""
-        rows = _read_messages(self._task_uri)
         lines = []
-        for r in rows:
-            role = r.get("role", "")
-            content = (r.get("content") or "")[:200]
-            ts = datetime.fromtimestamp(r["timestamp"]).strftime("%H:%M:%S")
-            arrow = "←" if role == "user" else "→" if role == "assistant" else "⚙"
-            lines.append(f"[{ts}] {arrow} {content}")
+        for m in self._agent.history:
+            arrow = "←" if m.role == "user" else "→" if m.role == "assistant" else "⚙"
+            txt = (m.content or "")[:200]
+            ts = m.timestamp or ""
+            lines.append(f"[{ts}] {arrow} {txt}")
         return "\n".join(lines)
+

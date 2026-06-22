@@ -87,12 +87,14 @@ class PiRpcAgent(AgentBackend):
 
         logger.info("[%s] 启动 pi: %s", self._task_uri, " ".join(args))
 
+        import subprocess as _sp
+
         try:
-            self._proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            self._proc = _sp.Popen(
+                args,
+                stdin=_sp.PIPE,
+                stdout=_sp.PIPE,
+                stderr=_sp.PIPE,
                 cwd=cwd,
             )
 
@@ -116,12 +118,13 @@ class PiRpcAgent(AgentBackend):
             logger.info("[%s] pi 已停止", self._task_uri)
 
     async def _read_loop(self) -> None:
-        """持续读取 stdout JSONL 事件。"""
+        """持续读取 stdout JSONL 事件（使用 run_in_executor 兼容 QAsyncio）。"""
         if not self._proc or not self._proc.stdout:
             return
+        loop = asyncio.get_running_loop()
         buf = ""
         while True:
-            line = await self._proc.stdout.readline()
+            line = await loop.run_in_executor(None, self._proc.stdout.readline)
             if not line:
                 break
             text = line.decode("utf-8", errors="replace").rstrip("\n\r")
@@ -233,6 +236,7 @@ class PiRpcAgent(AgentBackend):
         if self._proc and self._proc.stdin:
             line = json.dumps(data, ensure_ascii=False) + "\n"
             self._proc.stdin.write(line.encode("utf-8"))
+            self._proc.stdin.flush()
 
     # ── AgentBackend 交互 ──
 
@@ -251,7 +255,8 @@ class PiRpcAgent(AgentBackend):
             self._write({"type": "abort"})
             self._proc.terminate()
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=3)
+                loop = asyncio.get_running_loop()
+                await asyncio.wait_for(loop.run_in_executor(None, self._proc.wait), timeout=3)
             except asyncio.TimeoutError:
                 self._proc.kill()
         for _ in range(50):

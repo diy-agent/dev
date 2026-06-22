@@ -1781,6 +1781,18 @@ class GatewayCLI:
             return f"[timeout] agent 未在 {timeout}s 内完成"
 
         @chat_app.command
+        def status():
+            """当前 chat panel 状态（task / agent / session / running）。"""
+            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            if panel is None:
+                return "error: UI \u5c1a\u672a\u521d\u59cb\u5316"
+            s = panel.ui_state()
+            import yaml as _yaml, io as _io
+            buf = _io.StringIO()
+            _yaml.dump(s, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            return buf.getvalue()
+
+        @chat_app.command
         def send(text: str, task: str | None = None):
             """向 task 发送消息（走 UI 层）。"""
             panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
