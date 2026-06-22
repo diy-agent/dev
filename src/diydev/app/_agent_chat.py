@@ -1,21 +1,27 @@
-"""Agent 对话面板：结构化消息渲染 + 流式更新。
+"""Agent 对话面板 — 基于 Hermes 数据库的消息渲染。
 
-设计原则（模仿 Hermes TUI）：
-- steer.log 解析为结构化消息（user/assistant/system）
-- 消息气泡带角色图标 + 时间戳 + markdown 渲染
-- 定时轮询 steer.log 变化，模拟流式输出效果
-- 运行中显示思考动画 + 工具执行提示
-- 自动滚动到底部，用户手动滚动时暂停
+数据来源：Hermes state.db（~/.hermes/state.db）
+- sessions: id = agent-{task_uri}
+- messages: id, role, content, tool_name, tool_calls, reasoning_content
+
+渲染规则：
+- role=user → 用户气泡
+- role=assistant → 助手气泡（前置 reasoning，后接 content）
+- role=tool → 内联到最近一条 assistant 消息（格式化为文本行）
+- 按 id 顺序排列，QLabel 自然撑开无滚动条
 """
 
 from __future__ import annotations
 
-import re
+import json
+import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal  # type: ignore[import-untyped]
+from PySide6.QtGui import QTextOption  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QFrame,
     QHBoxLayout,
@@ -25,13 +31,16 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from diydev.app._app_log import logger as _logger
-from diydev.app.agent_bridge import list_agents, steer_read, steer_send
+from diydev.app.agent_bridge import list_agents
+
+_HERMES_DB = Path.home() / ".hermes" / "state.db"
 
 # ═══════════════════════════════════════════════════════
 # 色彩常量（Catppuccin Mocha）
@@ -43,129 +52,72 @@ _BG_Surface = "#313244"
 _BG_Surface2 = "#45475a"
 _TEXT = "#cdd6f4"
 _TEXT_DIM = "#a6adc8"
-_MAUVE = "#cba6f7"  # 用户角色色
-_BLUE = "#89b4fa"  # 助手角色色
-_GREEN = "#a6e3a1"  # 成功/完成
-_YELLOW = "#f9e2af"  # 警告/思考
-_RED = "#f38ba8"  # 错误
-_PEACH = "#fab387"  # 工具执行
-_TEAL = "#94e2d5"  # 链接/代码
+_MAUVE = "#cba6f7"
+_BLUE = "#89b4fa"
+_GREEN = "#a6e3a1"
+_YELLOW = "#f9e2af"
+_RED = "#f38ba8"
+_PEACH = "#fab387"
+_TEAL = "#94e2d5"
 _surface0 = "#585b70"
 _surface1 = "#6c7086"
 _border = "#313244"
 
-# ═══════════════════════════════════════════════════════
-# Steer.log 解析
-# ═══════════════════════════════════════════════════════
+_PEACH_DIM = "#a67a5e"
 
-# 匹配 steer.log 中的消息行开头: [HH:MM:SS] ← 或 [HH:MM:SS] →
-_MSG_PATTERN = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\] ([←→]) (.*)$")
-
+_MAX_RENDER_LINES = 300  # 每次渲染的最大内容行数（短消息几十条，长消息几条）
 
 # ═══════════════════════════════════════════════════════
-# Progress.log 增量读取
+# Hermes 数据库查询
 # ═══════════════════════════════════════════════════════
 
 
-def _read_progress_incremental(task_uri: str, last_offset: int) -> tuple[str, int]:
-    """增量读取 progress.log，返回 (新内容, 新偏移量)。"""
-    p = Path.home() / ".diy" / "agents" / task_uri / "progress.log"
-    if not p.exists():
-        return "", last_offset
+def _read_messages(task_uri: str, after_id: int = 0) -> list[dict]:
+    """从 Hermes state.db 读取 task 的 session 消息。"""
+    session_id = f"agent-{task_uri}"
+    if not _HERMES_DB.exists():
+        return []
     try:
-        size = p.stat().st_size
-        if size <= last_offset:
-            return "", last_offset
-        with open(p) as fh:
-            fh.seek(last_offset)
-            new_content = fh.read()
-        return new_content, size
-    except Exception:
-        return "", last_offset
+        conn = sqlite3.connect(str(_HERMES_DB), timeout=2)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, role, content, tool_name, tool_calls, "
+            "reasoning_content, timestamp "
+            "FROM messages WHERE session_id=? AND id > ? "
+            "ORDER BY id",
+            (session_id, after_id),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except sqlite3.OperationalError:
+        return []
 
 
-def _read_tool_events(task_uri: str, last_line: int) -> tuple[list[dict], int]:
-    """增量读取 tool_events.jsonl，返回 (新事件列表, 新行号)。"""
-    p = Path.home() / ".diy" / "agents" / task_uri / "tool_events.jsonl"
-    if not p.exists():
-        return [], last_line
-    try:
-        import contextlib
-        import json as _json
-
-        with open(p) as fh:
-            lines = fh.readlines()
-        new_lines = lines[last_line:]
-        events = []
-        for line in new_lines:
-            line = line.strip()
-            if line:
-                with contextlib.suppress(_json.JSONDecodeError):
-                    events.append(_json.loads(line))
-        return events, len(lines)
-    except Exception:
-        return [], last_line
-
-
-@dataclass
-class ChatMessage:
-    role: str  # "user" | "assistant"
-    timestamp: str
-    text: str
-    _html_cache: str = ""
-
-    def to_html(self) -> str:
-        if self._html_cache:
-            return self._html_cache
-        self._html_cache = _render_markdown(self.text, self.role)
-        return self._html_cache
-
-
-def parse_steer_log(content: str) -> list[ChatMessage]:
-    """将 steer.log 文本解析为结构化消息列表。"""
-    messages: list[ChatMessage] = []
-    current: ChatMessage | None = None
-
-    for line in content.split("\n"):
-        m = _MSG_PATTERN.match(line)
-        if m:
-            ts, arrow, text = m.group(1), m.group(2), m.group(3)
-            role = "user" if arrow == "←" else "assistant"
-            current = ChatMessage(role=role, timestamp=ts, text=text)
-            messages.append(current)
-        elif current is not None:
-            # 多行消息的续行
-            if line.strip():
-                current.text += "\n" + line
-
-    return messages
-
-
-# ═══════════════════════════════════════════════════════
-# Markdown → HTML 渲染（轻量级）
-# ═══════════════════════════════════════════════════════
-
-
-def _escape_html(text: str) -> str:
+def _html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _render_inline(text: str) -> str:
-    """渲染行内 markdown：bold, italic, inline code, links。"""
-    s = _escape_html(text)
-    # bold **text** or __text__
-    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
-    s = re.sub(r"__(.+?)__", r"<b>\1</b>", s)
-    # italic *text* or _text_ (但不匹配 __bold__)
-    s = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", s)
-    # inline code `text`
-    s = re.sub(
+def _render_message_content(content: str) -> str:
+    """简易 markdown → HTML（行内格式）。"""
+    if not content:
+        return ""
+    s = _html_escape(content)
+    s = s.replace("\n", "<br>")
+    s = _apply_inline_md(s)
+    return s
+
+
+def _apply_inline_md(s: str) -> str:
+    """行内 markdown 格式。"""
+    s = __import__("re").sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    s = __import__("re").sub(r"__(.+?)__", r"<b>\1</b>", s)
+    s = __import__("re").sub(
         r"`([^`]+)`",
-        rf'<span style="background:{_BG_Surface};color:{_TEAL};padding:1px 4px;border-radius:3px;font-family:monospace;font-size:11px">\1</span>',
+        rf'<span style="background:{_BG_Surface};color:{_TEAL};'
+        rf'padding:0 3px;border-radius:3px;font-family:monospace;font-size:11px">\1</span>',
         s,
     )
-    # links [text](url)
-    s = re.sub(
+    s = __import__("re").sub(
         r"\[([^\]]+)\]\(([^)]+)\)",
         rf'<span style="color:{_BLUE};text-decoration:underline">\1</span>',
         s,
@@ -173,130 +125,138 @@ def _render_inline(text: str) -> str:
     return s
 
 
-def _render_markdown(text: str, role: str) -> str:
-    """将 markdown 文本渲染为 HTML（供 QTextEdit 显示）。"""
-    lines = text.split("\n")
-    html_parts: list[str] = []
-    in_code_block = False
-    code_lines: list[str] = []
+def _format_tool_calls(tool_calls: str | None, tool_name: str | None) -> str:
+    """格式化 tool_calls JSON 为显示文本。"""
+    if not tool_calls:
+        return ""
+    try:
+        calls = json.loads(tool_calls)
+        if isinstance(calls, list):
+            parts = []
+            for c in calls:
+                name = c.get("function", {}).get("name", c.get("name", tool_name or "?"))
+                args = c.get("function", {}).get("arguments", c.get("arguments", ""))
+                if isinstance(args, str):
+                    try:
+                        a = json.loads(args)
+                        args = ", ".join(f"{k}={v}" for k, v in list(a.items())[:3])
+                    except json.JSONDecodeError:
+                        args = args[:60]
+                parts.append(f"🔧 {name}({args})")
+            return "<br>".join(parts)
+        return ""
+    except (json.JSONDecodeError, TypeError):
+        return ""
 
-    for line in lines:
-        # 代码块处理
-        if line.strip().startswith("```"):
-            if in_code_block:
-                # 结束代码块
-                code_content = _escape_html("\n".join(code_lines))
-                html_parts.append(
-                    f'<pre style="background:{_BG_DARK};color:{_TEXT_DIM};'
-                    f"padding:8px 12px;border-radius:6px;border:1px solid {_border};"
-                    f'margin:4px 0;font-family:monospace;font-size:11px;line-height:1.4">'
-                    f"{code_content}</pre>"
-                )
-                code_lines = []
-                in_code_block = False
-            else:
-                # 开始代码块
-                in_code_block = True
-            continue
 
-        if in_code_block:
-            code_lines.append(line)
-            continue
-
-        stripped = line.strip()
-
-        # 空行
-        if not stripped:
-            html_parts.append("<br>")
-            continue
-
-        # 标题
-        if stripped.startswith("# "):
-            html_parts.append(
-                f'<div style="color:{_TEXT};font-weight:bold;font-size:14px;margin:6px 0 2px 0">'
-                f"{_render_inline(stripped[2:])}</div>"
-            )
-            continue
-        if stripped.startswith("## "):
-            html_parts.append(
-                f'<div style="color:{_TEXT};font-weight:bold;font-size:13px;margin:4px 0 2px 0">'
-                f"{_render_inline(stripped[3:])}</div>"
-            )
-            continue
-        if stripped.startswith("### "):
-            html_parts.append(
-                f'<div style="color:{_TEXT_DIM};font-weight:bold;font-size:12px;margin:3px 0 1px 0">'
-                f"{_render_inline(stripped[4:])}</div>"
-            )
-            continue
-
-        # 分隔线
-        if stripped in ("---", "***", "___"):
-            html_parts.append(
-                f'<div style="border-top:1px solid {_border};margin:6px 0"></div>'
-            )
-            continue
-
-        # 列表项
-        if re.match(r"^[-*]\s+", stripped):
-            content = _render_inline(re.sub(r"^[-*]\s+", "", stripped))
-            html_parts.append(
-                f'<div style="color:{_TEXT};margin:1px 0;padding-left:12px">'
-                f'<span style="color:{_MAUVE}">•</span> {content}</div>'
-            )
-            continue
-
-        # 有序列表
-        m_ol = re.match(r"^(\d+)\.\s+(.+)", stripped)
-        if m_ol:
-            num, content = m_ol.group(1), m_ol.group(2)
-            html_parts.append(
-                f'<div style="color:{_TEXT};margin:1px 0;padding-left:12px">'
-                f'<span style="color:{_MAUVE}">{num}.</span> {_render_inline(content)}</div>'
-            )
-            continue
-
-        # 表格行（简化处理）
-        if stripped.startswith("|") and stripped.endswith("|"):
-            # 跳过分隔行 |---|---|
-            if re.match(r"^\|[\s\-:|]+\|$", stripped):
-                continue
-            cells = [c.strip() for c in stripped.strip("|").split("|")]
-            cell_html = " &nbsp;│&nbsp; ".join(
-                f'<span style="color:{_TEAL}">{_escape_html(c)}</span>' for c in cells
-            )
-            html_parts.append(
-                f'<div style="color:{_TEXT};font-family:monospace;font-size:11px;margin:1px 0;padding:2px 8px;'
-                f'background:{_BG_DARK};border-radius:3px">{cell_html}</div>'
-            )
-            continue
-
-        # 引用
-        if stripped.startswith("> "):
-            content = _render_inline(stripped[2:])
-            html_parts.append(
-                f'<div style="color:{_TEXT_DIM};border-left:3px solid {_MAUVE};'
-                f'padding-left:8px;margin:2px 0;font-style:italic">{content}</div>'
-            )
-            continue
-
-        # 普通段落
-        html_parts.append(
-            f'<div style="color:{_TEXT};margin:1px 0;line-height:1.5">{_render_inline(stripped)}</div>'
-        )
-
-    return "\n".join(html_parts)
+def _format_tool_result(content: str | None) -> str:
+    """格式化工具执行结果为简短摘要。"""
+    if not content:
+        return ""
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict):
+            # 提取关键字段
+            parts = []
+            for key in ("output", "stdout", "result", "error", "success"):
+                if key in data:
+                    val = data[key]
+                    if isinstance(val, str) and len(val) > 80:
+                        val = val[:80] + "..."
+                    parts.append(f"{key}={val}")
+            if parts:
+                return f"[{' '.join(parts)}]"
+        return content[:80]
+    except (json.JSONDecodeError, TypeError):
+        return content[:80]
 
 
 # ═══════════════════════════════════════════════════════
-# 单条消息组件
+# 消息模型
+# ═══════════════════════════════════════════════════════
+
+
+@dataclass
+class DisplayMessage:
+    """显示用的消息模型。"""
+    role: str  # user | assistant | tool
+    content: str = ""  # 显示用 HTML
+    raw_content: str = ""  # 原始文本
+    timestamp: str = ""
+    msg_id: int = 0
+    # 工具相关
+    tool_name: str = ""
+    tool_calls_html: str = ""
+    tool_result_summary: str = ""
+    reasoning_html: str = ""  # 思考过程 HTML
+    session_ended: bool = False
+
+
+def _rows_to_display(rows: list[dict], existing_last: DisplayMessage | None = None) -> list[DisplayMessage]:
+    """将 Hermes DB rows 批处理为 DisplayMessage 列表（tool 合并到前一条 assistant）。
+    existing_last: 已有会话的最后一条 assistant，新 tool 会合并到它身上。"""
+    result: list[DisplayMessage] = []
+    last_assistant: DisplayMessage | None = existing_last
+
+    for row in rows:
+        role = row.get("role", "")
+        msg_id = row["id"]
+        content = row.get("content") or ""
+        tool_name = row.get("tool_name") or ""
+        tool_calls = row.get("tool_calls") or ""
+        reasoning = row.get("reasoning_content") or ""
+        ts = datetime.fromtimestamp(row["timestamp"]).strftime("%H:%M:%S")
+
+        if role == "user":
+            dm = DisplayMessage(
+                role="user",
+                content=_render_message_content(content),
+                raw_content=content,
+                timestamp=ts,
+                msg_id=msg_id,
+            )
+            result.append(dm)
+            last_assistant = None
+
+        elif role == "assistant":
+            reasoning_html = _render_message_content(reasoning) if reasoning else ""
+            dm = DisplayMessage(
+                role="assistant",
+                content=_render_message_content(content),
+                raw_content=content,
+                timestamp=ts,
+                msg_id=msg_id,
+                reasoning_html=reasoning_html,
+            )
+            result.append(dm)
+            last_assistant = dm
+
+        elif role == "tool" and last_assistant is not None:
+            tc_html = _format_tool_calls(tool_calls, tool_name)
+            result_summary = _format_tool_result(content)
+            if tc_html:
+                last_assistant.tool_calls_html = (
+                    last_assistant.tool_calls_html + "<br>" + tc_html
+                    if last_assistant.tool_calls_html else tc_html
+                )
+            if result_summary:
+                last_assistant.tool_result_summary = (
+                    last_assistant.tool_result_summary + "<br>" + result_summary
+                    if last_assistant.tool_result_summary else result_summary
+                )
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════
+# ChatMessageWidget — 单条消息气泡
 # ═══════════════════════════════════════════════════════
 
 
 class ChatMessageWidget(QFrame):
-    """单条消息的渲染组件。"""
+    """单条消息的渲染组件。QLabel 自然撑开，无独立滚动条。"""
 
-    def __init__(self, msg: ChatMessage, parent=None):
+    def __init__(self, msg: DisplayMessage, parent=None):
         super().__init__(parent)
         self._msg = msg
         self._setup_ui()
@@ -310,10 +270,17 @@ class ChatMessageWidget(QFrame):
         layout.setSpacing(8)
 
         is_user = self._msg.role == "user"
+        is_tool = self._msg.role == "tool"
 
-        # ── 角色图标 ──
-        icon = QLabel("✦" if is_user else "◈")
-        icon_color = _MAUVE if is_user else _BLUE
+        # 图标
+        if is_tool:
+            icon_char = "⚙"
+            icon_color = _PEACH
+        else:
+            icon_char = "✦" if is_user else "◈"
+            icon_color = _MAUVE if is_user else _BLUE
+
+        icon = QLabel(icon_char)
         icon.setStyleSheet(
             f"color: {icon_color}; font-size: 14px; font-weight: bold; "
             f"background: transparent; padding-top: 2px;"
@@ -322,159 +289,97 @@ class ChatMessageWidget(QFrame):
         icon.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(icon)
 
-        # ── 消息内容区 ──
         content_widget = QWidget()
         content_widget.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(2)
 
-        # 头部：角色名 + 时间
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(6)
+        # 头部
+        if not is_tool:
+            header = QHBoxLayout()
+            header.setContentsMargins(0, 0, 0, 0)
+            header.setSpacing(6)
 
-        role_label = QLabel("You" if is_user else "Agent")
-        role_color = _MAUVE if is_user else _BLUE
-        role_label.setStyleSheet(
-            f"color: {role_color}; font-weight: bold; font-size: 11px; "
-            f"background: transparent;"
-        )
-        header.addWidget(role_label)
+            role_label = QLabel("You" if is_user else "Agent")
+            role_color = _MAUVE if is_user else _BLUE
+            role_label.setStyleSheet(
+                f"color: {role_color}; font-weight: bold; font-size: 11px; "
+                f"background: transparent;"
+            )
+            header.addWidget(role_label)
 
-        ts_label = QLabel(self._msg.timestamp)
-        ts_label.setStyleSheet(
-            f"color: {_TEXT_DIM}; font-size: 10px; background: transparent;"
-        )
-        header.addWidget(ts_label)
+            ts_label = QLabel(self._msg.timestamp)
+            ts_label.setStyleSheet(
+                f"color: {_TEXT_DIM}; font-size: 10px; background: transparent;"
+            )
+            header.addWidget(ts_label)
 
-        header.addStretch()
-        content_layout.addLayout(header)
+            header.addStretch()
+            content_layout.addLayout(header)
 
-        # 消息体（markdown 渲染）
-        body = QTextEdit()
-        body.setReadOnly(True)
-        body.setHtml(self._msg.to_html())
-        body.setStyleSheet(
-            f"QTextEdit {{ background: transparent; color: {_TEXT}; border: none; "
-            f"padding: 0; font-size: 12px; selection-background-color: {_BG_Surface2}; }}"
-        )
-        # 自适应高度
-        doc = body.document()
-        doc.setTextWidth(500)  # 近似宽度
-        body.setMaximumHeight(max(60, int(doc.size().height()) + 16))
-        content_layout.addWidget(body)
+        # reasoning（思考过程）
+        if self._msg.reasoning_html:
+            reasoning = QLabel()
+            reasoning.setTextFormat(Qt.TextFormat.RichText)
+            reasoning.setWordWrap(True)
+            reasoning.setText(
+                f'<div style="color:{_YELLOW};font-size:11px;font-style:italic;'
+                f'border-left:2px solid {_YELLOW};padding-left:8px;margin:2px 0">'
+                f"{self._msg.reasoning_html}</div>"
+            )
+            reasoning.setWordWrap(True)
+            content_layout.addWidget(reasoning)
 
+        # tool call 标注
+        if self._msg.tool_calls_html:
+            tc = QLabel()
+            tc.setTextFormat(Qt.TextFormat.RichText)
+            tc.setWordWrap(True)
+            tc.setText(
+                f'<div style="color:{_PEACH};font-size:11px;font-family:monospace;'
+                f'margin:1px 0">{self._msg.tool_calls_html}</div>'
+            )
+            content_layout.addWidget(tc)
+
+        # tool result
+        if self._msg.tool_result_summary:
+            tr = QLabel()
+            tr.setTextFormat(Qt.TextFormat.RichText)
+            tr.setWordWrap(True)
+            tr.setText(
+                f'<div style="color:{_TEXT_DIM};font-size:11px;'
+                f'border-left:2px solid {_PEACH_DIM};padding-left:8px;margin:1px 0">'
+                f"{self._msg.tool_result_summary}</div>"
+            )
+            content_layout.addWidget(tr)
+
+        # 消息正文 — QTextEdit 正确换行，关滚动条，无高度限制
+        if self._msg.content:
+            body = QTextEdit()
+            body.setReadOnly(True)
+            body.document().setTextWidth(0)
+            body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+            body.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+            body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            body.setHtml(self._msg.content)
+            body.setStyleSheet(
+                f"QTextEdit {{ background: transparent; color: {_TEXT}; border: none; "
+                f"padding: 0; font-size: 12px; }}"
+            )
+            content_layout.addWidget(body)
+
+        content_layout.addStretch()
         layout.addWidget(content_widget, 1)
-
-
-# ═══════════════════════════════════════════════════════
-# 思考 / 工具提示组件
-# ═══════════════════════════════════════════════════════
-
-
-class ThinkingIndicator(QWidget):
-    """思考中的动画指示器。"""
-
-    _FRAMES = ["( ◕‿◕)", "( ◕__◕)", "( ◕﹏◕)", "( ◕__◕)"]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._frame_idx = 0
-        self._setup_ui()
-
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._advance)
-        self._timer.start(400)
-
-    def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 4, 8, 4)
-        layout.setSpacing(6)
-
-        self._icon = QLabel("◈")
-        self._icon.setStyleSheet(
-            f"color: {_BLUE}; font-size: 14px; font-weight: bold; background: transparent;"
-        )
-        self._icon.setFixedWidth(20)
-        layout.addWidget(self._icon)
-
-        self._text = QLabel(self._FRAMES[0])
-        self._text.setStyleSheet(
-            f"color: {_YELLOW}; font-size: 11px; background: transparent; font-style: italic;"
-        )
-        layout.addWidget(self._text)
-        layout.addStretch()
-
-    def _advance(self) -> None:
-        self._frame_idx = (self._frame_idx + 1) % len(self._FRAMES)
-        self._text.setText(self._FRAMES[self._frame_idx])
-
-    def set_thinking_text(self, text: str) -> None:
-        """更新思考提示文本。"""
-        if text:
-            self._text.setText(f"思考中... {text}")
-        else:
-            self._text.setText(self._FRAMES[self._frame_idx])
-
-
-class ToolIndicator(QWidget):
-    """工具执行中的提示组件。"""
-
-    def __init__(self, tool_name: str = "", parent=None):
-        super().__init__(parent)
-        self._tool_name = tool_name
-        self._elapsed_start = time.time()
-        self._setup_ui()
-
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._update_elapsed)
-        self._timer.start(1000)
-
-    def _setup_ui(self) -> None:
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 2, 8, 2)
-        layout.setSpacing(6)
-
-        self._icon = QLabel("⚙")
-        self._icon.setStyleSheet(
-            f"color: {_PEACH}; font-size: 12px; background: transparent;"
-        )
-        self._icon.setFixedWidth(20)
-        layout.addWidget(self._icon)
-
-        label = f"执行中: {self._tool_name}" if self._tool_name else "执行中..."
-        self._text = QLabel(label)
-        self._text.setStyleSheet(
-            f"color: {_PEACH}; font-size: 11px; background: transparent;"
-        )
-        layout.addWidget(self._text)
-
-        self._time_label = QLabel("0s")
-        self._time_label.setStyleSheet(
-            f"color: {_TEXT_DIM}; font-size: 10px; background: transparent;"
-        )
-        layout.addWidget(self._time_label)
-        layout.addStretch()
-
-    def _update_elapsed(self) -> None:
-        elapsed = time.time() - self._elapsed_start
-        if elapsed < 10:
-            self._time_label.setText(f"{elapsed:.1f}s")
-        else:
-            self._time_label.setText(f"{elapsed:.0f}s")
-
-    def set_tool_name(self, name: str) -> None:
-        self._tool_name = name
-        label = f"执行中: {name}" if name else "执行中..."
-        self._text.setText(label)
 
 
 # ═══════════════════════════════════════════════════════
 # 主面板
 # ═══════════════════════════════════════════════════════
 
-# Session 状态图标映射
+
 _SESSION_ICONS = {
     "running": "●",
     "idle": "○",
@@ -519,33 +424,52 @@ def _spawn_agent(task_uri: str, message: str) -> str | None:
             buf += data
         s.close()
         resp = buf.decode("utf-8").strip()
-        _logger.info("[agent] 启动 session: %s → %s", task_uri, resp)
+        _logger.info("[agent] spawn: %s → %s", task_uri, resp)
         return resp
     except Exception as exc:
-        _logger.error("[agent] 启动失败: %s", exc)
+        _logger.error("[agent] spawn 失败: %s", exc)
         return None
 
 
+def _kill_agent(task_uri: str) -> None:
+    import socket as _sock
+
+    agentd_sock = str(Path.home() / ".diy" / "agentd.sock")
+    cmd = f"kill --task={task_uri}\n"
+    try:
+        s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
+        s.settimeout(3.0)
+        s.connect(agentd_sock)
+        s.sendall(cmd.encode("utf-8"))
+        s.shutdown(_sock.SHUT_WR)
+        s.close()
+        _logger.info("[agent] kill: %s", task_uri)
+    except Exception as exc:
+        _logger.error("[agent] kill 失败: %s", exc)
+
+
 class AgentChatPanel(QWidget):
-    """Agent 对话面板 —— 模仿 Hermes TUI 的消息渲染风格。"""
+    """Agent 对话面板 — 基于 Hermes state.db。"""
 
     title_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._task_uri: str | None = None
-        self._sessions: list[dict] = []
+        self._sessions_list: list[dict] = []
         self._selected_idx: int | None = None
         self._placeholder_row: int | None = None
-        self._last_steer_content: str = ""
         self._message_widgets: list[ChatMessageWidget] = []
-        self._thinking_indicator: ThinkingIndicator | None = None
+        self._last_msg_id: int = 0
         self._auto_scroll = True
-        self._streaming_text: str = ""
-        self._streaming_widget: ChatMessageWidget | None = None
-        self._progress_offset: int = 0  # progress.log 读取偏移
-        self._tool_events_line: int = 0  # tool_events.jsonl 已读行数
-        self._active_tool_indicators: list[ToolIndicator] = []
+        self._agent_running = False
+        # widget 缓存：task_uri → list[ChatMessageWidget]
+        self._widget_cache: dict[str, list[ChatMessageWidget]] = {}
+        # DisplayMessage 全量缓存：task_uri → list[DisplayMessage]（轻量，可随时重建 widget）
+        self._cached_msgs: dict[str, list[DisplayMessage]] = {}
+        # 已渲染的消息数（惰性加载用）
+        self._rendered_count: int = 0
+        self._load_more_btn: QPushButton | None = None
 
         self._setup_ui()
         self._setup_timers()
@@ -555,7 +479,7 @@ class AgentChatPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Session 列表 ──
+        # Session 列表
         self._session_list = QListWidget()
         self._session_list.setFrameShape(QFrame.Shape.NoFrame)
         self._session_list.setMaximumHeight(100)
@@ -568,9 +492,10 @@ class AgentChatPanel(QWidget):
         self._session_list.currentRowChanged.connect(self._on_session_selected)
         layout.addWidget(self._session_list)
 
-        # ── 消息区（ScrollArea 包裹） ──
+        # 消息区（QScrollArea 统一滚动）
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
             f"QScrollArea {{ background: {_BG}; border: none; }}"
@@ -586,13 +511,13 @@ class AgentChatPanel(QWidget):
         self._messages_layout = QVBoxLayout(self._messages_container)
         self._messages_layout.setContentsMargins(0, 4, 0, 4)
         self._messages_layout.setSpacing(2)
-        self._messages_layout.addStretch()  # 底部弹簧
+        self._messages_layout.addStretch()
 
         scroll.setWidget(self._messages_container)
         self._scroll_area = scroll
         layout.addWidget(scroll, 1)
 
-        # ── 底部输入区 ──
+        # 底部输入区
         bottom = QWidget()
         bottom.setStyleSheet(
             f"background: {_BG_DARK}; border-top: 1px solid {_border};"
@@ -624,22 +549,52 @@ class AgentChatPanel(QWidget):
             f"QPushButton:hover {{ background: {_BLUE}; }}"
             f"QPushButton:pressed {{ background: {_surface0}; }}"
         )
-        self._send_btn.clicked.connect(self._send)
+        self._send_btn.clicked.connect(self._on_send_or_stop)
         input_row.addWidget(self._send_btn)
 
         bottom_lay.addLayout(input_row)
         layout.addWidget(bottom)
 
+    def _switch_to_stop_btn(self) -> None:
+        self._send_btn.setText("⏹ 停止")
+        self._send_btn.setStyleSheet(
+            f"QPushButton {{ background: {_RED}; color: #fff; border: none; "
+            f"border-radius: 6px; padding: 2px 14px; font-size: 11px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: #e64553; }}"
+        )
+
+    def _switch_to_send_btn(self) -> None:
+        self._send_btn.setText("发送")
+        self._send_btn.setStyleSheet(
+            f"QPushButton {{ background: {_MAUVE}; color: {_BG_DARK}; border: none; "
+            f"border-radius: 6px; padding: 2px 14px; font-size: 11px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: {_BLUE}; }}"
+        )
+
+    def _on_send_or_stop(self) -> None:
+        if self._agent_running:
+            self._stop_agent()
+        else:
+            self._send()
+
+    def _stop_agent(self) -> None:
+        if not self._task_uri:
+            return
+        _kill_agent(self._task_uri)
+        self._agent_running = False
+        self._switch_to_send_btn()
+
+    def set_compact(self, compact: bool = True) -> None:
+        pass
+
     def _setup_timers(self) -> None:
-        # Session 列表刷新（3s）
         self._session_timer = QTimer(self)
         self._session_timer.timeout.connect(self._refresh_sessions)
         self._session_timer.start(3000)
 
-        # Steer.log 轮询（800ms，模拟流式）
-        self._steer_timer = QTimer(self)
-        self._steer_timer.timeout.connect(self._poll_steer_log)
-        self._steer_timer.start(800)
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_messages)
+        self._poll_timer.start(1000)
 
     # ═══════════════════════════════════════════════════
     # 滚动控制
@@ -647,7 +602,6 @@ class AgentChatPanel(QWidget):
 
     def _on_scroll(self, value: int) -> None:
         sb = self._scroll_area.verticalScrollBar()
-        # 接近底部时开启自动滚动
         self._auto_scroll = value >= sb.maximum() - 30
 
     def _scroll_to_bottom(self) -> None:
@@ -656,153 +610,51 @@ class AgentChatPanel(QWidget):
             sb.setValue(sb.maximum())
 
     # ═══════════════════════════════════════════════════
-    # Steer.log 轮询 + 增量渲染
+    # 消息读取与渲染（批处理，不重建）
     # ═══════════════════════════════════════════════════
 
-    def _poll_steer_log(self) -> None:
-        """轮询 steer.log + progress.log + tool_events.jsonl，实时更新。"""
-        if not self._task_uri:
+    def _poll_messages(self) -> None:
+        """轮询 Hermes DB，更新 _cached_msgs 并刷新 UI。"""
+        if not self._task_uri or not _HERMES_DB.exists():
             return
 
-        # 1) steer.log — 完成的消息
-        content = steer_read(self._task_uri)
-        steer_changed = content != self._last_steer_content
-        if steer_changed:
-            self._last_steer_content = content
-            messages = parse_steer_log(content)
-            self._render_messages_incremental(messages)
-            # steer.log 有新 → 行时，清除流式状态（agent 完成了）
-            self._clear_streaming()
-
-        # 2) progress.log — 流式 token（agent 执行中）
-        new_progress, self._progress_offset = _read_progress_incremental(
-            self._task_uri, self._progress_offset
+        agents = list_agents()
+        self._agent_running = any(
+            a.task_id == self._task_uri and a.state == "running"
+            for a in agents
         )
-        if new_progress:
-            self._append_streaming(new_progress)
+        if self._agent_running:
+            self._switch_to_stop_btn()
+        elif self._send_btn.text() == "⏹ 停止":
+            self._switch_to_send_btn()
 
-        # 3) tool_events.jsonl — 工具执行事件
-        events, self._tool_events_line = _read_tool_events(
-            self._task_uri, self._tool_events_line
-        )
-        for ev in events:
-            self._handle_tool_event(ev)
+        rows = _read_messages(self._task_uri, self._last_msg_id)
+        if not rows:
+            return
+        self._last_msg_id = max(r["id"] for r in rows)
 
-    def _render_messages_incremental(self, messages: list[ChatMessage]) -> None:
-        """增量渲染：只添加新消息，不重建已有消息。"""
-        existing_count = len(self._message_widgets)
+        # 更新 _cached_msgs（tool 消息合并到最后一条 assistant）
+        uri = self._task_uri
+        existing = self._cached_msgs.get(uri, [])
+        last = existing[-1] if existing and existing[-1].role == "assistant" else None
+        new_msgs = _rows_to_display(rows, last)
 
-        if existing_count == 0:
-            # 全量渲染
-            for msg in messages:
-                self._add_message_widget(msg)
-        else:
-            # 增量添加
-            for msg in messages[existing_count:]:
-                self._add_message_widget(msg)
+        # 追加到缓存
+        self._cached_msgs.setdefault(uri, []).extend(new_msgs)
 
-        self._scroll_to_bottom()
-
-    def _add_message_widget(self, msg: ChatMessage) -> None:
-        """在消息区添加一条消息组件。"""
-        widget = ChatMessageWidget(msg)
-        self._message_widgets.append(widget)
-        # 插入到 stretch 之前
-        self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
-
-    # ═══════════════════════════════════════════════════
-    # 流式显示（progress.log 增量）
-    # ═══════════════════════════════════════════════════
-
-    def _append_streaming(self, text: str) -> None:
-        """追加流式 token 到实时消息气泡。"""
-        self._streaming_text += text
-        if self._streaming_widget is None:
-            # 创建流式消息气泡
-            from datetime import datetime
-
-            ts = datetime.now().strftime("%H:%M:%S")
-            msg = ChatMessage(role="assistant", timestamp=ts, text=self._streaming_text)
-            self._streaming_widget = ChatMessageWidget(msg)
+        # 更新 UI：新 user/assistant 消息创建 widget
+        for dm in new_msgs:
+            widget = ChatMessageWidget(dm)
+            self._message_widgets.append(widget)
             self._messages_layout.insertWidget(
-                self._messages_layout.count() - 1, self._streaming_widget
+                self._messages_layout.count() - 1, widget
             )
-        else:
-            # 更新现有气泡内容
-            self._streaming_widget._msg.text = self._streaming_text
-            self._streaming_widget._msg._html_cache = ""
-            body = self._streaming_widget.findChild(QTextEdit)
-            if body:
-                body.setHtml(self._streaming_widget._msg.to_html())
-                # 自适应高度
-                doc = body.document()
-                doc.setTextWidth(500)
-                body.setMaximumHeight(max(60, int(doc.size().height()) + 16))
-        self._auto_scroll = True
+
+        # 只有 tool 消息更新了最后一条 assistant → 重建最后一条 widget
+        if not new_msgs and last is not None:
+            self._rebuild_last_widget(last)
+
         self._scroll_to_bottom()
-
-    def _clear_streaming(self) -> None:
-        """agent 完成后，清除流式气泡（steer.log 的 → 行会替代它）。"""
-        self._streaming_text = ""
-        if self._streaming_widget is not None:
-            self._messages_layout.removeWidget(self._streaming_widget)
-            self._streaming_widget.deleteLater()
-            self._streaming_widget = None
-
-    # ═══════════════════════════════════════════════════
-    # 思考/工具指示器
-    # ═══════════════════════════════════════════════════
-
-    def _show_thinking(self) -> None:
-        if self._thinking_indicator is not None:
-            return
-        self._thinking_indicator = ThinkingIndicator()
-        self._messages_layout.insertWidget(
-            self._messages_layout.count() - 1, self._thinking_indicator
-        )
-        self._scroll_to_bottom()
-
-    def _hide_thinking(self) -> None:
-        if self._thinking_indicator is None:
-            return
-        self._messages_layout.removeWidget(self._thinking_indicator)
-        self._thinking_indicator.deleteLater()
-        self._thinking_indicator = None
-
-    def _show_tool_indicator(self, tool_name: str = "") -> None:
-        indicator = ToolIndicator(tool_name)
-        self._messages_layout.insertWidget(self._messages_layout.count() - 1, indicator)
-        self._scroll_to_bottom()
-        # 3 秒后自动移除
-        QTimer.singleShot(3000, lambda: self._remove_tool_indicator(indicator))
-
-    def _remove_tool_indicator(self, indicator: ToolIndicator) -> None:
-        self._messages_layout.removeWidget(indicator)
-        indicator.deleteLater()
-
-    def _handle_tool_event(self, event: dict) -> None:
-        """处理 tool_events.jsonl 中的事件。"""
-        ev_type = event.get("event", "")
-        if ev_type == "tool.started":
-            tool_name = event.get("tool", "")
-            preview = event.get("preview", "")
-            label = f"{tool_name}({preview})" if preview else tool_name
-            self._show_tool_indicator(label)
-        elif ev_type == "tool.completed":
-            tool_name = event.get("tool", "")
-            duration = event.get("duration", 0)
-            is_error = event.get("is_error", False)
-            # 工具完成时短暂显示结果
-            status = "✗ 失败" if is_error else "✓ 完成"
-            if duration:
-                status += f" ({duration:.1f}s)"
-            # 可以在这里添加完成提示，但目前先静默
-        elif ev_type in ("_thinking", "reasoning.available"):
-            text = event.get("text", "")
-            if text:
-                self._show_thinking()
-                if self._thinking_indicator:
-                    self._thinking_indicator.set_thinking_text(text[:60])
 
     # ═══════════════════════════════════════════════════
     # Session 列表
@@ -833,209 +685,204 @@ class AgentChatPanel(QWidget):
             return
         item = QListWidgetItem("⏳ 新会话...")
         item.setData(Qt.ItemDataRole.UserRole, _PLACEHOLDER_KEY)
-        item.setForeground(Qt.GlobalColor.yellow)
-        plus_row = self._session_list.count() - 1
-        self._session_list.blockSignals(True)
-        self._session_list.insertItem(plus_row, item)
-        self._session_list.blockSignals(False)
-        self._placeholder_row = plus_row
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self._session_list.addItem(item)
+        self._placeholder_row = self._session_list.count() - 1
 
     def _remove_placeholder(self) -> None:
-        if self._placeholder_row is None:
-            return
-        row = self._placeholder_row
-        self._placeholder_row = None
-        if 0 <= row < self._session_list.count():
-            item = self._session_list.item(row)
-            if item and item.data(Qt.ItemDataRole.UserRole) == _PLACEHOLDER_KEY:
-                self._session_list.blockSignals(True)
-                self._session_list.takeItem(row)
-                self._session_list.blockSignals(False)
+        if self._placeholder_row is not None:
+            self._session_list.takeItem(self._placeholder_row)
+            self._placeholder_row = None
 
     def _refresh_sessions(self) -> None:
-        if self._task_uri is None:
-            return
-
-        sessions = _list_sessions_for_task(self._task_uri)
-        if sessions == self._sessions:
-            return
-
-        self._remove_placeholder()
-        self._sessions = sessions
-        self._rebuild_list(sessions)
-
-        has_active = any(s.get("state") == "running" for s in sessions)
-
-        if not sessions:
-            self._update_mode("idle")
-        elif has_active:
-            active_idx = next(
-                i for i, s in enumerate(sessions) if s.get("state") == "running"
-            )
-            self._session_list.setCurrentRow(active_idx)
-            self._update_mode("active")
-            self._show_thinking()
-        else:
-            self._update_mode("idle")
-            self._hide_thinking()
-            if sessions:
-                self._session_list.setCurrentRow(len(sessions) - 1)
-
-    def _on_session_selected(self, row: int) -> None:
-        if 0 <= row < self._session_list.count():
-            item = self._session_list.item(row)
-            if item and item.data(Qt.ItemDataRole.UserRole) == _PLUS_KEY:
-                self._clear_messages()
-                self._input.setFocus()
-                self._input.setPlaceholderText("输入消息开始新对话...")
-                return
-
-        self._selected_idx = row
-        if row < 0 or row >= len(self._sessions):
-            return
-
-        # 切换 session 时重新加载消息
-        self._reload_messages()
-
-    def _reload_messages(self) -> None:
-        """重新加载当前 task 的所有消息。"""
         if not self._task_uri:
             return
+        s = _list_sessions_for_task(self._task_uri)
+        if s != self._sessions_list:
+            self._sessions_list = s
+            self._rebuild_list(s)
+            self._remove_placeholder()
 
-        content = steer_read(self._task_uri)
-        self._last_steer_content = content
-        messages = parse_steer_log(content)
+    def _on_session_selected(self, row: int) -> None:
+        item = self._session_list.item(row)
+        if item is None:
+            return
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data == _PLUS_KEY:
+            self._input.setFocus()
+            return
+        if data == _PLACEHOLDER_KEY:
+            return
+        self._selected_idx = row
 
-        self._clear_messages()
-        for msg in messages:
-            self._add_message_widget(msg)
-        self._scroll_to_bottom()
+    # ═══════════════════════════════════════════════════
+    # 发送 / 设置 task
+    # ═══════════════════════════════════════════════════
 
-    def _clear_messages(self) -> None:
-        """清空所有消息组件。"""
-        for w in self._message_widgets:
-            self._messages_layout.removeWidget(w)
-            w.deleteLater()
+    def set_task(self, task_uri: str) -> None:
+        if task_uri == self._task_uri:
+            return
+        self._task_uri = task_uri
         self._message_widgets.clear()
-        self._hide_thinking()
-        self._clear_streaming()
-        self._progress_offset = 0
-        self._tool_events_line = 0
+        self._last_msg_id = 0
+        self._agent_running = False
+        self._rendered_count = 0
+        self._load_more_btn = None
+        self._switch_to_send_btn()
 
-    # ═══════════════════════════════════════════════════
-    # 模式切换
-    # ═══════════════════════════════════════════════════
+        self._clear_messages_container()
 
-    def _update_mode(self, mode: str) -> None:
-        if mode == "active":
-            self._input.setPlaceholderText("输入消息...")
-        else:
-            self._input.setPlaceholderText("输入新消息创建新对话...")
+        # 全量 DisplayMessage 缓存（仅读取+处理，不建 widget）
+        if task_uri not in self._cached_msgs:
+            rows = _read_messages(task_uri)
+            if rows:
+                self._last_msg_id = max(r["id"] for r in rows)
+                self._cached_msgs[task_uri] = _rows_to_display(rows)
 
-    # ═══════════════════════════════════════════════════
-    # 公开接口
-    # ═══════════════════════════════════════════════════
+        # 渲染最近 PAGE_SIZE 条
+        self._render_window(task_uri)
 
-    def set_task(self, uri: str) -> None:
-        self._task_uri = uri
-        self.title_changed.emit(f"Agent — {uri}")
-        self._placeholder_row = None
-        self._clear_messages()
-        self._reload_messages()
-        self._refresh_sessions()
+        # Session 列表
+        s = _list_sessions_for_task(task_uri)
+        self._sessions_list = s
+        self._rebuild_list(s)
+        self._add_placeholder()
+        self._input.setFocus()
 
-        # 自动选中最后 session
-        count = self._session_list.count()
-        if count > 0:
-            last = count - 1
-            item = self._session_list.item(last)
-            if item and item.data(Qt.ItemDataRole.UserRole) == _PLUS_KEY:
-                last -= 1
-            if last >= 0:
-                self._session_list.setCurrentRow(last)
+    def _render_window(self, task_uri: str) -> None:
+        """渲染 task 的消息窗口（惰性加载，最近 _MAX_RENDER_LINES 行）。"""
+        self._message_widgets.clear()
+        self._clear_messages_container()
 
-    def set_compact(self, compact: bool) -> None:
-        if compact:
-            self._session_list.setMaximumHeight(100)
-            self._session_list.setMinimumHeight(50)
-
-    def send_text(self, text: str) -> None:
-        self._send_text(text)
-
-    # ═══════════════════════════════════════════════════
-    # 发送消息
-    # ═══════════════════════════════════════════════════
-
-    def _send_text(self, text: str) -> None:
-        if not text or self._task_uri is None:
+        all_msgs = self._cached_msgs.get(task_uri, [])
+        total = len(all_msgs)
+        if total == 0:
             return
 
-        sessions = self._sessions
-        has_active = any(s.get("state") == "running" for s in sessions)
+        # 未渲染的消息范围: [0, unrendered_end)
+        unrendered_end = total - self._rendered_count
+        if unrendered_end <= 0:
+            return
 
-        from datetime import datetime
+        # 从后向前累积行数
+        lines = 0
+        start = unrendered_end
+        for i in range(unrendered_end - 1, -1, -1):
+            dm = all_msgs[i]
+            n = dm.raw_content.count("\n") + 1
+            n += 2  # 头尾间距
+            lines += n
+            if lines > _MAX_RENDER_LINES:
+                break
+            start = i
 
-        ts = datetime.now().strftime("%H:%M:%S")
+        window = all_msgs[start:unrendered_end]
+        self._rendered_count += len(window)
 
-        if not has_active:
-            # 无活跃 session → 即时显示用户消息 + 思考指示 + 后台 spawn
-            self._add_message_widget(ChatMessage(role="user", timestamp=ts, text=text))
-            self._show_thinking()
-            self._add_placeholder()
-            steer_send(self._task_uri, text)
-            self._input.clear()
+        # 顶部的"加载更多"按钮
+        remaining = start  # 还有多少条更早消息未加载
+        if remaining > 0:
+            self._load_more_btn = QPushButton(f"↑ 加载更早消息（共{remaining}条）")
+            self._load_more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._load_more_btn.setStyleSheet(
+                f"QPushButton {{ background: {_BG_Surface}; color: {_TEXT_DIM}; border: none; "
+                f"border-radius: 4px; padding: 4px 12px; font-size: 11px; }}"
+                f"QPushButton:hover {{ background: {_BG_Surface2}; color: {_TEXT}; }}"
+            )
+            self._load_more_btn.clicked.connect(self._on_load_more)
+            self._messages_layout.insertWidget(
+                self._messages_layout.count() - 1, self._load_more_btn
+            )
 
-            import threading
+        # 创建 widget
+        for dm in window:
+            widget = ChatMessageWidget(dm)
+            self._message_widgets.append(widget)
+            self._messages_layout.insertWidget(
+                self._messages_layout.count() - 1, widget
+            )
 
-            threading.Thread(
-                target=_spawn_agent,
-                args=(self._task_uri, text),
-                daemon=True,
-            ).start()
-        else:
-            # 有活跃 → 直接发
-            steer_send(self._task_uri, text)
-            self._add_message_widget(ChatMessage(role="user", timestamp=ts, text=text))
-            self._input.clear()
-            self._show_thinking()
-
-        self._auto_scroll = True
+    def _on_load_more(self) -> None:
+        """"加载更多"按钮点击 → 渲染上一批消息。"""
+        self._render_window(self._task_uri)
         self._scroll_to_bottom()
-        QTimer.singleShot(1500, self._refresh_sessions)
 
-    def _send(self) -> None:
-        text = self._input.text().strip()
-        self._send_text(text)
+    def _rebuild_last_widget(self, dm: DisplayMessage) -> None:
+        """只重建最后一条 widget（tool 内容更新后）。"""
+        if not self._message_widgets:
+            return
+        for i in range(len(self._message_widgets) - 1, -1, -1):
+            if self._message_widgets[i]._msg.role == "assistant":
+                old = self._message_widgets[i]
+                new_w = ChatMessageWidget(dm)
+                self._messages_layout.insertWidget(
+                    self._messages_layout.indexOf(old), new_w
+                )
+                old.deleteLater()
+                self._message_widgets[i] = new_w
+                return
 
-    # ═══════════════════════════════════════════════════
-    # Probe 接口
-    # ═══════════════════════════════════════════════════
+    def _clear_messages_container(self) -> None:
+        """清空消息布局，但不删除 widget（缓存复用）。"""
+        while self._messages_layout.count() > 1:
+            item = self._messages_layout.takeAt(0)
+            if item is not None:
+                w = item.widget()
+                if w is not None:
+                    w.setParent(None)
+                    w.hide()
+
+    def _send(self, text: str | None = None) -> None:
+        if text is None:
+            text = self._input.text().strip()
+        if not text or not self._task_uri:
+            return
+        self._input.clear()
+
+        # 添加用户消息（本地立即显示）
+        ts = datetime.now().strftime("%H:%M:%S")
+        dm = DisplayMessage(
+            role="user",
+            content=_render_message_content(text),
+            raw_content=text,
+            timestamp=ts,
+        )
+        widget = ChatMessageWidget(dm)
+        self._message_widgets.append(widget)
+        self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
+        self._scroll_to_bottom()
+
+        # 发送到 agentd
+        resp = _spawn_agent(self._task_uri, text)
+        if resp is None:
+            _logger.error("[agent] 发送失败")
+            return
+
+        self._agent_running = True
+        self._switch_to_stop_btn()
+
+    def send_text(self, text: str) -> None:
+        self._send(text)
 
     def ui_state(self) -> dict:
-        sessions_info = []
-        for s in self._sessions:
-            entry = {
-                "id": s.get("agent_id", s.get("id", "?")),
-                "state": s.get("state", ""),
-            }
-            if s.get("task_id"):
-                entry["task"] = s["task_id"]
-            sessions_info.append(entry)
-
-        has_active = any(s.get("state") == "running" for s in self._sessions)
-        mode = "active" if has_active else "idle"
-
         return {
             "task_uri": self._task_uri,
-            "mode": mode,
-            "session_count": len(self._sessions),
-            "sessions": sessions_info,
-            "selected_idx": self._selected_idx,
-            "has_placeholder": self._placeholder_row is not None,
-            "input_text": self._input.text(),
-            "message_count": len(self._message_widgets),
+            "sessions": [
+                {"id": s.get("agent_id", s.get("id", "?")), "state": s.get("state", "")}
+                for s in self._sessions_list
+            ],
         }
 
     def ui_chat_log(self) -> str:
-        """探针用：当前对话文本。"""
-        return self._last_steer_content
+        """读取 Hermes 会话文本（gateway 用）。"""
+        if not self._task_uri or not _HERMES_DB.exists():
+            return ""
+        rows = _read_messages(self._task_uri)
+        lines = []
+        for r in rows:
+            role = r.get("role", "")
+            content = (r.get("content") or "")[:200]
+            ts = datetime.fromtimestamp(r["timestamp"]).strftime("%H:%M:%S")
+            arrow = "←" if role == "user" else "→" if role == "assistant" else "⚙"
+            lines.append(f"[{ts}] {arrow} {content}")
+        return "\n".join(lines)

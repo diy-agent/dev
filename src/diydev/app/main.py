@@ -441,6 +441,7 @@ class DetailView(QWidget):
         self._attr_parent = QLabel()
         self._attr_detail = QLabel()
         self._attr_detail.setWordWrap(True)
+        self._attr_detail.setMaximumHeight(40)
 
         attr_lay.addWidget(QLabel("属性"))
         attr_lay.addWidget(self._attr_subject)
@@ -538,6 +539,7 @@ class DetailView(QWidget):
             return
         self._edit_title.setText(self._current_node.title or "")
         self._edit_body.setPlainText(self._current_node.body or "")
+        self._stack.setCurrentIndex(1)
         self._edit_btn.hide()
         self._save_btn.show()
         self._cancel_btn.show()
@@ -559,11 +561,18 @@ class DetailView(QWidget):
             return
         new_title = self._edit_title.text().strip()
         new_body = self._edit_body.toPlainText()
-        from ._state import update_task_field  # noqa: PLC0415
-        if new_title != (self._current_node.title or "") if self._current_node else True:
-            update_task_field(uri, title=new_title)
-        if new_body != (self._current_node.body or "") if self._current_node else True:
-            update_task_field(uri, body=new_body)
+        try:
+            from diydev._state import update_task_field  # noqa: PLC0415
+            if new_title != (self._current_node.title or "") if self._current_node else True:
+                update_task_field(uri, title=new_title)
+            if new_body != (self._current_node.body or "") if self._current_node else True:
+                update_task_field(uri, body=new_body)
+        except Exception as e:
+            logger.error("保存失败: uri=%s %s", uri, e)
+            self._edit_btn.hide()
+            self._save_btn.show()
+            self._cancel_btn.show()
+            return
         self._cancel_edit()
         self.task_saved.emit(uri)
 
@@ -1099,7 +1108,7 @@ class MainWindow(QMainWindow):
             return
         title = task.get("title", uri)
         prompt = f"请完成以下任务：{title}"
-        self._detail._chat._send_text(prompt)
+        self._detail._chat.send_text(prompt)
 
     @guarded("action.create")
     def _open_create_task(self, parent_uri: str | None = None, subject: str | None = None) -> None:
@@ -1562,6 +1571,144 @@ class GatewayCLI:
             """<uri> 任务节点详情"""
             return self._main.invoke(lambda: self._window.format_node(uri))
 
+        # ── task（查看/详情/编辑） ──
+        ui_task_app = CycloptsApp(name="task", help="查看/编辑任务")
+
+        @ui_task_app.command(name="detail")
+        def ui_task_detail(uri: str):
+            """<uri> 展示任务详情并设为当前选中任务。后续 edit input 无需再传 URI。"""
+            def _do():
+                panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+                if panel is None:
+                    return "error: UI 尚未初始化"
+                panel.set_task(uri)
+                from markdown_it import MarkdownIt as _md
+                node = self._window._find_node(uri)
+                if not node:
+                    return f"错误: 任务 {uri} 不存在"
+                _md_parser = _md("gfm-like", {"breaks": True, "html": True})
+                _md_parser.disable("linkify")
+                parts = [f'<div class="header">{uri} ' + _state_badge(node.state) + '</div>']
+                if node.title:
+                    parts.append(f'<div class="title">{_esc_html(node.title)}</div>')
+                if node.detail:
+                    parts.append(f'<div class="detail">{_esc_html(node.detail).replace(chr(10), "<br>")}</div>')
+                body_html = ""
+                if node.body:
+                    rendered = _md_parser.render(node.body)
+                    body_html = f'<hr><div class="section-title">📄 文档</div><div class="md-body">{rendered}</div>'
+                meta_parts = []
+                if node.subject_path:
+                    meta_parts.append(f'<span class="tag">📂 {_esc_html(node.subject_path)}</span>')
+                if node.parent_uri:
+                    meta_parts.append(f'<span class="tag">⬆ 父任务 {node.parent_uri}</span>')
+                if meta_parts:
+                    parts.append(f'<div class="meta">{" ".join(meta_parts)}</div>')
+                parts.append("<hr>")
+                parts.append('<div class="hint">无运行中的 agent</div>' if not node.agents else
+                    '<div class="section-title">🤖 Agent</div>' + "".join(
+                        f'<div class="agent">{"🟢" if a.state=="running" else "✅" if a.state=="done" else "🔴"} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>'
+                        for a in node.agents))
+                header_html = "".join(parts)
+                if body_html:
+                    header_html += body_html
+                html_doc = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ background: #1e1e2e; color: #cdd6f4; font-family: -apple-system, sans-serif; font-size: 14px; padding: 12px; line-height: 1.7; }}
+  .card {{ font-family: -apple-system, "Segoe UI", sans-serif; padding: 12px; }}
+  .placeholder {{ font-family: -apple-system, "Segoe UI", sans-serif; color: #a6adc8; font-size: 14px; padding: 20px; }}
+  .header {{ font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 8px; }}
+  .title {{ font-size: 18px; font-weight: bold; color: #ffffff; margin-bottom: 10px; }}
+  .detail {{ font-size: 13px; color: #bac2de; line-height: 1.6; margin: 8px 0 12px 0; white-space: pre-wrap; }}
+  .meta {{ margin: 8px 0 4px 0; }}
+  .tag {{ display: inline-block; background: #45475a; color: #cdd6f4; font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }}
+  .section-title {{ font-size: 13px; font-weight: bold; color: #a6adc8; margin: 4px 0; }}
+  .agent {{ font-size: 12px; color: #bac2de; margin: 2px 0; }}
+  .agent code {{ background: #1e1e2e; color: #f5c2e7; padding: 1px 4px; border-radius: 3px; }}
+  .hint {{ font-size: 12px; color: #585b70; margin-top: 4px; }}
+  .badge {{ display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 10px; color: #1e1e2e; }}
+  hr {{ border: none; border-top: 1px solid #45475a; margin: 12px 0; }}
+  .md-body {{ font-size: 13px; color: #bac2de; line-height: 1.7; }}
+  .md-body h1 {{ color: #fff; font-size: 20px; border-bottom: 1px solid #45475a; padding-bottom: 4px; }}
+  .md-body h2 {{ color: #cdd6f4; font-size: 17px; }} .md-body h3 {{ color: #a6adc8; font-size: 15px; }}
+  .md-body table {{ border-collapse: collapse; margin: 12px 0; width: 100%; }}
+  .md-body th {{ background: #313244; color: #cdd6f4; padding: 8px 12px; text-align: left; font-weight: 600; border: 1px solid #45475a; }}
+  .md-body td {{ padding: 6px 12px; border: 1px solid #313244; }}
+  .md-body tr:nth-child(even) {{ background: #181825; }}
+  .md-body code {{ background: #1e1e2e; color: #f5c2e7; padding: 1px 5px; border-radius: 3px; }}
+  .md-body pre {{ background: #181825; padding: 10px 14px; border-radius: 6px; overflow-x: auto; }}
+  .md-body blockquote {{ border-left: 3px solid #45475a; padding-left: 12px; color: #a6adc8; }}
+  .md-body a {{ color: #89b4fa; }}
+  .md-body strong {{ color: #cdd6f4; }} .md-body em {{ color: #a6e3a1; }}
+</style></head><body>{header_html}<script>
+  document.addEventListener('click', function(e) {{
+    var t = e.target; while (t && t.tagName !== 'A') t = t.parentElement;
+    if (t && t.href && t.getAttribute('target') === '_blank') {{
+      e.preventDefault(); window.location.href = t.href;
+    }}
+  }});
+</script></body></html>"""
+                self._window._detail.show_task(uri, node, html_doc)
+                return f"OK: 已选中 {uri}"
+
+            return self._main.invoke(_do)
+
+        edit_app = CycloptsApp(name="edit", help="编辑模式")
+
+        @edit_app.command(name="input")
+        def ui_edit_input(
+            title: str | None = None,
+            body: str | None = None,
+            body_file: str | None = None,
+        ):
+            """为当前已选中的任务设置编辑字段并切换到编辑模式。
+            先用 `dai ui task detail <uri>` 选中任务。
+            支持 --title / --body / --body-file。"""
+            def _set_fields():
+                detail = self._window._detail
+                uri = detail._current_task_uri
+                if not uri:
+                    return "错误: 没有选中的任务。先用 `dai ui task detail <uri>` 选中。"
+                node = self._window._find_node(uri)
+                if node is None:
+                    return f"错误: 任务 {uri} 不存在"
+
+                body_text = body
+                if body_file is not None and body is None:
+                    try:
+                        from pathlib import Path
+                        body_text = Path(body_file).read_text(encoding="utf-8")
+                    except OSError as exc:
+                        return f"错误: 无法读取 body 文件: {exc}"
+
+                detail._current_node = node
+                detail._edit_title.setText(title if title is not None else (node.title or ""))
+                detail._edit_body.setPlainText(body_text if body_text is not None else (node.body or ""))
+                detail._stack.setCurrentIndex(1)
+                detail._edit_btn.hide()
+                detail._save_btn.show()
+                detail._cancel_btn.show()
+                detail._sidebar.hide()
+                return f"编辑模式已激活: {uri}"
+
+            return self._main.invoke(_set_fields)
+
+        @edit_app.command(name="submit")
+        def ui_edit_submit():
+            """保存当前编辑并回到查看模式。"""
+            def _do_save():
+                detail = self._window._detail
+                uri = detail._current_task_uri
+                if not uri:
+                    return "错误: 没有正在编辑的任务"
+                detail._save_task()
+                return f"已保存: {uri}"
+
+            return self._main.invoke(_do_save)
+
+        ui_task_app.command(edit_app)
+        ui_app.command(ui_task_app)
+
         chat_app = CycloptsApp(name="chat", help="AgentChatPanel 交互")
 
         @chat_app.command
@@ -1633,15 +1780,6 @@ class GatewayCLI:
                     return
                 _time.sleep(2)
             return f"[timeout] agent 未在 {timeout}s 内完成"
-
-        @chat_app.command
-        def select(task_uri: str):
-            """选中任务，显示其 AgentChatPanel。"""
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
-            if panel is None:
-                return "error: UI 尚未初始化"
-            self._main.invoke(lambda: panel.set_task(task_uri))
-            return f"OK: chat set to {task_uri}"
 
         @chat_app.command
         def send(text: str, task: str | None = None):
@@ -2358,7 +2496,7 @@ class GatewayCLI:
         err_buf = io.StringIO()
         sys.stderr = err_buf
         try:
-            self._app(tokens, console=console, exit_on_error=False)
+            self._app(tokens, console=console, exit_on_error=True)
         except SystemExit:
             pass
         except UnknownCommandError:
