@@ -77,6 +77,9 @@ def run_check(sock_dev: int | None = None, sock_ino: int | None = None) -> list[
     # L3: 环境检查
     issues += _check_state_file()
 
+    # L4: 运行时环境特性检查
+    issues += _check_flock_integrity()
+
     return issues
 
 
@@ -262,18 +265,108 @@ def _check_state_file() -> list[HealthIssue]:
 
 
 # ═══════════════════════════════════════════════════════
+# L4 — flock 线程互斥性检查
+# ═══════════════════════════════════════════════════════
+
+
+def _check_flock_integrity() -> list[HealthIssue]:
+    """验证 fcntl.flock(LOCK_EX) 在当前系统上是否能跨线程互斥。
+
+    diy 用 flock 保护任务 ID 计数器（_next_local_task_num）。
+    如果同进程多线程的各自 open() + flock 不互斥，并发创建任务
+    可能产生重复 ID。用非阻塞模式快速验证。
+
+    设计：线程 A 先加锁，线程 B 再尝试 LOCK_NB。
+    若 B 成功则说明不互斥。跑 3 轮确认。
+    """
+    import fcntl
+    import os
+    import threading
+    import tempfile
+
+    tmpdir = tempfile.mkdtemp(prefix="diy_flock_test_")
+    lock_file = os.path.join(tmpdir, "test.lock")
+    try:
+        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+        os.close(fd)
+
+        fail_count = 0
+        rounds = 3
+
+        for _ in range(rounds):
+            a_ready = threading.Event()
+            results: list[str] = []
+
+            def _lock_a() -> None:
+                f = open(lock_file, "r+")
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                a_ready.set()
+                import time
+                time.sleep(0.02)  # 持锁，给 B 竞争窗口
+                f.close()
+
+            def _lock_b() -> None:
+                a_ready.wait()
+                f = open(lock_file, "r+")
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    results.append("ok")  # B 拿到锁 → 不互斥
+                except BlockingIOError:
+                    results.append("blocked")  # B 被挡 → 互斥
+                f.close()
+
+            t_a = threading.Thread(target=_lock_a)
+            t_b = threading.Thread(target=_lock_b)
+            t_a.start()
+            t_b.start()
+            t_a.join()
+            t_b.join()
+
+            if results == ["ok"]:
+                fail_count += 1
+
+        if fail_count > 0:
+            return [HealthIssue(
+                severity="info",
+                code="flock_not_mutex",
+                message=(
+                    f"flock(LOCK_EX) 在多线程间不互斥（{fail_count}/{rounds} 轮失败）"
+                ),
+                detail=(
+                    "已通过 threading.Lock 补偿保护，当前安全。"
+                    "仅当删除 _state.py 中的 _THREAD_LOCK 时才有风险。"
+                ),
+            )]
+
+        return []
+
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════
 # 格式化输出
 # ═══════════════════════════════════════════════════════
 
 
+def _format_system_header() -> str:
+    """系统信息标头行。"""
+    import platform
+    py_ver = platform.python_version()
+    os_str = platform.platform(aliased=True)
+    return f"  🖥  {os_str}  /  Python {py_ver}"
+
+
 def format_report(issues: list[HealthIssue]) -> str:
     """按层级输出检查报告。"""
+    # 系统信息标头
+    lines: list[str] = [_format_system_header(), ""]
+
     # 分组
     l1 = [i for i in issues if i.code in ("app_running", "app_stale", "app_not_running")]
     l2 = [i for i in issues if i.code in ("socket_missing", "socket_hijacked", "multiple_instances")]
     l3 = [i for i in issues if i.code in ("state_missing", "state_empty", "state_parse_error")]
-
-    lines: list[str] = []
 
     # L1: App 状态
     app_issue = l1[0] if l1 else None
@@ -310,6 +403,18 @@ def format_report(issues: list[HealthIssue]) -> str:
                     lines.append(f"    {dl}")
     else:
         lines.append("  ✓ state.yaml")
+
+    # L4: 平台特性
+    l4 = [i for i in issues if i.code == "flock_not_mutex"]
+    if l4:
+        for issue in l4:
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            lines.append(f"  {emoji} {issue.message}")
+            if issue.detail:
+                for dl in issue.detail.strip().split("\n"):
+                    lines.append(f"    {dl}")
+    else:
+        lines.append("  ✓ flock 线程互斥")
 
     # 摘要
     critical = [i for i in issues if i.severity == "critical"]

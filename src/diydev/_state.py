@@ -12,7 +12,6 @@ star/unstar 替代了归档：取消关注后 symlink 删除，数据保留在�
 
 from __future__ import annotations
 
-import fcntl
 import os
 import shutil
 from datetime import datetime
@@ -20,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from diydev._lock import locked_file
 
 # ════════════════════════════════════════════════════════════════
 # 默认值
@@ -171,7 +172,13 @@ def list_starred() -> dict[str, dict[str, Any]]:
 
 
 # ════════════════════════════════════════════════════════════════
-# 本地任务 ID 自增
+# 本地任务 ID 自增（用 locked_file 做线程+进程安全）
+# ════════════════════════════════════════════════════════════════
+#
+# locked_file 内部实现双层锁：
+#   threading.Lock — 同进程线程互斥（所有 OS）
+#   fcntl.flock    — 跨进程互斥（POSIX）
+# 详见 diydev/_lock.py。
 # ════════════════════════════════════════════════════════════════
 
 _LOCAL_COUNTER_DIR = "local/task"
@@ -190,24 +197,15 @@ def _local_lock_file() -> Path:
 
 
 def _next_local_task_num() -> int:
-    """fcntl 保护的本地任务编号自增。"""
+    """locked_file 保护的本地任务编号自增。"""
     d = _local_counter_dir()
     d.mkdir(parents=True, exist_ok=True)
-
-    lock_path = _local_lock_file()
     counter_path = _local_counter_file()
 
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-        try:
-            if counter_path.exists():
-                current = int(counter_path.read_text().strip())
-            else:
-                current = 1
-            counter_path.write_text(str(current + 1))
-            return current
-        finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+    with locked_file(_local_lock_file()):
+        current = int(counter_path.read_text().strip()) if counter_path.exists() else 1
+        counter_path.write_text(str(current + 1))
+        return current
 
 
 # ════════════════════════════════════════════════════════════════
@@ -350,7 +348,7 @@ def create_task(
         "updated": now,
     }
     if detail is not None:
-        meta["detail"] = detail
+        body = (detail + "\n\n" + body).strip() if body else detail
     if parent is not None:
         meta["parent"] = parent
 
@@ -377,6 +375,10 @@ def update_task_field(uri: str, **fields: Any) -> dict[str, Any]:
     body = fields.pop("body", None)
     if body is None:
         body = _read_body(md)
+
+    detail_text = fields.pop("detail", None)
+    if detail_text is not None:
+        body = (detail_text + "\n\n" + body).strip() if body else detail_text
 
     meta.update(fields)
     meta["updated"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
