@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import errno
 import os
 import sys
 import time
@@ -382,9 +384,19 @@ class DetailView(QWidget):
 
         layout.addWidget(self._toolbar)
 
-        # ── 内容区：QSplitter 两栏布局（查看模式） ──
+        # ── 内容区：QTabWidget 两标签页（详情 / 对话） ──
+        self._tab_widget = QTabWidget()
+        layout.addWidget(self._tab_widget)
+
+        # ════════════════════════════════════════
+        # Tab 0: 📋 详情（body + 属性侧边栏）
+        # ════════════════════════════════════════
+        detail_tab = QWidget()
+        detail_layout = QVBoxLayout(detail_tab)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        layout.addWidget(self._splitter)
+        detail_layout.addWidget(self._splitter)
 
         # 左侧：body（view / edit 切换）
         self._stack = QStackedWidget()
@@ -419,10 +431,9 @@ class DetailView(QWidget):
 
         self._stack.addWidget(edit_page)
 
-        # 右侧：侧边栏（属性 + Agent Chat）
+        # 右侧：侧边栏（只含属性面板，chat 在 Tab 2）
         self._sidebar = QWidget()
-        self._sidebar.setMinimumWidth(240)
-        self._sidebar.setMaximumWidth(400)
+        self._sidebar.setMinimumWidth(200)
         side_lay = QVBoxLayout(self._sidebar)
         side_lay.setContentsMargins(0, 0, 0, 0)
         side_lay.setSpacing(0)
@@ -451,18 +462,19 @@ class DetailView(QWidget):
 
         side_lay.addWidget(self._attr_widget)
 
-        # ─ 分隔线 ─
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #313244;")
-        side_lay.addWidget(sep)
-
-        # ─ Agent Chat ─
-        self._chat = AgentChatPanel(self)
-        self._chat.set_compact(True)
-        side_lay.addWidget(self._chat, 1)  # stretch=1, 占剩余空间
-
         self._splitter.addWidget(self._sidebar)
+
+        self._tab_widget.addTab(detail_tab, "📋 详情")
+
+        # ════════════════════════════════════════
+        # Tab 1: 💬 对话（全宽 Agent Chat）
+        # ════════════════════════════════════════
+        self._chat = AgentChatPanel(self)
+        chat_tab = QWidget()
+        chat_layout = QVBoxLayout(chat_tab)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.addWidget(self._chat)
+        self._tab_widget.addTab(chat_tab, "💬 对话")
 
         # ── 当前状态 ──
         self._current_task_uri: str | None = None
@@ -2671,38 +2683,69 @@ class Gateway(QObject):
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
         self._cli = GatewayCLI(window)
+        # 单实例保护资源
+        self._lock_fd: int | None = None
+        self._sock_dev: int | None = None
+        self._sock_ino: int | None = None
+
+    def _fd_cloexec(self, fd: int) -> None:
+        """设置 FD_CLOEXEC，防止 fork 后子进程继承"""
+        flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+        fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
+
+    def _release_lock(self) -> None:
+        """释放 flock+关闭锁文件（幂等）。"""
+        if self._lock_fd is not None:
+            try:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                os.close(self._lock_fd)
+            except OSError:
+                pass
+            self._lock_fd = None
 
     def start(self) -> None:
-        _LOCK_PATH = os.path.join(os.path.dirname(self._path), "app.lock")
-        os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
-        lock_fd = os.open(_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o644)
+        lock_path = os.path.join(os.path.dirname(self._path), "app.lock")
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
 
-        # Acquire exclusive lock — serializes startup with _forward.py
+        # 1) 打开锁文件 + CLOEXEC
+        self._lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        self._fd_cloexec(self._lock_fd)
+
+        # 2) 非阻塞 flock — 串行化启动，消除 TOCTOU
         try:
-            fcntl.fcntl(lock_fd, fcntl.LOCK_EX)
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self._lock_fd)
+            self._lock_fd = None
+            raise ConnectionError("已有管控台进程在启动中")
         except OSError:
-            os.close(lock_fd)
+            os.close(self._lock_fd)
+            self._lock_fd = None
             raise ConnectionError("无法获取 app.lock")
 
         try:
-            # 1) Socket 锁检查 — 连接成功说明有活实例（锁下重新检查）
+            # 3) probe 探活：区分活跃实例 vs 僵尸文件（仍在锁内）
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._fd_cloexec(probe.fileno())
             try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.settimeout(0.5)
-                s.connect(self._path)
-                s.close()
+                probe.settimeout(0.5)
+                probe.connect(self._path)
+                probe.close()
                 raise ConnectionError(
                     f"已有运行中的管控台实例 (socket: {self._path})"
                 )
-            except (OSError, socket.timeout):
-                pass  # 连不上 → 残留或不存在
+            except OSError as e:
+                probe.close()
+                # 关键：只有 ECONNREFUSED/ENOENT 才判定为僵尸，其他错误（权限等）不删文件
+                if e.errno not in (errno.ECONNREFUSED, errno.ENOENT):
+                    raise
+                # 僵尸文件，安全删除
+                try:
+                    os.unlink(self._path)
+                except FileNotFoundError:
+                    pass
 
-            # 2) 清理残留 socket + 绑定（仍持有锁）
-            try:
-                os.unlink(self._path)
-            except OSError:
-                pass
-
+            # 4) 绑定 + 监听
             self._server = socketserver.UnixStreamServer(
                 self._path, _make_handler(self)
             )
@@ -2712,8 +2755,6 @@ class Gateway(QObject):
             self._thread.start()
 
             # 记下 socket 文件身份
-            self._sock_dev: int | None = None
-            self._sock_ino: int | None = None
             try:
                 st = os.stat(self._path)
                 self._sock_dev = st.st_dev
@@ -2726,9 +2767,10 @@ class Gateway(QObject):
                 self._path,
                 os.getpid(),
             )
-        finally:
-            # Release lock — socket is bound, others can detect it
-            os.close(lock_fd)
+        except Exception:
+            # 启动失败：锁随进程退出由内核释放，不需要手动清
+            self._release_lock()
+            raise
 
     def stop(self) -> None:
         if self._server:
@@ -2737,6 +2779,9 @@ class Gateway(QObject):
             os.unlink(self._path)
         except OSError:
             pass
+        # 注意：不释放 flock！锁由进程退出时内核自动清理。
+        # 如果在这里释放，_app_restart 可能趁旧进程还在退出时抢到锁。
+        # 只有进程死透，锁才释放。这是单实例的最后一道防线。
 
 
 def _make_handler(gateway: Gateway):
@@ -2810,20 +2855,37 @@ class AgentInfo:
             return False
         return self.agent_id == other.agent_id and self.state == other.state
 
-
-# ═══════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
 # 入口
-# ═══════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
+
 
 def main():
     import signal
     import socket
     import subprocess
 
-    # 日志系统必须先初始化（MainWindow.__init__ 中 guarded 方法可能立即触发）
+    # ── 日志系统必须先初始化 ──
     setup_app_logger()
     logger.info("=" * 50)
     logger.info("diy 管控台启动")
+
+    # ── Qt 应用必须在 QtAsyncio event loop 之前创建 ──
+    sandbox, sandbox_path = _detect_sandbox()
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setStyleSheet(_app_stylesheet(sandbox))
+
+    # ── QtAsyncio: Qt event loop 驱动 asyncio（Python 3.15+ 策略系统废弃，届时需改用 asyncio.run + loop factory） ──
+    from PySide6.QtAsyncio import QAsyncioEventLoopPolicy  # noqa: PLC0415
+
+    if sys.platform == "win32":
+        # Windows: ProactorEventLoop（Python 3.8+ 默认）的 subprocess pipe 与 QtAsyncio 可能冲突
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    else:
+        asyncio.set_event_loop_policy(QAsyncioEventLoopPolicy())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     # ── 连接 agentd（已有则复用，没有则启动） ──
     hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")
@@ -2858,10 +2920,8 @@ def main():
     elif not _agentd_alive:
         logger.warning("找不到 Hermes Python，agentd 未启动")
 
-    sandbox, sandbox_path = _detect_sandbox()
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setStyleSheet(_app_stylesheet(sandbox))
+    # ── ACP Client 不再在启动时创建 —— AgentChatPanel 负责为每个 task 懒启动 ──
+    # （参见 _agent_chat.py _ensure_acp_for_task / _lazy_start_acp）
 
     # Ctrl+C 两次退出（调试模式下 Qt event loop 会吞 SIGINT）
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -2873,18 +2933,21 @@ def main():
         return
 
     window.show()
-    ret = app.exec()
 
-    # ── 退出时杀 agentd ──
+    # Qt event loop = asyncio event loop（QAsyncioEventLoop.run_forever 内部调用 app.exec()）
+    loop.run_forever()
+
+    # ── 退出时清理 ──
     if _agentd_proc and _agentd_proc.poll() is None:
-        _agentd_proc.terminate()
         try:
+            _agentd_proc.terminate()
             _agentd_proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             _agentd_proc.kill()
         logger.info("agentd 已停止")
 
-    sys.exit(ret)
+    # ACP 异步关闭（同步等不到了，子进程随主进程退出）
+    logger.info("diy 管控台退出")
 
 
 if __name__ == "__main__":

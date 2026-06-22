@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -40,7 +41,10 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
 from diydev.app._app_log import logger as _logger
 from diydev.app.agent_bridge import list_agents
 
+from diydev._state import diy_home
+
 _HERMES_DB = Path.home() / ".hermes" / "state.db"
+_AGENTD_SOCK = diy_home() / "agentd.sock"
 
 # ═══════════════════════════════════════════════════════
 # 色彩常量（Catppuccin Mocha）
@@ -73,12 +77,17 @@ _MAX_RENDER_LINES = 300  # 每次渲染的最大内容行数（短消息几十�
 
 
 def _read_messages(task_uri: str, after_id: int = 0) -> list[dict]:
-    """从 Hermes state.db 读取 task 的 session 消息。"""
+    """从 Hermes state.db 读取 task 的 session 消息。
+
+    timeout=0 避免阻塞 Qt 主线程等待写锁；
+    read_uncommitted=1 允许读到 agent 未提交的事务写入（rollback journal 模式下）。
+    """
     session_id = f"agent-{task_uri}"
     if not _HERMES_DB.exists():
         return []
     try:
-        conn = sqlite3.connect(str(_HERMES_DB), timeout=2)
+        conn = sqlite3.connect(str(_HERMES_DB), timeout=3)
+        conn.execute("PRAGMA read_uncommitted=1")
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, role, content, tool_name, tool_calls, "
@@ -259,6 +268,7 @@ class ChatMessageWidget(QFrame):
     def __init__(self, msg: DisplayMessage, parent=None):
         super().__init__(parent)
         self._msg = msg
+        self._is_compact = len(msg.raw_content) < 80 and not msg.reasoning_html and not msg.tool_calls_html
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -266,8 +276,8 @@ class ChatMessageWidget(QFrame):
         self.setStyleSheet("background: transparent;")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(6)
 
         is_user = self._msg.role == "user"
         is_tool = self._msg.role == "tool"
@@ -285,7 +295,7 @@ class ChatMessageWidget(QFrame):
             f"color: {icon_color}; font-size: 14px; font-weight: bold; "
             f"background: transparent; padding-top: 2px;"
         )
-        icon.setFixedWidth(20)
+        icon.setFixedWidth(18)
         icon.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(icon)
 
@@ -293,25 +303,25 @@ class ChatMessageWidget(QFrame):
         content_widget.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(2)
+        content_layout.setSpacing(1)
 
         # 头部
         if not is_tool:
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
-            header.setSpacing(6)
+            header.setSpacing(4)
 
             role_label = QLabel("You" if is_user else "Agent")
             role_color = _MAUVE if is_user else _BLUE
             role_label.setStyleSheet(
-                f"color: {role_color}; font-weight: bold; font-size: 11px; "
-                f"background: transparent;"
+                f"color: {role_color}; font-weight: bold; font-size: 10px; "
+                f"background: transparent; padding-bottom: 1px;"
             )
             header.addWidget(role_label)
 
             ts_label = QLabel(self._msg.timestamp)
             ts_label.setStyleSheet(
-                f"color: {_TEXT_DIM}; font-size: 10px; background: transparent;"
+                f"color: {_TEXT_DIM}; font-size: 9px; background: transparent;"
             )
             header.addWidget(ts_label)
 
@@ -325,10 +335,9 @@ class ChatMessageWidget(QFrame):
             reasoning.setWordWrap(True)
             reasoning.setText(
                 f'<div style="color:{_YELLOW};font-size:11px;font-style:italic;'
-                f'border-left:2px solid {_YELLOW};padding-left:8px;margin:2px 0">'
+                f'border-left:2px solid {_YELLOW};padding-left:8px;margin:1px 0">'
                 f"{self._msg.reasoning_html}</div>"
             )
-            reasoning.setWordWrap(True)
             content_layout.addWidget(reasoning)
 
         # tool call 标注
@@ -354,24 +363,34 @@ class ChatMessageWidget(QFrame):
             )
             content_layout.addWidget(tr)
 
-        # 消息正文 — QTextEdit 正确换行，关滚动条，无高度限制
+        # 消息正文 — 短消息用 QLabel（紧凑），长消息用 QTextEdit（正确换行）
         if self._msg.content:
-            body = QTextEdit()
-            body.setReadOnly(True)
-            body.document().setTextWidth(0)
-            body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-            body.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-            body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-            body.setHtml(self._msg.content)
-            body.setStyleSheet(
-                f"QTextEdit {{ background: transparent; color: {_TEXT}; border: none; "
-                f"padding: 0; font-size: 12px; }}"
-            )
+            if self._is_compact:
+                body = QLabel()
+                body.setTextFormat(Qt.TextFormat.RichText)
+                body.setWordWrap(True)
+                body.setText(self._msg.content)
+                body.setStyleSheet(
+                    f"color: {_TEXT}; background: transparent; "
+                    f"font-size: 12px; padding: 0;"
+                )
+            else:
+                body = QTextEdit()
+                body.setReadOnly(True)
+                body.document().setTextWidth(0)
+                body.document().setDocumentMargin(0)
+                body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+                body.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+                body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+                body.setHtml(self._msg.content)
+                body.setStyleSheet(
+                    f"QTextEdit {{ background: transparent; color: {_TEXT}; border: none; "
+                    f"padding: 0; font-size: 12px; }}"
+                )
             content_layout.addWidget(body)
 
-        content_layout.addStretch()
         layout.addWidget(content_widget, 1)
 
 
@@ -408,7 +427,7 @@ def _list_sessions_for_task(task_uri: str) -> list[dict]:
 def _spawn_agent(task_uri: str, message: str) -> str | None:
     import socket as _sock
 
-    agentd_sock = str(Path.home() / ".diy" / "agentd.sock")
+    agentd_sock = str(_AGENTD_SOCK)
     cmd = f"spawn --task={task_uri} --message={message}\n"
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
@@ -434,7 +453,7 @@ def _spawn_agent(task_uri: str, message: str) -> str | None:
 def _kill_agent(task_uri: str) -> None:
     import socket as _sock
 
-    agentd_sock = str(Path.home() / ".diy" / "agentd.sock")
+    agentd_sock = str(_AGENTD_SOCK)
     cmd = f"kill --task={task_uri}\n"
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
@@ -449,13 +468,22 @@ def _kill_agent(task_uri: str) -> None:
 
 
 class AgentChatPanel(QWidget):
-    """Agent 对话面板 — 基于 Hermes state.db。"""
+    """Agent 对话面板 — 支持 ACP 实时流（默认）和 agentd DB 轮询（回退）。
+
+    ACP 模式：每个 task 有独立的 AcpManager（独立 hermes acp 子进程），
+    在第一次发送消息时懒创建。实时事件通过 Qt Signal → UI 渲染。
+    agentd 模式（回退）：通过 Hermes state.db 轮询获取完整消息。
+    """
 
     title_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._task_uri: str | None = None
+        # 每个 task 独立的 ACP 管理器
+        self._acp_managers: dict[str, "AcpManager"] = {}  # task_uri → manager
+        self._current_acp: "AcpManager | None" = None      # 当前 task 的活跃管理器
+        self._acp_starting: set[str] = set()               # 正在启动 ACP 的 task
         self._sessions_list: list[dict] = []
         self._selected_idx: int | None = None
         self._placeholder_row: int | None = None
@@ -470,6 +498,9 @@ class AgentChatPanel(QWidget):
         # 已渲染的消息数（惰性加载用）
         self._rendered_count: int = 0
         self._load_more_btn: QPushButton | None = None
+        # 流式缓冲：当前正在接收的 assistant 消息（ACP delta 累积）
+        self._stream_buffer: str = ""
+        self._reasoning_buffer: str = ""
 
         self._setup_ui()
         self._setup_timers()
@@ -580,9 +611,159 @@ class AgentChatPanel(QWidget):
     def _stop_agent(self) -> None:
         if not self._task_uri:
             return
-        _kill_agent(self._task_uri)
+        # ACP 模式：通过当前 task 的 AcpManager 取消
+        acp = self._acp_managers.get(self._task_uri)
+        if acp is not None:
+            try:
+                asyncio.ensure_future(acp.cancel())
+            except RuntimeError:
+                pass
+        else:
+            # agentd 模式：通过 socket 发送 kill 命令
+            _kill_agent(self._task_uri)
         self._agent_running = False
         self._switch_to_send_btn()
+
+    # ═══════════════════════════════════════════════════
+    # ACP 管理器生命周期 — 每个 task 独立 AcpManager
+    # ═══════════════════════════════════════════════════
+
+    def _ensure_acp_for_task(self, task_uri: str) -> None:
+        """确保 task 有 ACP 连接（已存在或懒创建）。"""
+        if task_uri in self._acp_managers:
+            self._switch_acp(task_uri)
+            return
+        if task_uri in self._acp_starting:
+            return  # 已在启动中
+        self._acp_starting.add(task_uri)
+        asyncio.ensure_future(self._lazy_start_acp(task_uri))
+
+    async def _lazy_start_acp(self, task_uri: str) -> None:
+        """为 task 异步启动 ACP 子进程并建立连接。"""
+        from diydev.app._acp_client import AcpManager  # noqa: PLC0415
+
+        manager = AcpManager()
+        try:
+            await manager.start()
+            await manager.new_session()
+            self._acp_managers[task_uri] = manager
+            # 如果当前还是这个 task，激活连接
+            if self._task_uri == task_uri:
+                self._switch_acp(task_uri)
+            _logger.info("[acp] task %s ACP 就绪 (pid=%s)", task_uri,
+                         manager._proc.pid if manager._proc else "?")
+        except Exception as exc:
+            _logger.warning("[acp] task %s ACP 启动失败（回退 agentd 模式）: %s", task_uri, exc)
+        finally:
+            self._acp_starting.discard(task_uri)
+
+    def _switch_acp(self, task_uri: str) -> None:
+        """切换当前 task 的 ACP 连接，重新绑定信号。"""
+        # 断开旧管理器
+        if self._current_acp is not None:
+            self._disconnect_acp_signals(self._current_acp)
+        # 连接新管理器
+        manager = self._acp_managers.get(task_uri)
+        self._current_acp = manager
+        if manager is not None:
+            self._connect_acp_signals(manager)
+
+    def _connect_acp_signals(self, manager: "AcpManager") -> None:
+        """连接指定 AcpManager 的实时事件信号。"""
+        manager.delta_received.connect(self._on_acp_delta)
+        manager.reasoning_received.connect(self._on_acp_reasoning)
+        manager.tool_started.connect(self._on_acp_tool)
+        manager.finished.connect(self._on_acp_finished)
+        manager.error_occurred.connect(self._on_acp_error)
+
+    def _disconnect_acp_signals(self, manager: "AcpManager") -> None:
+        """断开指定 AcpManager 的信号。"""
+        try:
+            manager.delta_received.disconnect(self._on_acp_delta)
+            manager.reasoning_received.disconnect(self._on_acp_reasoning)
+            manager.tool_started.disconnect(self._on_acp_tool)
+            manager.finished.disconnect(self._on_acp_finished)
+            manager.error_occurred.disconnect(self._on_acp_error)
+        except RuntimeError:
+            pass  # 信号未连接
+
+    def _on_acp_error(self, msg: str) -> None:
+        """ACP 错误日志。"""
+        _logger.error("[acp] %s", msg)
+
+    def _on_acp_delta(self, text: str) -> None:
+        """ACP 流式文本 delta——追加到缓冲区，刷新 UI。"""
+        self._stream_buffer += text
+        self._refresh_streaming_widget()
+
+    def _on_acp_reasoning(self, text: str) -> None:
+        """ACP 推理过程——替换 reasoning 缓冲区，刷新 UI。"""
+        self._reasoning_buffer = text
+        self._refresh_streaming_widget()
+
+    def _on_acp_tool(self, name: str, tc_id: str, args: dict) -> None:
+        """ACP 工具事件——记录日志，未来可渲染 tool call 卡片。"""
+        _logger.info("[acp] tool: %s id=%s args=%s", name, tc_id, args)
+
+    def _on_acp_finished(self, stop_reason: str) -> None:
+        """ACP prompt 完成——将缓冲区渲染为完整消息，重置缓冲。"""
+        full_text = self._stream_buffer.strip()
+        if full_text:
+            self._add_assistant_message(full_text, self._reasoning_buffer)
+        self._stream_buffer = ""
+        self._reasoning_buffer = ""
+        self._agent_running = False
+        self._switch_to_send_btn()
+
+    def _refresh_streaming_widget(self) -> None:
+        """刷新流式消息 widget（更新或创建）。
+
+        在消息列表末尾显示一个正在流式输出的消息 widget，
+        实时展示当前累积的 reasoning + 文本内容。
+        后续完整消息到达后（_on_acp_finished）替换为正式消息 widget。
+        """
+        # 移除旧的流式 widget（如果存在）
+        if hasattr(self, "_stream_widget") and self._stream_widget is not None:
+            self._messages_layout.removeWidget(self._stream_widget)
+            self._stream_widget.deleteLater()
+            self._stream_widget = None
+
+        # 构建显示文本
+        parts = []
+        if self._reasoning_buffer:
+            parts.append(f"[思考] {self._reasoning_buffer}")
+        if self._stream_buffer:
+            parts.append(self._stream_buffer)
+        display_text = "\n".join(parts) if parts else "..."
+
+        # 创建临时流式消息 widget
+        dm = DisplayMessage(
+            role="assistant",
+            content=_render_message_content(display_text),
+            raw_content=display_text,
+        )
+        self._stream_widget = ChatMessageWidget(dm)
+        self._messages_layout.insertWidget(
+            self._messages_layout.count() - 1, self._stream_widget
+        )
+        self._scroll_to_bottom()
+
+    def _add_assistant_message(self, content: str, reasoning: str = "") -> None:
+        """将完整 assistant 消息添加为正式 widget。"""
+        ts = datetime.now().strftime("%H:%M:%S")
+        dm = DisplayMessage(
+            role="assistant",
+            content=_render_message_content(content),
+            raw_content=content,
+            timestamp=ts,
+            reasoning_html=_render_message_content(reasoning) if reasoning else "",
+        )
+        widget = ChatMessageWidget(dm)
+        self._message_widgets.append(widget)
+        self._messages_layout.insertWidget(
+            self._messages_layout.count() - 1, widget
+        )
+        self._scroll_to_bottom()
 
     def set_compact(self, compact: bool = True) -> None:
         pass
@@ -592,9 +773,15 @@ class AgentChatPanel(QWidget):
         self._session_timer.timeout.connect(self._refresh_sessions)
         self._session_timer.start(3000)
 
+        # agent 状态检查（3s 一次，不走消息轮询热路径）
+        self._agent_check_timer = QTimer(self)
+        self._agent_check_timer.timeout.connect(self._check_agent_state)
+        self._agent_check_timer.start(3000)
+
+        # 消息轮询（500ms，timeout=0 不阻塞主线程）
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._poll_messages)
-        self._poll_timer.start(1000)
+        self._poll_timer.start(500)
 
     # ═══════════════════════════════════════════════════
     # 滚动控制
@@ -613,20 +800,26 @@ class AgentChatPanel(QWidget):
     # 消息读取与渲染（批处理，不重建）
     # ═══════════════════════════════════════════════════
 
+    def _check_agent_state(self) -> None:
+        """独立 agent 状态检查（每 3s），不走消息轮询热路径。"""
+        if not self._task_uri:
+            return
+        agents = list_agents()
+        running = any(
+            a.task_id == self._task_uri and a.state == "running"
+            for a in agents
+        )
+        if running:
+            self._agent_running = True
+            self._switch_to_stop_btn()
+        elif self._agent_running:
+            self._agent_running = False
+            self._switch_to_send_btn()
+
     def _poll_messages(self) -> None:
         """轮询 Hermes DB，更新 _cached_msgs 并刷新 UI。"""
         if not self._task_uri or not _HERMES_DB.exists():
             return
-
-        agents = list_agents()
-        self._agent_running = any(
-            a.task_id == self._task_uri and a.state == "running"
-            for a in agents
-        )
-        if self._agent_running:
-            self._switch_to_stop_btn()
-        elif self._send_btn.text() == "⏹ 停止":
-            self._switch_to_send_btn()
 
         rows = _read_messages(self._task_uri, self._last_msg_id)
         if not rows:
@@ -641,6 +834,7 @@ class AgentChatPanel(QWidget):
 
         # 追加到缓存
         self._cached_msgs.setdefault(uri, []).extend(new_msgs)
+        self._rendered_count += len(new_msgs)
 
         # 更新 UI：新 user/assistant 消息创建 widget
         for dm in new_msgs:
@@ -749,6 +943,9 @@ class AgentChatPanel(QWidget):
         self._add_placeholder()
         self._input.setFocus()
 
+        # 懒启动 ACP（不阻塞 UI）
+        self._ensure_acp_for_task(task_uri)
+
     def _render_window(self, task_uri: str) -> None:
         """渲染 task 的消息窗口（惰性加载，最近 _MAX_RENDER_LINES 行）。"""
         self._message_widgets.clear()
@@ -852,7 +1049,19 @@ class AgentChatPanel(QWidget):
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
         self._scroll_to_bottom()
 
-        # 发送到 agentd
+        # ACP 模式：通过当前 task 的 AcpManager 异步发送（实时事件通过 Qt Signal 返回）
+        acp = self._acp_managers.get(self._task_uri)
+        if acp is not None:
+            try:
+                # asyncio.ensure_future 在当前运行的事件循环上调度协程
+                asyncio.ensure_future(acp.prompt(text))
+                self._agent_running = True
+                self._switch_to_stop_btn()
+            except RuntimeError as exc:
+                _logger.error("[acp] 发送失败（asyncio loop 未运行）: %s", exc)
+            return
+
+        # 回退：agentd 模式（通过 socket 通信 + DB 轮询）
         resp = _spawn_agent(self._task_uri, text)
         if resp is None:
             _logger.error("[agent] 发送失败")
