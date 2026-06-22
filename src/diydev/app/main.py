@@ -381,15 +381,13 @@ class DetailView(QWidget):
 
         layout.addWidget(self._toolbar)
 
-        # ── 内容区：QTabWidget 两标签页（详情 / 对话） ──
-        self._tab_widget = QTabWidget()
-        layout.addWidget(self._tab_widget)
+        # ── 内容区：垂直 splitter（上：详情 / 下：Agent Chat） ──
+        self._vs = QSplitter(Qt.Orientation.Vertical)
+        layout.addWidget(self._vs)
 
-        # ════════════════════════════════════════
-        # Tab 0: 📋 详情（body + 属性侧边栏）
-        # ════════════════════════════════════════
-        detail_tab = QWidget()
-        detail_layout = QVBoxLayout(detail_tab)
+        # ── 上：详情面板（body + 属性侧边栏） ──
+        detail_widget = QWidget()
+        detail_layout = QVBoxLayout(detail_widget)
         detail_layout.setContentsMargins(0, 0, 0, 0)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -428,7 +426,7 @@ class DetailView(QWidget):
 
         self._stack.addWidget(edit_page)
 
-        # 右侧：侧边栏（只含属性面板，chat 在 Tab 2）
+        # 右侧：侧边栏（属性面板）
         self._sidebar = QWidget()
         self._sidebar.setMinimumWidth(200)
         side_lay = QVBoxLayout(self._sidebar)
@@ -461,22 +459,15 @@ class DetailView(QWidget):
 
         self._splitter.addWidget(self._sidebar)
 
-        self._tab_widget.addTab(detail_tab, "📋 详情")
+        self._vs.addWidget(detail_widget)
 
-        # ════════════════════════════════════════
-        # Tab 1: 💬 对话（全宽 Agent Chat）
-        # ════════════════════════════════════════
+        # ── 下：Agent Chat ──
         self._chat = AgentChatPanel(self)
-        chat_tab = QWidget()
-        chat_layout = QVBoxLayout(chat_tab)
-        chat_layout.setContentsMargins(0, 0, 0, 0)
-        chat_layout.addWidget(self._chat)
-        self._tab_widget.addTab(chat_tab, "💬 对话")
+        self._vs.addWidget(self._chat)
 
         # ── 当前状态 ──
         self._current_task_uri: str | None = None
         self._current_node: TaskNode | None = None
-        self._current_task_uri_for_chat: str | None = None
 
     # ── 公开接口 ──
 
@@ -496,11 +487,8 @@ class DetailView(QWidget):
         # 更新侧边栏
         self._update_sidebar(uri, node)
 
-        # 关联 Agent Chat
-        if uri != self._current_task_uri_for_chat:
-            self._chat.set_task(uri)
-            self._current_task_uri_for_chat = uri
-            self._splitter.setSizes([400, 260])  # 初始比例
+        # Agent Chat 同步关联（始终显示在详情下方）
+        self._chat.set_task(uri)
 
     def show_placeholder(self, html: str) -> None:
         """显示占位信息（无任务选中）。"""
@@ -512,7 +500,7 @@ class DetailView(QWidget):
         self._cancel_btn.hide()
         self._uri_label.clear()
         self._state_label.clear()
-        self._current_task_uri_for_chat = None
+
         self.view.setHtml(html)
         self._clear_sidebar()
 
