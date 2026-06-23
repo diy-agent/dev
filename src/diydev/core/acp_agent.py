@@ -159,12 +159,14 @@ class AcpAgent(AgentBackend):
         self,
         task_uri: str,
         callbacks: AgentCallbacks | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._task_uri = task_uri
         self._callbacks = callbacks or AgentCallbacks()
         self._client = _AcpClient(self._callbacks)
         self._conn: ClientSideConnection | None = None
-        self._session_id: str = ""
+        self._session_id: str = session_id or ""
+        self._restore_session_id: str | None = session_id  # 要恢复的旧 session
         self._history: list[Message] = []
         self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = asyncio.Queue()
         self._stop_ev = asyncio.Event()
@@ -215,9 +217,18 @@ class AcpAgent(AgentBackend):
                 )
                 logger.info("[%s] ACP handshake: %s v%s", self._task_uri, result.agent_info.name, result.agent_info.version)
 
-                session = await conn.new_session(cwd=cwd or os.getcwd())
-                self._session_id = session.session_id
-                logger.info("[%s] session: %s", self._task_uri, self._session_id)
+                if self._restore_session_id:
+                    # 恢复已有 session
+                    logger.info("[%s] 恢复 session: %s", self._task_uri, self._restore_session_id)
+                    session = await conn.load_session(
+                        session_id=self._restore_session_id,
+                        cwd=cwd or os.getcwd(),
+                    )
+                    self._session_id = self._restore_session_id
+                else:
+                    session = await conn.new_session(cwd=cwd or os.getcwd())
+                    self._session_id = session.session_id
+                    logger.info("[%s] 新 session: %s", self._task_uri, self._session_id)
 
                 self._state = "idle"
                 self._ready_ev.set()

@@ -279,7 +279,7 @@ def _read_body(path: Path) -> str:
 def _meta_to_task_dict(uri: str, meta: dict[str, Any]) -> dict[str, Any]:
     """将 frontmatter meta 转为与 get_task 返回一致的 dict"""
     result: dict[str, Any] = {"uri": uri}
-    for key in ("title", "state", "subject", "detail", "parent", "created", "updated", "source"):
+    for key in ("title", "state", "subject", "detail", "parent", "created", "updated", "source", "agent", "session_id"):
         if key in meta:
             result[key] = meta[key]
     # 确保默认字段存在

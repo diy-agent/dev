@@ -3090,6 +3090,11 @@ def main():
     # ACP 异步关闭（同步等不到了，子进程随主进程退出）
     logger.info("diy 管控台退出")
 
+    # 强制退出，绕过 Python 的 wait_for_thread_shutdown
+    # QtWebEngine 线程不配合退出，Python 会在 finalization 时卡死
+    # 导致 app.lock 的 flock 永不释放，新实例无法启动
+    os._exit(0)
+
 
 if __name__ == "__main__":
     main()

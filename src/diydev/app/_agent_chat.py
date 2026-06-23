@@ -76,14 +76,28 @@ _MAX_RENDER_LINES = 300  # 每次渲染的最大内容行数（短消息几十�
 # ═══════════════════════════════════════════════════════
 
 
-def _read_messages(task_uri: str, after_id: int = 0) -> list[dict]:
-    """从 Hermes state.db 读取 task 的 session 消息。
+def _resolve_session_id(task_uri: str) -> str | None:
+    """从 task AGENTS.md frontmatter 读取真实 session_id。"""
+    try:
+        from diydev._state import get_task
+        info = get_task(task_uri)
+        if info:
+            agent = info.get("agent") or {}
+            sid = agent.get("session_id") or info.get("session_id")
+            if sid:
+                return sid
+    except Exception:
+        pass
+    return None
 
-    timeout=0 避免阻塞 Qt 主线程等待写锁；
+
+def _read_messages(session_id: str, after_id: int = 0) -> list[dict]:
+    """从 Hermes state.db 读取 session 的消息。
+
+    timeout=3 避免阻塞 Qt 主线程等待写锁；
     read_uncommitted=1 允许读到 agent 未提交的事务写入（rollback journal 模式下）。
     """
-    session_id = f"agent-{task_uri}"
-    if not _HERMES_DB.exists():
+    if not session_id or not _HERMES_DB.exists():
         return []
     try:
         conn = sqlite3.connect(str(_HERMES_DB), timeout=3)
@@ -100,6 +114,46 @@ def _read_messages(task_uri: str, after_id: int = 0) -> list[dict]:
         return [dict(r) for r in rows]
     except sqlite3.OperationalError:
         return []
+
+
+_MAX_HISTORY_LINES = 2000
+
+
+def _trim_to_line_limit(rows: list[dict], max_lines: int = _MAX_HISTORY_LINES) -> list[dict]:
+    """将消息列表截断到不超过 max_lines 行，保证完整消息体。
+
+    从最新的消息向前累积行数，超过 max_lines 后从前面丢弃，
+    但保证第一条保留的消息是 user 角色（完整对话的开头）。
+    """
+    if not rows:
+        return []
+
+    # 从后向前累积行数
+    acc_lines = 0
+    cutoff = -1  # -1 表示不需要截断
+    for i in range(len(rows) - 1, -1, -1):
+        content = rows[i].get("content") or ""
+        line_count = content.count("\n") + 1
+        acc_lines += line_count
+        if acc_lines > max_lines:
+            cutoff = i
+            break
+
+    if cutoff < 0:
+        # 总行数未超限，全部保留
+        return rows
+
+    # 截断 discard 掉 [0..cutoff-1]，保留 [cutoff..]
+    trimmed = rows[cutoff:]
+
+    # 如果第一条不是 user，向后再找一个 user（保证完整对话开头）
+    if trimmed and trimmed[0].get("role") != "user":
+        for i, r in enumerate(trimmed):
+            if r.get("role") == "user":
+                trimmed = trimmed[i:]
+                break
+
+    return trimmed
 
 
 def _html_escape(text: str) -> str:
@@ -523,6 +577,7 @@ class AgentChatPanel(QWidget):
         self._task_uri: str | None = None
         self._agent = None  # AgentBackend | None
         self._bridge: SignalBridge | None = None
+        self._session_id_for_db: str | None = None
         self._sessions_list: list[dict] = []
         self._selected_idx: int | None = None
         self._placeholder_row: int | None = None
@@ -676,11 +731,16 @@ class AgentChatPanel(QWidget):
         if self._bridge is not None:
             self._disconnect_bridge()
 
-        # 3. 创建新 bridge + agent
+        # 3. 从 task frontmatter 读取后端类型，默认 pi（兼容旧数据）
+        from diydev._state import get_task
+        task_info = get_task(task_uri)
+        agent_meta = (task_info or {}).get("agent", {}) or {}
+        backend_type = agent_meta.get("type", "pi")
+
         self._bridge = SignalBridge()
         agent = await mgr.get_or_create(
             task_uri,
-            backend="pi",
+            backend=backend_type,
             callbacks=self._bridge.callbacks(),
         )
         # 4. 替换 agent 回调（get_or_create 可能返回存活的旧 agent，其回调指向已删除的旧 bridge）
@@ -835,7 +895,8 @@ class AgentChatPanel(QWidget):
         if not self._task_uri or not _HERMES_DB.exists():
             return
 
-        rows = _read_messages(self._task_uri, self._last_msg_id)
+        session_id = self._session_id_for_db or f"agent-{self._task_uri}"
+        rows = _read_messages(session_id, self._last_msg_id)
         if not rows:
             return
         self._last_msg_id = max(r["id"] for r in rows)
@@ -937,14 +998,20 @@ class AgentChatPanel(QWidget):
 
         self._clear_messages_container()
 
+        # 确定真实 session_id
+        self._session_id_for_db = _resolve_session_id(task_uri)
+
         # 全量 DisplayMessage 缓存（仅读取+处理，不建 widget）
         if task_uri not in self._cached_msgs:
-            # 优先从 Hermes DB 加载
-            rows = _read_messages(task_uri)
-            if rows:
-                self._last_msg_id = max(r["id"] for r in rows)
-                self._cached_msgs[task_uri] = _rows_to_display(rows)
-            else:
+            if self._session_id_for_db:
+                # ACP 后端：用真实 session_id 查 Hermes DB
+                rows = _read_messages(self._session_id_for_db)
+                if rows:
+                    # 2000 行截断，保证完整消息
+                    rows = _trim_to_line_limit(rows)
+                    self._last_msg_id = max(r["id"] for r in rows)
+                    self._cached_msgs[task_uri] = _rows_to_display(rows)
+            if task_uri not in self._cached_msgs:
                 # 回退到 pi session 文件（PiRpcAgent 自动保存）
                 pi_msgs = _load_pi_session(task_uri)
                 if pi_msgs:

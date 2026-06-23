@@ -52,6 +52,23 @@ class AgentManager:
         if existing is not None and existing.is_alive:
             return existing
 
+        # 从 task frontmatter 读取已保存的 session_id
+        from diydev._state import get_task, update_task_field
+        task_info = get_task(task_uri)
+        saved_session_id = None
+        if task_info:
+            agent_meta = task_info.get("agent", {}) or {}
+            saved_session_id = agent_meta.get("session_id")
+            if not saved_session_id:
+                saved_session_id = task_info.get("session_id")
+            # 恢复配置（如果传入了则优先用传入的）
+            if not provider:
+                provider = agent_meta.get("provider")
+            if not model:
+                model = agent_meta.get("model")
+            if backend == "hermes" and not saved_session_id:
+                saved_session_id = agent_meta.get("session_id")
+
         if backend == "pi":
             from .pi_agent import PiRpcAgent
             agent: AgentBackend = PiRpcAgent(
@@ -62,7 +79,7 @@ class AgentManager:
             )
         else:
             from .acp_agent import AcpAgent
-            agent = AcpAgent(task_uri, callbacks=callbacks)
+            agent = AcpAgent(task_uri, callbacks=callbacks, session_id=saved_session_id)
 
         self._agents[task_uri] = agent
         task = asyncio.create_task(agent.run(cwd=cwd), name=f"{backend}-{task_uri}")
@@ -72,6 +89,23 @@ class AgentManager:
             await asyncio.wait_for(agent.ready.wait(), timeout=30)
         except asyncio.TimeoutError:
             logger.warning("[%s] %s 启动超时", task_uri, backend)
+
+        # 持久化 agent 信息到 task frontmatter（仅 ACP 后端写入真实 session_id）
+        if backend == "hermes" and agent.session_id:
+            try:
+                meta = {
+                    "agent": {
+                        "type": backend,
+                        "session_id": agent.session_id,
+                    }
+                }
+                if provider:
+                    meta["agent"]["provider"] = provider
+                if model:
+                    meta["agent"]["model"] = model
+                update_task_field(task_uri, **meta)
+            except Exception as exc:
+                logger.warning("[%s] 持久化 agent 信息失败: %s", task_uri, exc)
 
         return agent
 
