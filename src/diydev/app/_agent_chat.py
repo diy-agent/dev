@@ -1160,28 +1160,42 @@ class AgentChatPanel(QWidget):
         self._input.setText(text)
         self._send()
 
+    def _collect_message_widgets(self) -> list[ChatMessageWidget]:
+        """从 _messages_layout 提取所有 ChatMessageWidget（真正的 UI 组件树）。"""
+        widgets: list[ChatMessageWidget] = []
+        for i in range(self._messages_layout.count()):
+            item = self._messages_layout.itemAt(i)
+            if item is None:
+                continue
+            w = item.widget()
+            if isinstance(w, ChatMessageWidget):
+                widgets.append(w)
+        return widgets
+
     def ui_state(self) -> dict:
-        """读取 UI 组件实时状态（从 _message_widgets / _session_list 等 Qt 组件提取）。"""
+        """读取 UI 组件实时状态（从 _messages_layout 等 Qt 组件树提取）。"""
         agent_state = self._agent.state if self._agent else None
+        msg_count = len(self._collect_message_widgets())
         return {
             "task_uri": self._task_uri,
             "agent_running": self._agent_running,
             "agent_state": agent_state,
             "agent_alive": self._agent.is_alive if self._agent else False,
-            "messages": len(self._message_widgets),
+            "messages": msg_count,
             "sessions": [] if not self._agent else [{
                 "id": self._agent.session_id,
                 "state": self._agent.state,
-                "messages": len(self._message_widgets),
+                "messages": msg_count,
             }],
         }
 
     def ui_chat_log(self) -> str:
-        """读取 UI 组件实时对话文本（从 _message_widgets 提取）。"""
-        if not self._message_widgets:
+        """读取 UI 组件实时对话文本（从 _messages_layout 提取）。"""
+        widgets = self._collect_message_widgets()
+        if not widgets:
             return "(无对话)"
         lines = []
-        for w in self._message_widgets:
+        for w in widgets:
             m = w._msg
             arrow = "←" if m.role == "user" else "→" if m.role == "assistant" else "⚙"
             txt = (m.raw_content or "")[:200]
