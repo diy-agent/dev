@@ -64,6 +64,55 @@ def shutdown():
 
 
 # ════════════════════════════════════════════════════════════════
+# dai doctor — 健康自检（走 socket，本地仅提供 help）
+# ════════════════════════════════════════════════════════════════
+
+
+@app.command(name="doctor")
+def doctor_cmd():
+    """分层健康自检 — app 状态 / socket / state.yaml。"""
+    # 实际由 main() 转发到 socket，本函数仅用于 help
+    from ._forward import forward_to_app
+    import sys
+    forward_to_app(["diy", "doctor"])
+
+
+# ════════════════════════════════════════════════════════════════
+# dai ui — 管控台 UI 接口（走 socket，本地仅提供 help）
+# ════════════════════════════════════════════════════════════════
+
+
+ui_app = App(
+    name="ui",
+    help="管控台 UI 接口 — 走 socket 透传到桌面 app",
+)
+
+
+@ui_app.command(name="status")
+def ui_status():
+    """健康检查（pid/窗口/树/定时器）。"""
+    from ._forward import forward_to_app
+    forward_to_app(["diy", "ui", "status"])
+
+
+@ui_app.command(name="tree")
+def ui_tree():
+    """完整任务树。"""
+    from ._forward import forward_to_app
+    forward_to_app(["diy", "ui", "tree"])
+
+
+@ui_app.command(name="agents")
+def ui_agents():
+    """agent 列表。"""
+    from ._forward import forward_to_app
+    forward_to_app(["diy", "ui", "agents"])
+
+
+app.command(ui_app)
+
+
+# ════════════════════════════════════════════════════════════════
 # dai scan
 # ════════════════════════════════════════════════════════════════
 
