@@ -131,6 +131,13 @@ class AgentBackend(ABC):
         """取消当前正在执行的 prompt。"""
         ...
 
+    def set_callbacks(self, callbacks: AgentCallbacks) -> None:
+        """替换回调接口。用于 task 切换时更新 SignalBridge 回调。
+
+        默认实现覆盖 self._callbacks，子类如需要额外逻辑可 override。
+        """
+        self._callbacks = callbacks
+
     # ── 快照 ──
 
     @abstractmethod

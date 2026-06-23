@@ -31,7 +31,7 @@ def md_to_terminal_text(md_text: str, width: int = 88) -> str:
     return console.export_text()
 
 
-TEST_MD = (Path.home() / ".diy" / "d" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
+TEST_MD = (Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
 
 # 去掉 frontmatter（---...--- 之间的 YAML 头）
 import re

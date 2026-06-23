@@ -719,6 +719,15 @@ class MainWindow(QMainWindow):
 
         # ── 数据 ──
         self._metrics = MetricsStore()
+        # 注入 MetricsStore 到日志 → metrics handler
+        from diydev.app._app_log import get_metrics_handler
+        mh = get_metrics_handler()
+        if mh is not None:
+            mh.set_store(self._metrics)
+        # 指标面板（依赖 _metrics）
+        from diydev.app._metrics_panel import MetricsPanel
+        self._metrics_panel = MetricsPanel(self._metrics)
+        self._panel_tabs.addTab(self._metrics_panel, "指标")
         self._nodes: list[TaskNode] = []
         self._load()
 
@@ -2981,6 +2990,43 @@ def main():
         asyncio.set_event_loop_policy(QAsyncioEventLoopPolicy())
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # ── 全局异步异常安全网 ──
+    _orig_handler = loop.get_exception_handler()
+
+    def _safe_asyncio_handler(_loop, context):
+        exc = context.get("exception")
+        msg = context.get("message", "")
+        # Qt C++ 对象已销毁 — 非致命，日志即可
+        if isinstance(exc, RuntimeError) and "already deleted" in str(exc):
+            logger.warning("[qt-lifecycle] 访问已删除 QObject: %s", exc)
+            return
+        # 其他 async Task 异常 — 记录不崩溃
+        if exc:
+            logger.error("[async] 未处理的 Task 异常: %s\n%s", exc, "".join(
+                __import__("traceback").format_tb(exc.__traceback__)
+            ))
+            return
+        # 非 exception 上下文（如 cancelled）— 交给默认处理器
+        if _orig_handler:
+            _orig_handler(_loop, context)
+
+    loop.set_exception_handler(_safe_asyncio_handler)
+
+    # ── 全局 Python 异常安全网（兜住 Qt slot 等边界） ──
+    _orig_excepthook = sys.excepthook
+
+    def _safe_excepthook(typ, val, tb):
+        if isinstance(val, RuntimeError) and "already deleted" in str(val):
+            logger.warning("[qt-lifecycle] sys.excepthook: %s", val)
+            return
+        # Qt 关闭阶段的大量 harmless 异常，直接跳过
+        if isinstance(val, RuntimeError) and "Internal C++ object" in str(val):
+            logger.debug("[qt-lifecycle] sys.excepthook (无害): %s", val)
+            return
+        _orig_excepthook(typ, val, tb)
+
+    sys.excepthook = _safe_excepthook
 
     # ── 连接 agentd（已有则复用，没有则启动） ──
     hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")

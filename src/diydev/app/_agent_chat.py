@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal  # type: ignore[import-untyped]
 from PySide6.QtGui import QTextOption  # type: ignore[import-untyped]
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
 
 from diydev.app._app_log import logger as _logger
 from diydev.app.agent_bridge_qt import SignalBridge
+from diydev.core.backend import AgentCallbacks
 from diydev._state import diy_home
 
 _HERMES_DB = Path.home() / ".hermes" / "state.db"
@@ -417,6 +419,96 @@ def _session_icon(state: str) -> str:
     return _SESSION_ICONS.get(state, "○")
 
 
+# ═══════════════════════════════════════════════════════
+# Pi session 持久化
+# ═══════════════════════════════════════════════════════
+
+def _pi_session_path(task_uri: str) -> Path:
+    """task URI 对应的 pi session 文件路径（与 PiRpcAgent._session_path 一致）。"""
+    safe_name = task_uri.replace("/", "_")
+    return diy_home() / "pi-sessions" / f"{safe_name}.jsonl"
+
+
+def _load_pi_session(task_uri: str) -> list[DisplayMessage]:
+    """从 pi session JSONL 读取 user/assistant 对话历史。"""
+    path = _pi_session_path(task_uri)
+    if not path.exists():
+        return []
+    msgs: list[DisplayMessage] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "message":
+                    continue
+                msg = entry.get("message", {})
+                role = msg.get("role", "")
+                if role not in ("user", "assistant"):
+                    continue
+                content = _extract_pi_text(msg.get("content", ""))
+                if not content:
+                    continue
+                ts_ms = msg.get("timestamp", 0)
+                ts = datetime.fromtimestamp(ts_ms / 1000).strftime("%H:%M:%S") if ts_ms else ""
+                if role == "user":
+                    dm = DisplayMessage(
+                        role="user",
+                        content=_render_message_content(content),
+                        raw_content=content,
+                        timestamp=ts,
+                    )
+                else:
+                    reasoning = _extract_pi_thinking(msg.get("content", ""))
+                    dm = DisplayMessage(
+                        role="assistant",
+                        content=_render_message_content(content),
+                        raw_content=content,
+                        timestamp=ts,
+                        reasoning_html=_render_message_content(reasoning) if reasoning else "",
+                    )
+                msgs.append(dm)
+    except OSError:
+        pass
+    return msgs
+
+
+def _extract_pi_text(content: Any) -> str:
+    """从 pi session 的 content 字段提取纯文本。
+
+    content 可能是字符串，也可能是 [{type, text}, ...] 数组。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                txt = block.get("text", "")
+                if txt:
+                    texts.append(txt)
+        return "\n".join(texts)
+    return ""
+
+
+def _extract_pi_thinking(content: Any) -> str:
+    """从 pi session 的 content 字段提取 thinking 内容。"""
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                txt = block.get("thinking", "")
+                if txt:
+                    texts.append(txt)
+        return "\n".join(texts)
+    return ""
+
+
 class AgentChatPanel(QWidget):
     """Agent 对话面板 — 使用 core.AgentManager + SignalBridge。
 
@@ -573,17 +665,26 @@ class AgentChatPanel(QWidget):
         """通过 AgentManager 获取或创建 agent，绑定 SignalBridge。"""
         from diydev.core.agent_manager import get_manager
 
-        # 断开旧的 bridge
+        mgr = get_manager()
+
+        # 1. 停掉旧 task 的 agent（不同 task）并置空其回调
+        if self._agent is not None and self._agent.task_uri != task_uri:
+            self._agent.set_callbacks(AgentCallbacks())  # null callbacks，旧 agent 不再碰旧 bridge
+            await mgr.stop(self._agent.task_uri)
+
+        # 2. 安全销毁旧 bridge
         if self._bridge is not None:
             self._disconnect_bridge()
 
+        # 3. 创建新 bridge + agent
         self._bridge = SignalBridge()
-        mgr = get_manager()
         agent = await mgr.get_or_create(
             task_uri,
             backend="pi",
             callbacks=self._bridge.callbacks(),
         )
+        # 4. 替换 agent 回调（get_or_create 可能返回存活的旧 agent，其回调指向已删除的旧 bridge）
+        agent.set_callbacks(self._bridge.callbacks())
         self._agent = agent
         self._bridge.bind(agent)
         self._connect_bridge()
@@ -687,6 +788,9 @@ class AgentChatPanel(QWidget):
             timestamp=ts,
             reasoning_html=_render_message_content(reasoning) if reasoning else "",
         )
+        # 缓存
+        if self._task_uri:
+            self._cached_msgs.setdefault(self._task_uri, []).append(dm)
         widget = ChatMessageWidget(dm)
         self._message_widgets.append(widget)
         self._messages_layout.insertWidget(
@@ -835,11 +939,16 @@ class AgentChatPanel(QWidget):
 
         # 全量 DisplayMessage 缓存（仅读取+处理，不建 widget）
         if task_uri not in self._cached_msgs:
+            # 优先从 Hermes DB 加载
             rows = _read_messages(task_uri)
             if rows:
                 self._last_msg_id = max(r["id"] for r in rows)
                 self._cached_msgs[task_uri] = _rows_to_display(rows)
-
+            else:
+                # 回退到 pi session 文件（PiRpcAgent 自动保存）
+                pi_msgs = _load_pi_session(task_uri)
+                if pi_msgs:
+                    self._cached_msgs[task_uri] = pi_msgs
         # 渲染最近 PAGE_SIZE 条
         self._render_window(task_uri)
         self._input.setFocus()
@@ -949,6 +1058,10 @@ class AgentChatPanel(QWidget):
         self._message_widgets.append(widget)
         self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
         self._scroll_to_bottom()
+
+        # 缓存
+        if self._task_uri:
+            self._cached_msgs.setdefault(self._task_uri, []).append(dm)
 
         # 通过 SignalBridge + AgentBackend 异步发送（实时事件通过 Qt Signal 返回）
         if self._agent is not None:

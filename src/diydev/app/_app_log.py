@@ -41,6 +41,11 @@ from diydev._state import diy_home
 
 from PySide6.QtCore import QObject, Signal  # type: ignore[import-untyped]
 
+if __name__ != "__main__":
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from diydev.app._metrics import MetricsStore
+
 __all__ = ["setup_app_logger", "logger", "QtLogHandler", "get_logger"]
 
 # 模块级 logger — logging.getLogger() 在 setup_app_logger 调用前返回安全空 logger
@@ -53,7 +58,7 @@ _SHARED_FMT = logging.Formatter(
 )
 
 # 从消息中提取 [category] 前缀
-_RE_CATEGORY = re.compile(r"^\[(\w+)\]")
+_RE_CATEGORY = re.compile(r"^\[([\w-]+)\]")
 
 
 class JsonlFormatter(logging.Formatter):
@@ -169,6 +174,42 @@ def _install_qt_msg_handler() -> None:
     qInstallMessageHandler(handler)
 
 
+class MetricsLogHandler(logging.Handler):
+    """拦截 WARNING/ERROR 日志，按模块分类记 metrics counter。
+
+    setup_app_logger 时注册，MainWindow 初始化后注入 MetricsStore。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setLevel(logging.WARNING)
+        self._store: Any | None = None  # MetricsStore | None
+
+    def set_store(self, store: Any) -> None:
+        """注入 MetricsStore（MainWindow 初始化后调用）。"""
+        self._store = store
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._store is None:
+            return
+        try:
+            msg = record.getMessage()
+            m = _RE_CATEGORY.match(msg)
+            category = m.group(1) if m else record.name.rsplit(".", 1)[-1]
+            level_name = record.levelname.lower()
+            self._store.counter(f"log.{level_name}.{category}", 1)
+        except Exception:
+            self.handleError(record)
+
+
+_metrics_handler: MetricsLogHandler | None = None
+
+
+def get_metrics_handler() -> MetricsLogHandler | None:
+    """返回 MetricsLogHandler，供 MainWindow 注入 MetricsStore。"""
+    return _metrics_handler
+
+
 def setup_app_logger(
     level: int = logging.DEBUG,
     file_path: str | None = None,
@@ -177,7 +218,7 @@ def setup_app_logger(
 
     可在 main() 最开头调用，也可在子进程中再次调用（会先清理旧 handler）。
     """
-    global _qt_handler
+    global _qt_handler, _metrics_handler
 
     log_path = Path(file_path or (
         diy_home() / "app.log"
@@ -215,6 +256,10 @@ def setup_app_logger(
     _qt_handler.setLevel(logging.DEBUG)
     _qt_handler.setFormatter(_SHARED_FMT)
     root.addHandler(_qt_handler)
+
+    # ── Metrics（WARNING/ERROR → counter） ──
+    _metrics_handler = MetricsLogHandler()
+    root.addHandler(_metrics_handler)
 
     logger.info("日志初始化完成 → %s", log_path)
     return root

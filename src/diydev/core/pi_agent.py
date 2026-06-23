@@ -77,9 +77,18 @@ class PiRpcAgent(AgentBackend):
 
     # ── AgentBackend 生命周期 ──
 
+    @staticmethod
+    def _session_path(task_uri: str) -> Path:
+        """返回 task 对应的 pi session 文件路径（确定性路径）。"""
+        _diy_home = Path(os.environ.get("DIY_HOME", os.path.expanduser("~/.diy")))
+        safe_name = task_uri.replace("/", "_")
+        return _diy_home / "pi-sessions" / f"{safe_name}.jsonl"
+
     async def run(self, cwd: str | None = None) -> None:
         pi_bin = self._find_pi()
-        args = [pi_bin, "--mode", "rpc", "--thinking", "off"]
+        session_path = self._session_path(self._task_uri)
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        args = [pi_bin, "--mode", "rpc", "--thinking", "off", "--session", str(session_path)]
         if self._provider:
             args += ["--provider", self._provider]
         if self._model:

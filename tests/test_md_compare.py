@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 # ── 测试数据 ──
 
-SRC = (Path.home() / ".diy" / "d" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
+SRC = (Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
 BODY = re.sub(r"^---\n.*?^---\n", "", SRC, count=1, flags=re.DOTALL | re.MULTILINE)
 
 

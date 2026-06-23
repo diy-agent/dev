@@ -49,19 +49,32 @@ class SignalBridge(QObject):
         self.session_ready.emit(agent.session_id)
         self.state_changed.emit(agent.state)
 
-    # ── 回调实现（在 asyncio event loop 上调用，emit 天然安全）──
+    # ── 回调实现（emit 时 QObject 可能已被 deleteLater）──
+
+    def _safe_emit(self, sig, *args):
+        """安全发射 Qt Signal，QObject 已销毁时静默跳过并记录。"""
+        try:
+            sig.emit(*args)
+        except RuntimeError as e:
+            if "already deleted" in str(e):
+                import logging as _lg
+                _lg.getLogger("diy.app").debug(
+                    "[qt-lifecycle] SignalBridge 已销毁，丢弃信号 %s", sig.signalName()
+                )
+            else:
+                raise
 
     def _on_delta(self, text: str) -> None:
-        self.delta_received.emit(text)
+        self._safe_emit(self.delta_received, text)
 
     def _on_reasoning(self, text: str) -> None:
-        self.reasoning_received.emit(text)
+        self._safe_emit(self.reasoning_received, text)
 
     def _on_tool_start(self, name: str, tc_id: str, args: dict) -> None:
-        self.tool_started.emit(name, tc_id, args)
+        self._safe_emit(self.tool_started, name, tc_id, args)
 
     def _on_error(self, msg: str) -> None:
-        self.error_occurred.emit(msg)
+        self._safe_emit(self.error_occurred, msg)
 
     def _on_finished(self, stop_reason: str) -> None:
-        self.finished.emit(stop_reason)
+        self._safe_emit(self.finished, stop_reason)

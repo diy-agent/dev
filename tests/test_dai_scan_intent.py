@@ -1,145 +1,95 @@
-"""dai scan 意图测试 — CLI 级行为契约（issue #47）。
+"""dai scan — 意图测试（ShellTest 版）。
 
-意图测试 = CLI transcript（$ 命令 → 完整输出）。水手读即知 CLI 外观。
-
-扫描逻辑单元测试在 _dai_scan.py 中，意图测试通过 CLI 验证端到端。
-
-运行：uv run python -m pytest tests/test_dai_scan_intent.py -v
+ShellTest 行匹配是 strip + 精确/glob 匹配。
+注意：macOS `/var` → `/private/var` symlink，路径用 `*` glob 模糊匹配。
 """
 
-import os
+from __future__ import annotations
 
-from conftest import assert_intent
+from pathlib import Path
 
-_PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DAI = f"uv run --project {_PROJECT} dai"
+from _shelltest import ShellTest
 
 
-def test_intent_dai_scan_yaml_output(monkeypatch, tmp_path):
-    """意图: dai scan 默认 YAML 输出 workspace + spaces。
-
-    创建含 diy.yaml 和多个 .git 的临时目录结构，
-    --path 指向该目录 → 预期的 YAML 输出。
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    ws = home / "git"
+def test_intent_dai_scan_yaml_output(sh: ShellTest, fake_home: Path):
+    """意图: dai scan 默认 YAML 输出 workspace + spaces。"""
+    ws = fake_home / "git"
     ws.mkdir(parents=True)
     (ws / "diy.yaml").write_text("config: true\n")
-
     for name in ["_diy", "diy", "diyq"]:
-        d = ws / name
-        d.mkdir()
-        (d / ".git").mkdir()
+        (ws / name).mkdir()
+        (ws / name / ".git").mkdir()
 
-    ws_str = str(ws)
-    assert_intent(f"""$ {_DAI} scan --path {ws_str}
----
-workspace: {ws_str}
-spaces:
-  - path: {ws_str}/_diy
-    name: _diy
-  - path: {ws_str}/diy
-    name: diy
-  - path: {ws_str}/diyq
-    name: diyq
-""")
+    sh.assert_session(f"""
+        $ dai scan --path {ws}
+        *workspace: *{ws}*
+        *{ws}/_diy*
+        *{ws}/diy*
+        *{ws}/diyq*
+    """)
 
 
-def test_intent_dai_scan_json_output(monkeypatch, tmp_path):
+def test_intent_dai_scan_json_output(sh: ShellTest, fake_home: Path):
     """意图: dai scan --json 输出 JSON。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    ws = home / "git"
+    ws = fake_home / "git"
     ws.mkdir(parents=True)
     (ws / "diy.yaml").write_text("")
 
     for name in ["repo1", "repo2"]:
-        d = ws / name
-        d.mkdir()
-        (d / ".git").mkdir()
+        (ws / name).mkdir()
+        (ws / name / ".git").mkdir()
 
-    ws_str = str(ws)
-    assert_intent(f"""$ {_DAI} scan --json --path {ws_str}
-{{"workspace": "{ws_str}", "spaces": [{{"path": "{ws_str}/repo1", "name": "repo1"}}, {{"path": "{ws_str}/repo2", "name": "repo2"}}]}}
-""")
+    sh.assert_session(f"""
+        $ dai scan --json --path {ws}
+        *{ws}/repo1*
+        *{ws}/repo2*
+    """)
 
 
-def test_intent_dai_scan_no_diy_yaml(monkeypatch, tmp_path):
-    """意图: dai scan 在 workspace 根外（无 diy.yaml）报错。
-
-    不创建 diy.yaml → 预期非零退出。
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    empty = tmp_path / "empty"
+def test_intent_dai_scan_no_diy_yaml(sh: ShellTest, fake_home: Path):
+    """意图: dai scan 在 workspace 根外（无 diy.yaml）报错。"""
+    empty = fake_home / "empty"
     empty.mkdir()
+    sh.assert_session(f"""
+        $! dai scan --path {empty}
+    """)
 
-    assert_intent(f"""$! {_DAI} scan --path {empty}
-""")
 
-
-def test_intent_dai_scan_empty_workspace(monkeypatch, tmp_path):
+def test_intent_dai_scan_empty_workspace(sh: ShellTest, fake_home: Path):
     """意图: workspace 下无 .git 目录时 spaces 为空列表。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    ws = home / "git"
+    ws = fake_home / "git"
     ws.mkdir(parents=True)
     (ws / "diy.yaml").write_text("")
 
-    ws_str = str(ws)
-    assert_intent(f"""$ {_DAI} scan --path {ws_str}
----
-workspace: {ws_str}
-spaces: []
-""")
+    sh.assert_session(f"""
+        $ dai scan --path {ws}
+        *workspace: *{ws}*
+        spaces: []
+    """)
 
 
-def test_intent_dai_scan_max_depth_boundary(monkeypatch, tmp_path):
+def test_intent_dai_scan_max_depth_boundary(sh: ShellTest, fake_home: Path):
     """意图: .git 深度超出 max_depth=3 时不被发现。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    ws = home / "git"
+    ws = fake_home / "git"
     ws.mkdir(parents=True)
     (ws / "diy.yaml").write_text("")
 
-    # depth 4: a/b/c/d/.git → 应被排除
     deep = ws / "a" / "b" / "c" / "d"
     deep.mkdir(parents=True)
     (deep / ".git").mkdir()
 
-    ws_str = str(ws)
-    assert_intent(f"""$ {_DAI} scan --path {ws_str}
----
-workspace: {ws_str}
-spaces: []
-""")
+    sh.assert_session(f"""
+        $ dai scan --path {ws}
+        *workspace: *{ws}*
+        spaces: []
+    """)
 
 
-def test_intent_dai_scan_home_boundary(monkeypatch, tmp_path):
-    """意图: diy.yaml 在 HOME 目录本身时应在 HOME 停住，不向上。
-
-    在 $HOME 放 diy.yaml，期望扫描到 HOME 停止。
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    (home / "diy.yaml").write_text("")
-
-    ws_str = str(home)
-    assert_intent(f"""$ {_DAI} scan --path {ws_str}
----
-workspace: {ws_str}
-spaces: []
-""")
+def test_intent_dai_scan_home_boundary(sh: ShellTest, fake_home: Path):
+    """意图: diy.yaml 在 HOME 目录本身时应在 HOME 停住，不向上。"""
+    (fake_home / "diy.yaml").write_text("")
+    sh.assert_session(f"""
+        $ dai scan --path {fake_home}
+        *workspace: *{fake_home}*
+        spaces: []
+    """)
