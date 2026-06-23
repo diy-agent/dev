@@ -1566,7 +1566,10 @@ class GatewayCLI:
             return "OK"
 
         @ui_app.command(name="node")
-        def ui_node(uri: str):
+        def ui_node(
+            uri: str,
+            /,
+        ):
             """<uri> 任务节点详情"""
             return self._main.invoke(lambda: self._window.format_node(uri))
 
@@ -1574,7 +1577,10 @@ class GatewayCLI:
         ui_task_app = CycloptsApp(name="task", help="查看/编辑任务")
 
         @ui_task_app.command(name="detail")
-        def ui_task_detail(uri: str):
+        def ui_task_detail(
+            uri: str,
+            /,
+        ):
             """<uri> 展示任务详情并设为当前选中任务。后续 edit input 无需再传 URI。"""
             def _do():
                 panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
@@ -1656,6 +1662,7 @@ class GatewayCLI:
 
         @edit_app.command(name="input")
         def ui_edit_input(
+            *,
             title: str | None = None,
             body: str | None = None,
             body_file: str | None = None,
@@ -1740,7 +1747,10 @@ class GatewayCLI:
             return buf.getvalue()
 
         @chat_app.command
-        def read(task: str | None = None):
+        def read(
+            *,
+            task: str | None = None,
+        ):
             """读取当前对话文本（UI 层 _log）。"""
             panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
             if panel is None:
@@ -1749,7 +1759,11 @@ class GatewayCLI:
             return text or "(无对话)"
 
         @chat_app.command
-        def wait(task: str | None = None, timeout: int = 60):
+        def wait(
+            *,
+            task: str | None = None,
+            timeout: int = 60,
+        ):
             """等待 agent 完成，轮询 UI 层 _log 文本。"""
             import time as _time
             panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
@@ -1793,7 +1807,12 @@ class GatewayCLI:
             return buf.getvalue()
 
         @chat_app.command
-        def send(text: str, task: str | None = None):
+        def send(
+            text: str,
+            /,
+            *,
+            task: str | None = None,
+        ):
             """向 task 发送消息（走 UI 层）。"""
             panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
             if panel is None:
@@ -1814,6 +1833,7 @@ class GatewayCLI:
         # ── scan ──
         @diy.command
         def scan(
+            *,
             path: str | None = None,
             json_output: bool = False,
         ):
@@ -1839,7 +1859,10 @@ class GatewayCLI:
         profile_app = CycloptsApp(name="profile", help="查询 state.yaml 中的 profile 预设")
 
         @profile_app.command(name="list")
-        def profile_list(json_output: bool = False):
+        def profile_list(
+            *,
+            json_output: bool = False,
+        ):
             """列出所有 profile"""
             from diydev._state import load_state
             import json as _json
@@ -1853,7 +1876,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @profile_app.command
-        def profile_show(name: str, json_output: bool = False):
+        def profile_show(
+            name: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """查看单个 profile"""
             from diydev._state import load_state
             import yaml as _yaml, json as _json
@@ -1891,6 +1919,8 @@ class GatewayCLI:
         @subject_app.command(name="add")
         def subject_add(
             path: str,
+            /,
+            *,
             desc: str | None = None,
             json_output: bool = False,
         ):
@@ -1916,7 +1946,10 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @subject_app.command(name="list")
-        def subject_list(json_output: bool = False):
+        def subject_list(
+            *,
+            json_output: bool = False,
+        ):
             """扁平列表"""
             from diydev._state import load_state
             import yaml as _yaml, json as _json, io as _io
@@ -1930,7 +1963,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @subject_app.command(name="remove")
-        def subject_remove(path: str, json_output: bool = False):
+        def subject_remove(
+            path: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """删除 subject"""
             from diydev._state import load_state, save_state
             import json as _json, io as _io
@@ -1952,7 +1990,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @subject_app.command(name="show")
-        def subject_show(path: str, json_output: bool = False):
+        def subject_show(
+            path: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """查看单个 subject（含实时 is_git 检测）"""
             from diydev._state import load_state
             import yaml as _yaml, json as _json, io as _io
@@ -1970,7 +2013,10 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @subject_app.command(name="tree")
-        def subject_tree(json_output: bool = False):
+        def subject_tree(
+            *,
+            json_output: bool = False,
+        ):
             """树状展示 subject（实时 is_git 检测）"""
             from diydev._state import load_state
             from diydev._dai_cli import _build_subject_tree
@@ -1986,7 +2032,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @subject_app.command(name="scan")
-        def subject_scan(root: str, json_output: bool = False):
+        def subject_scan(
+            root: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """扫描文件系统，发现 git 仓库作为 subject"""
             import os as _os
             from diydev._state import load_state, save_state
@@ -2016,7 +2067,12 @@ class GatewayCLI:
         task_app = CycloptsApp(name="task", help="任务管理")
 
         @task_app.command(name="star")
-        def task_star(uri: str, json_output: bool = False):
+        def task_star(
+            uri: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """star 任务（创建 symlink）"""
             from diydev._state import get_task, star_task
             import yaml as _yaml, json as _json, io as _io
@@ -2032,7 +2088,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="unstar")
-        def task_unstar(uri: str, json_output: bool = False):
+        def task_unstar(
+            uri: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """unstar 任务（删除 symlink）"""
             from diydev._state import get_task, unstar_task
             import yaml as _yaml, json as _json, io as _io
@@ -2048,7 +2109,11 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="list")
-        def task_list(json_output: bool = False, all: bool = False):
+        def task_list(
+            *,
+            json_output: bool = False,
+            all: bool = False,
+        ):
             """列出任务。默认只显示 starred，--all 显示全部。"""
             from diydev._state import is_starred, list_starred, list_tasks
             import yaml as _yaml, json as _json, io as _io
@@ -2063,7 +2128,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="show")
-        def task_show(uri: str, json_output: bool = False):
+        def task_show(
+            uri: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """查看单个任务"""
             from diydev._state import get_task
             import yaml as _yaml, json as _json, sys as _sys
@@ -2086,6 +2156,8 @@ class GatewayCLI:
         def task_create(
             title: str,
             subject: str,
+            /,
+            *,
             parent: str | None = None,
             detail: str | None = None,
             body_file: str | None = None,
@@ -2127,6 +2199,8 @@ class GatewayCLI:
         @task_app.command(name="edit")
         def task_edit(
             uri: str,
+            /,
+            *,
             title: str | None = None,
             state: str | None = None,
             subject: str | None = None,
@@ -2170,7 +2244,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="delete")
-        def task_delete(uri: str, json_output: bool = False):
+        def task_delete(
+            uri: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """删除本地任务"""
             from diydev._state import get_task, delete_task
             import json as _json
@@ -2191,6 +2270,8 @@ class GatewayCLI:
             title: str,
             subject: str,
             source_uri: str,
+            /,
+            *,
             parent: str | None = None,
             detail: str | None = None,
             json_output: bool = False,
@@ -2226,7 +2307,12 @@ class GatewayCLI:
             return _buf.getvalue()
 
         @task_app.command(name="unlink")
-        def task_unlink(uri: str, json_output: bool = False):
+        def task_unlink(
+            uri: str,
+            /,
+            *,
+            json_output: bool = False,
+        ):
             """解绑外部任务引用。不删除远端 issue，仅移除本地记录。"""
             from diydev._state import get_task, delete_task
             import json as _json
@@ -2244,6 +2330,7 @@ class GatewayCLI:
 
         @task_app.command(name="sync")
         def task_sync(
+            *,
             uri: str | None = None,
             all: bool = False,
             json_output: bool = False,
@@ -2385,6 +2472,8 @@ class GatewayCLI:
         def agent_spawn(
             task_uri: str,
             message: str,
+            /,
+            *,
             model: str | None = None,
             toolsets: str | None = None,
             reasoning_budget: int | None = None,
@@ -2408,6 +2497,7 @@ class GatewayCLI:
         def agent_send(
             task_uri: str,
             message: str,
+            /,
         ):
             """向 agent 发送消息"""
             cmd = f"send --task={task_uri} --message={message}"
@@ -2418,7 +2508,10 @@ class GatewayCLI:
             return f"agent {task_uri}: 消息已发送"
 
         @agent_app.command
-        def agent_kill(task_uri: str):
+        def agent_kill(
+            task_uri: str,
+            /,
+        ):
             """终止 agent"""
             cmd = f"kill --task={task_uri}"
             resp = _agent_send_text(cmd)
@@ -2436,7 +2529,10 @@ class GatewayCLI:
             return resp
 
         @agent_app.command
-        def agent_show(task_uri: str):
+        def agent_show(
+            task_uri: str,
+            /,
+        ):
             """查看 agent 状态和输出"""
             cmd = f"show --task={task_uri}"
             resp = _agent_send_text(cmd)

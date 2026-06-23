@@ -36,6 +36,7 @@ class SignalBridge(QObject):
             on_reasoning=self._on_reasoning,
             on_tool_start=self._on_tool_start,
             on_error=self._on_error,
+            on_finished=self._on_finished,
         )
 
     def callbacks(self) -> AgentCallbacks:
@@ -61,3 +62,6 @@ class SignalBridge(QObject):
 
     def _on_error(self, msg: str) -> None:
         self.error_occurred.emit(msg)
+
+    def _on_finished(self, stop_reason: str) -> None:
+        self.finished.emit(stop_reason)

@@ -10,6 +10,7 @@ import sys
 import time as _time
 
 from diydev._lock import locked_file
+from diydev._log import info, error
 from diydev._state import diy_home
 
 
@@ -65,7 +66,7 @@ def forward_to_app(args: list[str]) -> None:
     # Step 2: acquire lock to serialize the launch path
     lf = locked_file.try_lock(_lock_path(), timeout=3.0)
     if lf is None:
-        print("⏳ 等待 diy 管控台启动...", file=sys.stderr)
+        info("等待管控台启动...")
         deadline = _time.time() + 10
         while _time.time() < deadline:
             _time.sleep(0.3)
@@ -73,7 +74,7 @@ def forward_to_app(args: list[str]) -> None:
             if resp is not None:
                 sys.stdout.write(resp)
                 return
-        print("错误: app 启动超时（锁等待失败）", file=sys.stderr)
+        error("app 启动超时（锁等待失败）")
         sys.exit(1)
 
     # Step 3: check again under lock — other process may have started app
@@ -84,23 +85,24 @@ def forward_to_app(args: list[str]) -> None:
         return
 
     # Step 4: launch app (socket 不可达，锁下启动唯一实例)
-    print("⏳ 正在启动 diy 管控台...", file=sys.stderr)
+    info("正在启动管控台...")
     subprocess.Popen(
         [sys.executable, "-m", "diydev.app.main"],
         stdout=subprocess.DEVNULL,
         env={**os.environ},
     )
 
-    # Step 5: wait for socket — lock keeps other launchers waiting
+    # Step 5: release lock before waiting — 否则 app 的 Gateway.start() 无法获取同一文件锁，导致死锁
+    lf.__exit__(None, None, None)
+
+    # Step 6: wait for socket 就绪（不持有锁，避免阻塞 app 的 Gateway 初始化）
     deadline = _time.time() + 10
     while _time.time() < deadline:
         _time.sleep(0.3)
         resp = _send_to_socket(socket_path, payload)
         if resp is not None:
-            lf.__exit__(None, None, None)
             sys.stdout.write(resp)
             return
 
-    lf.__exit__(None, None, None)
-    print("错误: app 启动超时，请检查日志", file=sys.stderr)
+    error("app 启动超时，请检查日志")
     sys.exit(1)

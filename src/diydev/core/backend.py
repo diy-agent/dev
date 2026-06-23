@@ -44,6 +44,7 @@ DeltaCallback = Callable[[str], None]
 ReasoningCallback = Callable[[str], None]
 ToolStartCallback = Callable[[str, str, dict], None]  # (name, id, args)
 ErrorCallback = Callable[[str], None]
+FinishCallback = Callable[[str], None]  # stop_reason
 
 
 @dataclass
@@ -53,6 +54,7 @@ class AgentCallbacks:
     on_reasoning: ReasoningCallback | None = None
     on_tool_start: ToolStartCallback | None = None
     on_error: ErrorCallback | None = None
+    on_finished: FinishCallback | None = None
 
 
 # ════════════════════════════════════════════════════════════════

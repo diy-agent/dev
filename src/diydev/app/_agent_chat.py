@@ -614,8 +614,11 @@ class AgentChatPanel(QWidget):
         self._bridge = None
 
     def _on_acp_error(self, msg: str) -> None:
-        """ACP 错误日志。"""
+        """ACP 错误日志 — 同时重置按钮状态。"""
         _logger.error("[acp] %s", msg)
+        if self._agent_running:
+            self._agent_running = False
+            self._switch_to_send_btn()
 
     def _on_acp_delta(self, text: str) -> None:
         """ACP 流式文本 delta——追加到缓冲区，刷新 UI。"""
@@ -699,11 +702,6 @@ class AgentChatPanel(QWidget):
         self._session_timer.timeout.connect(self._refresh_sessions)
         self._session_timer.start(3000)
 
-        # agent 状态检查（3s 一次，不走消息轮询热路径）
-        self._agent_check_timer = QTimer(self)
-        self._agent_check_timer.timeout.connect(self._check_agent_state)
-        self._agent_check_timer.start(3000)
-
         # 消息轮询（500ms，timeout=0 不阻塞主线程）
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._poll_messages)
@@ -726,16 +724,7 @@ class AgentChatPanel(QWidget):
     # 消息读取与渲染（批处理，不重建）
     # ═══════════════════════════════════════════════════
 
-    def _check_agent_state(self) -> None:
-        """检查当前 agent 状态（每 3s）。"""
-        if not self._task_uri:
-            return
-        if self._agent is not None and self._agent.is_alive:
-            self._agent_running = True
-            self._switch_to_stop_btn()
-        elif self._agent_running:
-            self._agent_running = False
-            self._switch_to_send_btn()
+
 
     def _poll_messages(self) -> None:
         """轮询 Hermes DB，更新 _cached_msgs 并刷新 UI。"""
@@ -980,8 +969,10 @@ class AgentChatPanel(QWidget):
         except Exception as exc:
             _logger.error("[agent] prompt 失败: %s", exc)
 
-        self._agent_running = True
-        self._switch_to_stop_btn()
+        # send 完成后 agent 进入 idle，立即切回发送按钮
+        if self._agent_running:
+            self._agent_running = False
+            self._switch_to_send_btn()
 
     def send_text(self, text: str) -> None:
         if self._agent_running:

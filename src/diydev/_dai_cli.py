@@ -965,66 +965,10 @@ def dai_doctor_metrics() -> None:
 # ════════════════════════════════════════════════════════════════
 
 
-def _dai_agent_dispatch(args: list[str]) -> None:
-    if not args:
-        _agent_print_help()
-        return
-
-    # 解析 --pi / --backend 标志
-    backend: str = "hermes"
-    provider: str | None = None
-    model: str | None = None
-    while args and args[0].startswith("--"):
-        flag = args.pop(0)
-        if flag == "--pi":
-            backend = "pi"
-        elif flag == "--hermes":
-            backend = "hermes"
-        elif flag == "--provider" and args:
-            provider = args.pop(0)
-        elif flag == "--model" and args:
-            model = args.pop(0)
-        else:
-            print(f"未知标志: {flag}", file=sys.stderr)
-            return
-
-    if not args:
-        _agent_print_help(backend)
-        return
-
-    sub = args[0]
-    rest = args[1:]
-
-    if sub == "list":
-        _agent_cmd_list()
-    elif sub == "status":
-        _agent_cmd_status(rest)
-    elif sub == "chat":
-        _agent_cmd_chat(rest, backend=backend, provider=provider, model=model)
-    elif sub == "send":
-        _agent_cmd_send(rest, backend=backend, provider=provider, model=model)
-    elif sub == "stop":
-        _agent_cmd_stop(rest)
-    elif sub in ("-h", "--help", "help"):
-        _agent_print_help(backend)
-    else:
-        print(f"未知子命令: {sub}", file=sys.stderr)
-        _agent_print_help(backend)
-
-
-def _agent_print_help(backend: str = "hermes") -> None:
-    pi_hint = " [--pi]" if backend == "hermes" else ""
-    print(f"""dai agent — ACP agent 管理（全 async）
-
-后端: {backend}
-
-用法:
-  dai agent{pi_hint} list               列出存活 agent
-  dai agent{pi_hint} status <task>      查看 agent 状态
-  dai agent{pi_hint} [--provider X] [--model Y] send <task> <文本>  发消息
-  dai agent{pi_hint} [--provider X] [--model Y] chat <task>        交互终端
-  dai agent{pi_hint} stop <task>        停止 agent
-""")
+agent_app = App(
+    name="agent",
+    help="ACP agent 管理 — 本地运行，不走 app socket",
+)
 
 
 def _get_session_counts(task_uri: str) -> tuple[int, int]:
@@ -1034,7 +978,6 @@ def _get_session_counts(task_uri: str) -> tuple[int, int]:
     from diydev.core.agent_manager import get_manager
     if get_manager().get(task_uri):
         alive = 1
-    # 从 Hermes DB 统计历史 session
     db = Path.home() / ".hermes" / "state.db"
     if db.exists():
         try:
@@ -1052,52 +995,79 @@ def _get_session_counts(task_uri: str) -> tuple[int, int]:
     return alive, total
 
 
-def _agent_cmd_list() -> None:
+def _output(data: Any, json_output: bool = False) -> None:
+    """统一输出: YAML 默认，--json 切换 JSON。"""
+    if json_output:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        yaml.dump(data, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False, explicit_start=True)
+
+
+@agent_app.command(name="list")
+def agent_list(
+    *,
+    json_output: Annotated[bool, Parameter(name=["--json"], help="JSON 格式输出")] = False,
+):
     """列出存活 agent（当前进程）。"""
     from diydev.core.agent_manager import get_manager
     mgr = get_manager()
     agents = mgr.list()
-    if not agents:
-        print("(无活跃 ACP agent)")
-        return
-    print(f"{'TASK':<35s}  {'SESSION':<10s}  {'MSG'}")
-    print("-" * 60)
+    data: list[dict[str, Any]] = []
     for a in agents:
         live, total = _get_session_counts(a.task_uri)
-        cnt = f"{live}/{total}" if total else "—"
-        print(f"{a.task_uri:<35s}  {cnt:<10s}  {a.message_count}条")
-
-
-def _agent_cmd_status(args: list[str]) -> None:
-    if not args:
-        print("用法: dai agent status <task>", file=sys.stderr)
+        data.append({
+            "task_uri": a.task_uri,
+            "session": {"alive": live, "total": total},
+            "messages": a.message_count,
+        })
+    if not data:
+        _output({"agents": []}, json_output)
         return
-    task_uri = args[0]
+    _output({"agents": data}, json_output)
+
+
+@agent_app.command(name="status")
+def agent_status(
+    task_uri: Annotated[str, Parameter(help="任务 URI")],
+    /,
+    *,
+    json_output: Annotated[bool, Parameter(name=["--json"], help="JSON 格式输出")] = False,
+):
+    """查看 agent 状态。"""
     from diydev.core.agent_manager import get_manager
     mgr = get_manager()
     a = mgr.get(task_uri)
     if a is None:
-        print(f"agent {task_uri} 不活跃")
+        _output({"error": "agent 不活跃", "task_uri": task_uri}, json_output)
         return
     s = a.state_snapshot()
     live, total = _get_session_counts(task_uri)
-    print(f"Task:     {s.task_uri}")
-    print(f"会话:     {live}/{total}  (活跃/总计)")
-    print(f"状态:     {s.state}")
-    print(f"消息:     {s.message_count} 条")
-    print(f"历史:")
-    for m in a.history[-6:]:
-        tag = "◈" if m.role == "assistant" else "✦"
-        txt = m.content[:80] + ("..." if len(m.content) > 80 else "")
-        print(f"  {tag} {txt}")
+    data: dict[str, Any] = {
+        "task_uri": s.task_uri,
+        "state": s.state,
+        "messages": s.message_count,
+        "session": {"alive": live, "total": total},
+        "history": [
+            {"role": m.role, "content": m.content[:120]}
+            for m in a.history[-6:]
+        ],
+    }
+    _output(data, json_output)
 
 
-def _agent_cmd_chat(args: list[str], *, backend: str = "hermes", provider: str | None = None, model: str | None = None) -> None:
-    if not args:
-        print("用法: dai agent chat <task> [cwd]", file=sys.stderr)
-        return
-    task_uri = args[0]
-    cwd = args[1] if len(args) > 1 else os.getcwd()
+@agent_app.command(name="chat")
+def agent_chat(
+    task_uri: Annotated[str, Parameter(help="任务 URI")],
+    /,
+    *,
+    cwd: Annotated[str | None, Parameter(help="工作目录（默认当前目录）")] = None,
+    backend: Annotated[str, Parameter(help="后端: pi / hermes")] = "hermes",
+    provider: Annotated[str | None, Parameter(help="LLM provider")] = None,
+    model: Annotated[str | None, Parameter(help="LLM 模型")] = None,
+):
+    """交互式聊天终端。"""
+    import shlex
+    _cwd = cwd or os.getcwd()
     from diydev.core.backend import AgentCallbacks
     cb = AgentCallbacks(
         on_delta=lambda t: (print(t, end="", flush=True)),
@@ -1105,7 +1075,7 @@ def _agent_cmd_chat(args: list[str], *, backend: str = "hermes", provider: str |
         on_tool_start=lambda n, i, a: print(f"\n[工具] {n}"),
         on_error=lambda e: print(f"\n[错误] {e}", file=sys.stderr),
     )
-    asyncio.run(_async_chat(task_uri, cwd, callbacks=cb, backend=backend, provider=provider, model=model))
+    asyncio.run(_async_chat(task_uri, _cwd, callbacks=cb, backend=backend, provider=provider, model=model))
 
 
 async def _async_chat(task_uri: str, cwd: str, callbacks, *, backend: str = "hermes", provider: str | None = None, model: str | None = None) -> None:
@@ -1131,12 +1101,17 @@ async def _async_chat(task_uri: str, cwd: str, callbacks, *, backend: str = "her
     print("agent 仍在后台运行（重新输入 dai agent chat 可继续）")
 
 
-def _agent_cmd_send(args: list[str], *, backend: str = "hermes", provider: str | None = None, model: str | None = None) -> None:
-    if len(args) < 2:
-        print("用法: dai agent send <task> <文本>", file=sys.stderr)
-        return
-    task_uri = args[0]
-    text = " ".join(args[1:])
+@agent_app.command(name="send")
+def agent_send(
+    task_uri: Annotated[str, Parameter(help="任务 URI")],
+    text: Annotated[str, Parameter(help="消息文本")],
+    /,
+    *,
+    backend: Annotated[str, Parameter(help="后端: pi / hermes")] = "hermes",
+    provider: Annotated[str | None, Parameter(help="LLM provider")] = None,
+    model: Annotated[str | None, Parameter(help="LLM 模型")] = None,
+):
+    """向 agent 发送单条消息。"""
     from diydev.core.backend import AgentCallbacks
     cb = AgentCallbacks(
         on_delta=lambda t: (print(t, end="", flush=True)),
@@ -1154,11 +1129,12 @@ async def _async_send(task_uri: str, text: str, callbacks, *, backend: str = "he
     print(f"历史: {len(agent.history)} 条（agent 继续存活）")
 
 
-def _agent_cmd_stop(args: list[str]) -> None:
-    if not args:
-        print("用法: dai agent stop <task>", file=sys.stderr)
-        return
-    task_uri = args[0]
+@agent_app.command(name="stop")
+def agent_stop(
+    task_uri: Annotated[str, Parameter(help="任务 URI")],
+    /,
+):
+    """停止 agent。"""
     asyncio.run(_async_stop(task_uri))
 
 
@@ -1205,12 +1181,13 @@ def _local_shutdown():
     用 pkill 兜底杀 diydev.app.main 进程。
     """
     from ._forward import _send_to_socket
+    from diydev._log import info, error
 
     socket_path = str(diy_home() / "app.sock")
     if os.path.exists(socket_path):
         resp = _send_to_socket(socket_path, "diy ui shutdown")
         if resp is not None:
-            print(resp, file=sys.stderr)
+            info(resp)
             return
 
     # socket 不存在或不通 → 进程级兜底
@@ -1220,25 +1197,54 @@ def _local_shutdown():
         capture_output=True, text=True, timeout=5,
     )
     if kill.returncode == 0:
-        print("管控台已强制关闭", file=sys.stderr)
+        info("管控台已强制关闭")
     else:
-        print("管控台未运行", file=sys.stderr)
+        info("管控台未运行")
+
+
+def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
+    """等待 app.lock 被释放（旧进程退出后内核自动释放 flock）。"""
+    import fcntl
+    import time as _time
+
+    deadline = _time.time() + timeout
+    while _time.time() < deadline:
+        try:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # 拿到锁了就说明旧进程已退出
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            return True
+        except BlockingIOError:
+            # 旧进程还在，继续等
+            _time.sleep(0.3)
+            continue
+        except OSError:
+            return True  # 文件系统问题，不阻塞
+    return False
 
 
 def _app_restart():
-    """重启管控台：shutdown → 清理 socket → 启动 app。"""
+    """重启管控台：shutdown → 等锁释放 → 启动 app。"""
     import subprocess
     import time as _time
+    from diydev._log import info, error
 
     socket_path = str(diy_home() / "app.sock")
+    lock_path = str(diy_home() / "app.lock")
 
     # 1) shutdown — 不管成功与否，只发一次
     if os.path.exists(socket_path):
-        print("⏳ 正在关闭管控台...", file=sys.stderr)
+        info("正在关闭管控台...")
         _send_to_socket("diy ui shutdown", timeout=1.0)
 
-    # 2) 短等 socket 消失（旧 app 响应 shutdown 后清理）
-    _time.sleep(0.5)
+    # 2) 等旧进程完全退出（锁释放）
+    if os.path.exists(lock_path):
+        info("等待旧管控台退出...")
+        if not _wait_lock_released(lock_path, timeout=8.0):
+            error("旧管控台退出超时")
+            sys.exit(1)
 
     # 3) 强制清理残留 socket（旧 app 可能未及时清理或已死）
     try:
@@ -1247,7 +1253,7 @@ def _app_restart():
         pass
 
     # 4) 启动 app — 直接用当前 Python 解释器，不依赖 sha.sh
-    print("⏳ 正在启动管控台...", file=sys.stderr)
+    info("正在启动管控台...")
     proc = subprocess.Popen(
         [sys.executable, "-m", "diydev.app.main"],
         stdout=subprocess.DEVNULL,
@@ -1260,12 +1266,12 @@ def _app_restart():
         if os.path.exists(socket_path):
             _time.sleep(0.3)
             if _send_to_socket("diy", timeout=1.0) is not None:
-                print("管控台已重启", file=sys.stderr)
+                info("管控台已重启")
                 return
         _time.sleep(0.3)
 
     # 6) 超时
-    print("错误: 管控台启动超时，请检查日志", file=sys.stderr)
+    error("管控台启动超时，请检查日志")
     sys.exit(1)
 
 
@@ -1301,12 +1307,21 @@ def main():
 
     # ACP agent 命令（本地运行，不依赖 app socket）
     if cmd == "agent":
-        _dai_agent_dispatch(tokens[1:])
+        try:
+            agent_app(tokens[1:])
+        except SystemExit:
+            pass
         return
 
-    # UI 桌面 app 启动
+    # UI 子命令：dai ui 无参数 → 启动桌面 app；dai ui <subcmd> → 走 socket
     if cmd == "ui":
-        _dai_ui()
+        if len(tokens) == 1:
+            # dai ui → 启动桌面 app
+            _dai_ui()
+            return
+        # dai ui <subcmd> ... → 转发到已有 app 的 socket
+        args = ["diy"] + tokens
+        forward_to_app(args)
         return
 
     # 所有命令走 app.sock，协议前缀 diy = v1

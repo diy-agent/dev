@@ -215,14 +215,20 @@ class PiRpcAgent(AgentBackend):
                             raise asyncio.TimeoutError("静默超时")
 
                 future.set_result("end_turn")
+                if self._callbacks.on_finished:
+                    self._callbacks.on_finished("end_turn")
             except asyncio.TimeoutError:
                 future.set_result("timeout")
                 if self._callbacks.on_error:
                     self._callbacks.on_error("prompt 超时")
+                if self._callbacks.on_finished:
+                    self._callbacks.on_finished("timeout")
             except Exception as exc:
                 future.set_exception(exc)
                 if self._callbacks.on_error:
                     self._callbacks.on_error(str(exc))
+                if self._callbacks.on_finished:
+                    self._callbacks.on_finished(f"error:{exc}")
             finally:
                 self._state = "idle"
 
