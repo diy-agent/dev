@@ -1226,7 +1226,17 @@ def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
 
 
 def _app_restart():
-    """重启管控台：shutdown → 等锁释放 → 启动 app。"""
+    """重启管控台：shutdown → 等锁释放 → 启动 app。
+
+    流程:
+      shutdown 旧 app（发 socket QApplication.quit()）
+        → 等 5s 锁释放（旧进程退出）？
+           ├─ ✅ 释放了 → 启动新 app
+           └─ ❌ 没释放 → pkill -f 杀旧进程
+                          → 再等 3s 锁释放？
+                             ├─ ✅ 释放了 → 启动新 app
+                             └─ ❌ 仍不释放 → 报错退出
+    """
     import subprocess
     import time as _time
     from diydev._log import info, warn, error
