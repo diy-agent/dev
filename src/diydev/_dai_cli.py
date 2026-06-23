@@ -1229,7 +1229,7 @@ def _app_restart():
     """重启管控台：shutdown → 等锁释放 → 启动 app。"""
     import subprocess
     import time as _time
-    from diydev._log import info, error
+    from diydev._log import info, warn, error
 
     socket_path = str(diy_home() / "app.sock")
     lock_path = str(diy_home() / "app.lock")
@@ -1239,12 +1239,26 @@ def _app_restart():
         info("正在关闭管控台...")
         _send_to_socket("diy ui shutdown", timeout=1.0)
 
-    # 2) 等旧进程完全退出（锁释放）
+    # 2) 等旧进程完全退出（锁释放），超时则强杀
     if os.path.exists(lock_path):
         info("等待旧管控台退出...")
-        if not _wait_lock_released(lock_path, timeout=8.0):
-            error("旧管控台退出超时")
-            sys.exit(1)
+        if not _wait_lock_released(lock_path, timeout=5.0):
+            warn("旧管控台未在 5s 内退出，尝试强杀...")
+            import subprocess as _sp
+            kill = _sp.run(
+                ["pkill", "-f", "diydev.app.main"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if kill.returncode == 0:
+                _time.sleep(1.0)
+                if _wait_lock_released(lock_path, timeout=3.0):
+                    info("旧管控台已强制关闭")
+                else:
+                    error("旧管控台强杀后仍不释放锁")
+                    sys.exit(1)
+            else:
+                error("旧管控台退出超时，且未找到可杀的进程")
+                sys.exit(1)
 
     # 3) 强制清理残留 socket（旧 app 可能未及时清理或已死）
     try:
