@@ -1162,6 +1162,7 @@ class AgentChatPanel(QWidget):
 
     def ui_state(self) -> dict:
         agent_state = self._agent.state if self._agent else None
+        cached_len = len(self._cached_msgs.get(self._task_uri, [])) if self._task_uri else 0
         return {
             "task_uri": self._task_uri,
             "agent_running": self._agent_running,
@@ -1170,18 +1171,21 @@ class AgentChatPanel(QWidget):
             "sessions": [] if not self._agent else [{
                 "id": self._agent.session_id,
                 "state": self._agent.state,
-                "messages": len(self._agent.history),
+                "messages": cached_len,
             }],
         }
 
     def ui_chat_log(self) -> str:
-        """读取当前 agent 历史对话文本。"""
-        if not self._agent:
+        """读取 UI 层当前对话文本（来自 _cached_msgs，即 widget 显示的内容）。"""
+        if not self._task_uri:
             return ""
+        msgs = self._cached_msgs.get(self._task_uri, [])
+        if not msgs:
+            return "(无对话)"
         lines = []
-        for m in self._agent.history:
+        for m in msgs:
             arrow = "←" if m.role == "user" else "→" if m.role == "assistant" else "⚙"
-            txt = (m.content or "")[:200]
+            txt = (m.raw_content or "")[:200]
             ts = m.timestamp or ""
             lines.append(f"[{ts}] {arrow} {txt}")
         return "\n".join(lines)
