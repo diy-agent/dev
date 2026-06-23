@@ -41,9 +41,26 @@ from ._state import (
 
 app = App(
     name="dai",
-    help="diy agent 接口 — state 查询与同步\n\n  子命令 dai app ... → 管控台探针（透传到 app socket）",
+    help="diy agent 接口 — state 查询与同步",
     version_flags=[],
 )
+
+
+# ════════════════════════════════════════════════════════════════
+# dai restart / shutdown — 生命周期类，本地执行
+# ════════════════════════════════════════════════════════════════
+
+
+@app.command
+def restart():
+    """重启管控台。"""
+    _app_restart()
+
+
+@app.command
+def shutdown():
+    """关闭管控台。"""
+    _local_shutdown()
 
 
 # ════════════════════════════════════════════════════════════════
@@ -877,6 +894,7 @@ def task_unlink(
 
 
 app.command(task_app)
+app.command(profile_app)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1138,6 +1156,9 @@ def agent_stop(
     asyncio.run(_async_stop(task_uri))
 
 
+app.command(agent_app)
+
+
 async def _async_stop(task_uri: str) -> None:
     from diydev.core.agent_manager import get_manager
     mgr = get_manager()
@@ -1313,17 +1334,20 @@ def main():
 
     tokens = sys.argv[1:] if len(sys.argv) > 1 else []
     if not tokens:
-        forward_to_app(["diy", "--help"])
+        try:
+            app(["--help"])
+        except SystemExit:
+            pass
         return
 
     cmd = tokens[0]
 
-    # 本地执行（不走 app.sock，生命周期类命令不应自动启动 app）
-    if cmd == "restart":
-        _app_restart()
-        return
-    if cmd == "shutdown":
-        _local_shutdown()
+    # 生命周期命令 — 本地执行，走 cyclopts（注册在 app 上，会显示在 help 中）
+    if cmd in ("restart", "shutdown"):
+        try:
+            app(tokens)
+        except SystemExit:
+            pass
         return
     if cmd == "doctor" and len(tokens) > 1 and tokens[1] == "metrics":
         dai_doctor_metrics()
