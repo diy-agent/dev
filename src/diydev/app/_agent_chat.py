@@ -797,6 +797,12 @@ class AgentChatPanel(QWidget):
 
     def _on_acp_finished(self, stop_reason: str) -> None:
         """ACP prompt 完成——将缓冲区渲染为完整消息，重置缓冲。"""
+        # 先移除流式 widget，再添加正式消息
+        if hasattr(self, "_stream_widget") and self._stream_widget is not None:
+            self._messages_layout.removeWidget(self._stream_widget)
+            self._stream_widget.deleteLater()
+            self._stream_widget = None
+
         full_text = self._stream_buffer.strip()
         if full_text:
             self._add_assistant_message(full_text, self._reasoning_buffer)
