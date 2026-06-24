@@ -13,6 +13,23 @@ import time
 import traceback
 from pathlib import Path
 
+# ── QWebEngine Chromium flags 必须在 import QtWebEngineWidgets 之前设置 ──
+#
+# ⚠️ 警告：此 flag 设置必须放在 import QtWebEngineWidgets 之前，因为
+#   import 时 WebEngine 会读取并缓存 flags，之后再设无效（os.environ 改了但
+#   Chromium 内部不认识）。
+#
+# ⚠️ 禁止使用 --single-process！PySide6 6.8 + macOS 12 上该 flag 导致
+#   V8 Proxy Resolver 初始化失败 → system_network_context_manager SIGSEGV。
+#
+#   改用 --disable-gpu 避免 GPU 子进程的 MachPort 冲突，同时保持 multi-process
+#   模式，V8 Proxy Resolver 正常工作。
+_qtwebengine_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+if "--single-process" not in _qtwebengine_flags and "--disable-gpu" not in _qtwebengine_flags:
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        _qtwebengine_flags + " --disable-gpu"
+    ).strip()
+
 from PySide6.QtCore import (  # type: ignore[import-untyped]
     QEvent,
     QFileSystemWatcher,
@@ -24,7 +41,36 @@ from PySide6.QtCore import (  # type: ignore[import-untyped]
     Signal,
 )
 from PySide6.QtGui import QAction, QFont, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
+
+# ── QWebEngineView 安全创建守卫 ──
+#
+# macOS + PySide6 6.8 上，在窗口收到 NSApplicationDidBecomeActiveNotification 之前
+# 创建 QWebEngineView 会导致 use-after-free SIGSEGV。所有 WebEngineView 实例必须
+# 通过 _safe_create_webengine_view() 创建，该函数在 app 未 active 时抛出清晰异常。
+#
+# 类型标注仍需 import，故保留模块级 import 供 type checker 用，但实例化必须走守卫。
 from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-untyped]
+
+_webengine_ready: bool = False  # set True 后安全创建 WebEngineView
+
+
+def _safe_create_webengine_view() -> QWebEngineView:
+    """安全创建 QWebEngineView 实例。
+
+    若 app 尚未收到 NSApplicationDidBecomeActiveNotification，抛出 RuntimeError。
+    """
+    if not _webengine_ready:
+        raise RuntimeError(
+            "QWebEngineView 创建过早！macOS 上窗口未 active 时创建会导致 SIGSEGV。\n"
+            "参见 MainWindow._mark_webengine_ready() 和 _ensure_view() 的延迟机制。"
+        )
+    return QWebEngineView()
+
+
+def _mark_webengine_ready() -> None:
+    """标记 WebEngine 可安全创建（由 MainWindow 在收到激活事件后调用）。"""
+    global _webengine_ready
+    _webengine_ready = True
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QAbstractItemView,
     QApplication,
@@ -40,7 +86,6 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
-    QSplitter,
     QStackedWidget,
     QTabWidget,
     QTextBrowser,
@@ -381,25 +426,13 @@ class DetailView(QWidget):
 
         layout.addWidget(self._toolbar)
 
-        # ── 内容区：垂直 splitter（上：详情 / 下：Agent Chat） ──
-        self._vs = QSplitter(Qt.Orientation.Vertical)
-        layout.addWidget(self._vs)
-
-        # ── 上：详情面板（body + 属性侧边栏） ──
-        detail_widget = QWidget()
-        detail_layout = QVBoxLayout(detail_widget)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        detail_layout.addWidget(self._splitter)
-
-        # 左侧：body（view / edit 切换）
+        # ── 内容区：body / edit 切换 ──
         self._stack = QStackedWidget()
-        self._splitter.addWidget(self._stack)
 
-        # view 页 — body 区
-        self.view = QWebEngineView()
-        self._stack.addWidget(self.view)
+        # view 页 — body 区（QWebEngineView 延迟创建，避免 macOS 启动时 Chromium
+        # 初始化与 NSApplicationDidBecomeActiveNotification 冲突 → SIGSEGV）
+        self.view: QWebEngineView | None = None
+        self._stack.addWidget(QWidget())  # 占位，首次 setHtml 时替换
 
         # edit 页
         edit_page = QWidget()
@@ -425,45 +458,7 @@ class DetailView(QWidget):
         ed_lay.addWidget(self._edit_body)
 
         self._stack.addWidget(edit_page)
-
-        # 右侧：侧边栏（属性面板）
-        self._sidebar = QWidget()
-        self._sidebar.setMinimumWidth(200)
-        side_lay = QVBoxLayout(self._sidebar)
-        side_lay.setContentsMargins(0, 0, 0, 0)
-        side_lay.setSpacing(0)
-
-        # ─ 属性面板 ─
-        self._attr_widget = QWidget()
-        self._attr_widget.setStyleSheet(
-            "QWidget { background: #181825; }"
-            "QLabel { color: #a6adc8; font-size: 11px; padding: 2px 8px; }"
-        )
-        attr_lay = QVBoxLayout(self._attr_widget)
-        attr_lay.setContentsMargins(0, 4, 0, 4)
-        attr_lay.setSpacing(0)
-
-        self._attr_subject = QLabel()
-        self._attr_parent = QLabel()
-        self._attr_detail = QLabel()
-        self._attr_detail.setWordWrap(True)
-        self._attr_detail.setMaximumHeight(40)
-
-        attr_lay.addWidget(QLabel("属性"))
-        attr_lay.addWidget(self._attr_subject)
-        attr_lay.addWidget(self._attr_parent)
-        attr_lay.addWidget(self._attr_detail)
-        attr_lay.addStretch()
-
-        side_lay.addWidget(self._attr_widget)
-
-        self._splitter.addWidget(self._sidebar)
-
-        self._vs.addWidget(detail_widget)
-
-        # ── 下：Agent Chat ──
-        self._chat = AgentChatPanel(self)
-        self._vs.addWidget(self._chat)
+        layout.addWidget(self._stack, 1)
 
         # ── 当前状态 ──
         self._current_task_uri: str | None = None
@@ -471,8 +466,34 @@ class DetailView(QWidget):
 
     # ── 公开接口 ──
 
+    def _ensure_view(self) -> None:
+        """延迟创建 QWebEngineView（首次需要渲染 HTML 时）。
+
+        macOS 上过早创建 QWebEngineView（窗口未 active 时）会导致
+        NSApplicationDidBecomeActiveNotification 冲突 → SIGSEGV。
+        守卫 _webengine_ready 确保最早在 window.show() 后 200ms 才创建。
+        """
+        if self.view is not None:
+            return
+        # _webengine_ready 在 window.show() 后 200ms 由定时器设为 True，
+        # 在此之前创建 QWebEngineView 都会触发 macOS 上的 SIGSEGV。
+        # 此全局守卫是最终安全网，不可绕过（禁止直接 QWebEngineView()）。
+        if not _webengine_ready:
+            QTimer.singleShot(200, self._ensure_view)
+            return
+        wv = _safe_create_webengine_view()
+        self.view = wv
+        self._stack.insertWidget(0, wv)
+        self._stack.removeWidget(self._stack.widget(1))  # 移除占位符
+
     def show_task(self, uri: str, node: TaskNode | None, html: str) -> None:
         """进入查看模式，显示任务详情。"""
+        self._ensure_view()
+        if self.view is None:
+            # 窗口尚未就绪（_ensure_view 延迟了），200ms 后重试。
+            # 仅发生在 macOS 启动瞬间，窗口 active 后不会触发。
+            QTimer.singleShot(200, lambda: self.show_task(uri, node, html))
+            return
         self._current_task_uri = uri
         self._current_node = node
         self._stack.setCurrentIndex(0)
@@ -484,14 +505,14 @@ class DetailView(QWidget):
         self._state_label.setText(state)
         self.view.setHtml(html)
 
-        # 更新侧边栏
-        self._update_sidebar(uri, node)
-
-        # Agent Chat 同步关联（始终显示在详情下方）
-        self._chat.set_task(uri)
-
     def show_placeholder(self, html: str) -> None:
         """显示占位信息（无任务选中）。"""
+        self._ensure_view()
+        if self.view is None:
+            # 窗口尚未就绪（_ensure_view 延迟了），200ms 后重试。
+            # 仅发生在 macOS 启动瞬间，窗口 active 后不会触发。
+            QTimer.singleShot(200, lambda: self.show_placeholder(html))
+            return
         self._current_task_uri = None
         self._current_node = None
         self._stack.setCurrentIndex(0)
@@ -502,31 +523,6 @@ class DetailView(QWidget):
         self._state_label.clear()
 
         self.view.setHtml(html)
-        self._clear_sidebar()
-
-    # ── 侧边栏 ──
-
-    def _update_sidebar(self, uri: str, node: TaskNode | None) -> None:
-        if not node:
-            self._clear_sidebar()
-            return
-        parts = []
-        if node.subject_path:
-            parts.append(f"📂 {_esc_html(node.subject_path)}")
-        if node.parent_uri:
-            parts.append(f"⬆ 父任务 {node.parent_uri}")
-        if node.detail:
-            parts.append(f"📝 {_esc_html(node.detail)}")
-        self._attr_subject.setText(parts[0] if len(parts) > 0 else "")
-        self._attr_parent.setText(parts[1] if len(parts) > 1 else "")
-        self._attr_detail.setText(parts[2] if len(parts) > 2 else "")
-        self._attr_widget.setVisible(len(parts) > 0)
-
-    def _clear_sidebar(self) -> None:
-        self._attr_subject.clear()
-        self._attr_parent.clear()
-        self._attr_detail.clear()
-        self._attr_widget.hide()
 
     # ── 编辑模式 ──
 
@@ -540,12 +536,9 @@ class DetailView(QWidget):
         self._edit_btn.hide()
         self._save_btn.show()
         self._cancel_btn.show()
-        # 编辑模式隐藏侧边栏
-        self._sidebar.hide()
 
     def _cancel_edit(self) -> None:
         """取消编辑，返回查看模式。"""
-        self._sidebar.show()
         self._stack.setCurrentIndex(0)
         self._edit_btn.show()
         self._save_btn.hide()
@@ -597,10 +590,12 @@ class MainWindow(QMainWindow):
 
         # ── Gateway（Unix socket 入口） ──
         self._gateway = Gateway(self)
+        logger.debug("[init] Gateway 创建完成")
 
         # ── Activity Bar（左侧活动栏） ──
         self._activity_bar = ActivityBar(self)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self._activity_bar)
+        logger.debug("[init] ActivityBar 创建完成")
 
         # ── 过滤栏（搜索 + 状态过滤） ──
         self._filter_text = QLineEdit()
@@ -609,6 +604,7 @@ class MainWindow(QMainWindow):
 
         self._filter_state = QComboBox()
         self._filter_state.addItems(["所有状态", "pending", "active", "done", "blocked", "cancelled"])
+        logger.debug("[init] 过滤栏创建完成")
 
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(4, 4, 4, 0)
@@ -681,6 +677,7 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._primary_sidebar)
+        logger.debug("[init] 树面板 + Dock 创建完成")
 
         # ── 详情面板（中央 Editor） ──
         self._detail = DetailView()
@@ -688,7 +685,20 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._detail)
 
         # _detail 就绪后再启动 socket（防止 GatewayCLI 命令在 _detail 未创建时到达）
+
+        # ── Agent 对话面板（右侧 dock） ──
+        self._chat = AgentChatPanel(self)
+        self._chat_dock = QDockWidget("Agent", self)
+        self._chat_dock.setObjectName("ChatPanel")
+        self._chat_dock.setWidget(self._chat)
+        self._chat_dock.setMinimumWidth(360)
+        self._chat_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._chat_dock)
+
         self._gateway.start()
+        logger.debug("[init] Gateway 启动完成")
 
         # ── 底部面板（输出 / Agent 列表等） ──
         self._log_panel = LogPanel(self)
@@ -709,10 +719,12 @@ class MainWindow(QMainWindow):
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._panel_dock)
         self._panel_dock.hide()
+        logger.debug("[init] 底部面板创建完成")
 
         # ── ActivityBar → Dock 绑定 ──
         self._activity_bar.set_dock(0, self._primary_sidebar)   # 📁
-        self._activity_bar.set_dock(2, self._panel_dock)          # 📋
+        self._activity_bar.set_dock(1, self._chat_dock)         # 💬
+        self._activity_bar.set_dock(2, self._panel_dock)        # 📋
 
         # ── 菜单栏 ──
         self._setup_menu()
@@ -728,6 +740,7 @@ class MainWindow(QMainWindow):
         from diydev.app._metrics_panel import MetricsPanel
         self._metrics_panel = MetricsPanel(self._metrics)
         self._panel_tabs.addTab(self._metrics_panel, "指标")
+        logger.debug("[init] MetricsPanel 创建完成")
         self._nodes: list[TaskNode] = []
         self._load()
 
@@ -773,6 +786,28 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(30000, lambda: self._health_timer.start(10000))
 
         logger.info("MainWindow 初始化完成, pid=%s", os.getpid())
+
+        # ── macOS WebEngine 激活时序 ──
+        #   窗口必须收到 NSApplicationDidBecomeActiveNotification 后才可创建
+        #   QWebEngineView，否则 use-after-free SIGSEGV。我们通过监听
+        #   changeEvent(ActivationChange) 事件来获知此通知已到，而非猜测时间。
+        #
+        #   setFocus 不能放在 event loop 首个迭代，否则 _on_select → _ensure_view
+        #   会在 ActivationChange 事件到达前创建 WebEngineView。
+        #   延迟到 changeEvent 标记 _webengine_ready 之后再触发。
+        QTimer.singleShot(300, self._tree.setFocus)
+        logger.debug("[init] __init__ 全部完成")
+
+    def changeEvent(self, event: QEvent | None) -> None:
+        """监听窗口激活事件。
+
+        首次收到 ActivationChange 且窗口 active 时，标记 WebEngine 可安全创建。
+        这对应 macOS 的 NSApplicationDidBecomeActiveNotification，
+        在此之前创建 QWebEngineView 会导致 use-after-free SIGSEGV。
+        """
+        if event and event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            _mark_webengine_ready()
+        super().changeEvent(event)
 
     def event(self, evt: QEvent | None) -> bool:
         """处理跨线程 _InvokeEvent。"""
@@ -859,7 +894,7 @@ class MainWindow(QMainWindow):
         self._expand_btn.setToolTip("折叠所有")
         self._expand_subjects()
         # setModel() 会重建 selectionModel，重新连接信号
-        self._tree.selectionModel().selectionChanged.connect(self._on_select)
+        self._tree.selectionModel().currentChanged.connect(self._on_select)
 
     def _toggle_expand(self) -> None:
         """切换全部展开/折叠。"""
@@ -1117,7 +1152,7 @@ class MainWindow(QMainWindow):
             return
         title = task.get("title", uri)
         prompt = f"请完成以下任务：{title}"
-        self._detail._chat.send_text(prompt)
+        self._chat.send_text(prompt)
 
     @guarded("action.create")
     def _open_create_task(self, parent_uri: str | None = None, subject: str | None = None) -> None:
@@ -1128,16 +1163,18 @@ class MainWindow(QMainWindow):
 
     @guarded("action.steer")
     def _open_steer(self, uri: str) -> None:
-        self._detail._chat.set_task(uri)
+        self._chat.set_task(uri)
 
     # ── 选中 / 双击 ──
     @guarded("tree.select")
-    def _on_select(self, _selected=None, _deselected=None):
-        indexes = self._tree.selectionModel().selectedIndexes()
-        if not indexes:
-            return
+    def _on_select(self, index=None, _deselected=None):
+        # index 来自 clicked(QModelIndex) 或 currentChanged(QModelIndex, QModelIndex)
+        if index is None or not index.isValid():
+            indexes = self._tree.selectionModel().selectedIndexes()
+            if not indexes:
+                return
+            index = indexes[0]
 
-        index = indexes[0]
         kind = index.data(ROLE_KIND)
         task_uri = index.data(ROLE_TASK_URI)
         state = index.data(ROLE_STATE)
@@ -1198,6 +1235,10 @@ class MainWindow(QMainWindow):
             meta.append(f"""<span class="tag">📂 {_esc_html(node.subject_path)}</span>""")
         if node and node.parent_uri:
             meta.append(f"""<span class="tag">⬆ 父任务 {node.parent_uri}</span>""")
+        if node and node.created:
+            meta.append(f"""<span class="tag">🕐 创建 {node.created}</span>""")
+        if node and node.updated:
+            meta.append(f"""<span class="tag">🔄 更新 {node.updated}</span>""")
         if meta:
             parts.append(f"""<div class="meta">{' '.join(meta)}</div>""")
 
@@ -1257,6 +1298,7 @@ class MainWindow(QMainWindow):
 </script></body></html>"""
 
         self._detail.show_task(task_uri, node, html_doc)
+        self._chat.set_task(task_uri)
 
     @guarded("tree.double")
     def _on_double_click(self, index):
@@ -1384,7 +1426,11 @@ class MainWindow(QMainWindow):
             f"watchers:  {len(self._watcher.files()) + len(self._watcher.directories())} paths",
             f"timers:    refresh={self._refresh_timer.interval()}ms",
             f"qt:        {'running' if QApplication.instance() else 'stopped'}",
+            f"focus:     {type(self.focusWidget()).__name__ if self.focusWidget() else 'none'}",
             f"sandbox:   {'⚡ ' + self._sandbox_path if self._sandbox else 'no'}",
+            f"docks:     tree={'✓' if self._primary_sidebar.isVisible() else '✗'} "
+            f"chat={'✓' if hasattr(self, '_chat_dock') and self._chat_dock.isVisible() else '✗'} "
+            f"panel={'✓' if hasattr(self, '_panel_dock') and self._panel_dock.isVisible() else '✗'}",
         ])
 
     @staticmethod
@@ -1414,6 +1460,10 @@ class MainWindow(QMainWindow):
             f"  depth:   {node.depth}",
             f"  children: {len(node.children)}",
         ]
+        if node.created:
+            lines.append(f"  created: {node.created}")
+        if node.updated:
+            lines.append(f"  updated: {node.updated}")
         if node.detail:
             lines.append(f"  detail:  {node.detail}")
         if node.body:
@@ -1592,7 +1642,7 @@ class GatewayCLI:
         ):
             """<uri> 展示任务详情并设为当前选中任务。后续 edit input 无需再传 URI。"""
             def _do():
-                panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+                panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
                 if panel is None:
                     return "error: UI 尚未初始化"
                 panel.set_task(uri)
@@ -1662,6 +1712,8 @@ class GatewayCLI:
     }}
   }});
 </script></body></html>"""
+                # show_task 内部调用 _ensure_view，若窗口未 active 会自动延迟重试。
+                # 参见 DetailView._ensure_view / show_task 的 macOS 安全检测。
                 self._window._detail.show_task(uri, node, html_doc)
                 return f"OK: 已选中 {uri}"
 
@@ -1703,7 +1755,6 @@ class GatewayCLI:
                 detail._edit_btn.hide()
                 detail._save_btn.show()
                 detail._cancel_btn.show()
-                detail._sidebar.hide()
                 return f"编辑模式已激活: {uri}"
 
             return self._main.invoke(_set_fields)
@@ -1730,7 +1781,7 @@ class GatewayCLI:
         def state() -> str:
             """当前 AgentChatPanel 状态（task_uri, mode, sessions）。"""
             import yaml as _yaml
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
             panel_state = self._main.invoke(panel.ui_state)
@@ -1744,7 +1795,7 @@ class GatewayCLI:
             """当前 task 的 session 列表。"""
             import yaml as _yaml
             import io as _io
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
             panel_state = self._main.invoke(panel.ui_state)
@@ -1761,7 +1812,7 @@ class GatewayCLI:
             task: str | None = None,
         ):
             """读取当前对话文本（UI 层 _log）。"""
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
             text = self._main.invoke(panel.ui_chat_log)
@@ -1775,7 +1826,7 @@ class GatewayCLI:
         ):
             """等待 agent 完成，轮询 UI 层 _log 文本。"""
             import time as _time
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
             out = getattr(self, "_stream_out", None)
@@ -1806,7 +1857,7 @@ class GatewayCLI:
         @chat_app.command
         def status():
             """当前 chat panel 状态（task / agent / session / running）。"""
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI \u5c1a\u672a\u521d\u59cb\u5316"
             s = panel.ui_state()
@@ -1823,7 +1874,7 @@ class GatewayCLI:
             task: str | None = None,
         ):
             """向 task 发送消息（走 UI 层）。"""
-            panel = self._window._detail._chat if hasattr(self._window, "_detail") and self._window._detail else None
+            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
             if task:
@@ -1910,20 +1961,9 @@ class GatewayCLI:
         # ── subject ──
         subject_app = CycloptsApp(name="subject", help="Subject 树管理")
 
-        def _norm(path: str) -> str:
-            import os as _os
-            home = _os.path.expanduser("~")
-            expanded = _os.path.abspath(_os.path.expanduser(path))
-            if expanded.startswith(home + "/"):
-                return "~" + expanded[len(home):]
-            if expanded == home:
-                return "~"
-            return expanded
+        # _norm 从 diydev._state 导入（统一一处，避免模块级 HOME 缓存问题）
 
-        def _subject_is_git(path: str) -> bool:
-            import os as _os
-            full = _os.path.expanduser(path)
-            return _os.path.isdir(_os.path.join(full, ".git")) or _os.path.isfile(_os.path.join(full, ".git"))
+        # _norm 和 _subject_is_git 从 diydev._state 导入（统一一处）
 
         @subject_app.command(name="add")
         def subject_add(
@@ -1934,25 +1974,9 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """注册 subject"""
-            from diydev._state import load_state, save_state
-            path_n = _norm(path)
-            data = load_state()
-            subjects = data.setdefault("subjects", {})
-            if path_n in subjects:
-                return f"错误: subject {path_n} 已存在"
-            entry: dict = {}
-            if desc:
-                entry["description"] = desc
-            subjects[path_n] = entry
-            save_state(data)
-            import json as _json, io as _io
-            result = {"status": "success", "data": {"path": path_n, **entry}}
-            if json_output:
-                return _json.dumps(result, indent=2, ensure_ascii=False)
-            import yaml as _yaml
-            _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            return _buf.getvalue()
+            from diydev.core.subject import add_subject
+            from diydev.core.middleware import gateway_call
+            return gateway_call(add_subject, path, desc=desc)
 
         @subject_app.command(name="list")
         def subject_list(
@@ -1960,7 +1984,7 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """扁平列表"""
-            from diydev._state import load_state
+            from diydev._state import load_state, _subject_is_git
             import yaml as _yaml, json as _json, io as _io
             data = load_state()
             subjects = data.get("subjects", {})
@@ -1979,24 +2003,9 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """删除 subject"""
-            from diydev._state import load_state, save_state
-            import json as _json, io as _io
-            path_n = _norm(path)
-            data = load_state()
-            subjects = data.get("subjects", {})
-            if path_n not in subjects:
-                return f"错误: subject {path_n} 不存在"
-            to_delete = [p for p in subjects if p == path_n or p.startswith(path_n + "/")]
-            for p in to_delete:
-                del subjects[p]
-            save_state(data)
-            result = {"status": "success", "data": {"path": path_n, "removed": len(to_delete)}}
-            if json_output:
-                return _json.dumps(result, indent=2, ensure_ascii=False)
-            import yaml as _yaml
-            _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            return _buf.getvalue()
+            from diydev.core.subject import remove_subject
+            from diydev.core.middleware import gateway_call
+            return gateway_call(remove_subject, path)
 
         @subject_app.command(name="show")
         def subject_show(
@@ -2006,20 +2015,9 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """查看单个 subject（含实时 is_git 检测）"""
-            from diydev._state import load_state
-            import yaml as _yaml, json as _json, io as _io
-            path_n = _norm(path)
-            data = load_state()
-            subjects = data.get("subjects", {})
-            if path_n not in subjects:
-                return f"subject {path_n} 不存在"
-            entry = dict(subjects[path_n])
-            entry["is_git"] = _subject_is_git(path_n)
-            if json_output:
-                return _json.dumps(entry, indent=2, ensure_ascii=False)
-            _buf = _io.StringIO()
-            _yaml.dump(entry, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            return _buf.getvalue()
+            from diydev.core.subject import show_subject
+            from diydev.core.middleware import gateway_call
+            return gateway_call(show_subject, path)
 
         @subject_app.command(name="tree")
         def subject_tree(
@@ -2027,7 +2025,7 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """树状展示 subject（实时 is_git 检测）"""
-            from diydev._state import load_state
+            from diydev._state import load_state, _subject_is_git
             from diydev._dai_cli import _build_subject_tree
             import yaml as _yaml, json as _json, io as _io
             data = load_state()
@@ -2049,7 +2047,7 @@ class GatewayCLI:
         ):
             """扫描文件系统，发现 git 仓库作为 subject"""
             import os as _os
-            from diydev._state import load_state, save_state
+            from diydev._state import load_state, save_state, _norm
             import yaml as _yaml, json as _json, io as _io
             root_path = _os.path.abspath(_os.path.expanduser(root))
             if not _os.path.isdir(root_path):
@@ -2175,35 +2173,11 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """创建任务"""
-            from diydev._state import load_state, get_task, create_task
-            import yaml as _yaml, json as _json, sys as _sys
-            subject_n = _norm(subject)
-            data = load_state()
-            if subject_n not in data.get("subjects", {}):
-                return f"错误: subject {subject_n} 未注册"
-            if parent is not None and get_task(parent) is None:
-                return f"错误: parent {parent} 不存在"
-            body = ""
-            if body_file:
-                try:
-                    from pathlib import Path
-                    body = Path(body_file).read_text(encoding="utf-8")
-                except OSError as exc:
-                    return f"错误: 无法读取 body 文件: {exc}"
-            try:
-                uri = create_task(title=title, subject=subject_n, parent=parent, detail=detail,
-                                  source_type=source_type, source_uri=source_uri, body=body)
-            except ValueError as exc:
-                return f"错误: {exc}"
-            task = get_task(uri) or {}
-            result = {"status": "success", "data": task}
-            if json_output:
-                return _json.dumps(result, indent=2, ensure_ascii=False)
-            import io as _io
-            import yaml as _yaml
-            _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
-            return _buf.getvalue()
+            from diydev.core.task import create_task
+            from diydev.core.middleware import gateway_call
+            return gateway_call(create_task, title, subject, parent=parent,
+                                detail=detail, body_file=body_file,
+                                source_type=source_type, source_uri=source_uri)
 
         @task_app.command(name="edit")
         def task_edit(
@@ -2219,7 +2193,7 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """编辑任务"""
-            from diydev._state import get_task, update_task_field
+            from diydev._state import get_task, update_task_field, _norm
             import yaml as _yaml, json as _json, sys as _sys
             if get_task(uri) is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2286,7 +2260,7 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """链接外部任务（GitHub issue / PR 等）。不修改远端，仅建立本地引用。"""
-            from diydev._state import load_state, get_task, create_task
+            from diydev._state import load_state, get_task, create_task, star_task, _norm
             import yaml as _yaml, json as _json, io as _io
             if not source_uri:
                 return "错误: --source-uri 必填"
@@ -2305,6 +2279,7 @@ class GatewayCLI:
                     title=title, subject=subject_n, parent=parent, detail=detail,
                     source_type=source_type, source_uri=source_uri,
                 )
+                star_task(uri)
             except ValueError as exc:
                 return f"错误: {exc}"
             task = get_task(uri) or {}
@@ -2585,7 +2560,7 @@ class GatewayCLI:
         @ui_app.command(name="shutdown")
         def ui_shutdown():
             """关闭管控台。app 退出后下次 dai 命令会自动启动。"""
-            QApplication.instance().quit()
+            self._main.invoke(QApplication.instance().quit)
             return "OK app 正在退出"
 
         # ── 注册 diy 组 ──
@@ -2646,7 +2621,7 @@ def _subjects_from_state() -> dict:
 # ═══════════════════════════════════════════════════════
 
 class _CreateTaskDialog(QDialog):
-    """创建任务弹窗。"""
+    """创建任务弹窗 — 用 FormMixin 模式处理错误。"""
 
     def __init__(self, parent=None, parent_uri: str | None = None,
                  initial_subject: str | None = None):
@@ -2665,6 +2640,10 @@ class _CreateTaskDialog(QDialog):
         self._title = QLineEdit()
         self._title.setPlaceholderText("任务标题...")
         layout.addWidget(self._title)
+        self._title_error = QLabel()
+        self._title_error.setStyleSheet("color: #f38ba8; font-size: 11px;")
+        self._title_error.hide()
+        layout.addWidget(self._title_error)
 
         # Subject 选择
         layout.addWidget(QLabel("Subject"))
@@ -2676,6 +2655,10 @@ class _CreateTaskDialog(QDialog):
         if initial_subject and initial_subject in subjects:
             self._subject.setCurrentText(initial_subject)
         layout.addWidget(self._subject)
+        self._subject_error = QLabel()
+        self._subject_error.setStyleSheet("color: #f38ba8; font-size: 11px;")
+        self._subject_error.hide()
+        layout.addWidget(self._subject_error)
 
         # 父任务（只读显示）
         if parent_uri:
@@ -2745,29 +2728,35 @@ class _CreateTaskDialog(QDialog):
             }
         """)
 
-    def _on_create(self) -> None:
-        title = self._title.text().strip()
-        if not title:
-            self._title.setFocus()
-            return
-        subject = self._subject.currentData() or ""
-        detail = self._detail.toPlainText().strip() or None
+    def _show_field_error(self, field: str, msg: str) -> None:
+        """显示字段级错误。"""
+        label = getattr(self, f"_{field}_error", None)
+        if label:
+            label.setText(f"⚠ {msg}")
+            label.show()
 
-        from diydev._state import create_task
+    def _clear_errors(self) -> None:
+        for name in ("title", "subject"):
+            label = getattr(self, f"_{name}_error", None)
+            if label:
+                label.hide()
+
+    def _on_create(self) -> None:
+        from diydev.core.task import create_task
+        from diydev.core.validator import ValidationError
+        self._clear_errors()
         try:
             uri = create_task(
-                title=title,
-                subject=subject,
+                title=self._title.text().strip(),
+                subject=self._subject.currentData() or "",
                 parent=self._parent_uri,
-                detail=detail,
+                detail=self._detail.toPlainText().strip() or None,
             )
-        except ValueError as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "创建失败", str(e))
-            return
-
-        self._result_uri = uri
-        self.accept()
+            self._result_uri = uri
+            self.accept()
+        except ValidationError as e:
+            for err in e.errors:
+                self._show_field_error(err.field, err.msg)
 
 
 class Gateway(QObject):
@@ -2976,6 +2965,11 @@ def main():
 
     # ── Qt 应用必须在 QtAsyncio event loop 之前创建 ──
     sandbox, sandbox_path = _detect_sandbox()
+
+    # QWebEngine Chromium flags 已在模块级（import QtWebEngineWidgets 之前）设置
+    # 用户可通过环境变量覆盖：
+    #   QTWEBENGINE_CHROMIUM_FLAGS="--single-process" uv run python -m diydev.app.main
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(_app_stylesheet(sandbox))
@@ -2992,24 +2986,27 @@ def main():
     asyncio.set_event_loop(loop)
 
     # ── 全局异步异常安全网 ──
-    _orig_handler = loop.get_exception_handler()
-
-    def _safe_asyncio_handler(_loop, context):
-        exc = context.get("exception")
-        msg = context.get("message", "")
-        # Qt C++ 对象已销毁 — 非致命，日志即可
-        if isinstance(exc, RuntimeError) and "already deleted" in str(exc):
-            logger.warning("[qt-lifecycle] 访问已删除 QObject: %s", exc)
-            return
-        # 其他 async Task 异常 — 记录不崩溃
-        if exc:
-            logger.error("[async] 未处理的 Task 异常: %s\n%s", exc, "".join(
-                __import__("traceback").format_tb(exc.__traceback__)
-            ))
-            return
-        # 非 exception 上下文（如 cancelled）— 交给默认处理器
-        if _orig_handler:
-            _orig_handler(_loop, context)
+    def _safe_asyncio_handler(context):
+        """QtAsyncio call_exception_handler 只传 context (非标准 asyncio 的 (loop, context))。"""
+        try:
+            exc = context.get("exception")
+            msg = context.get("message", "")
+            # Qt C++ 对象已销毁 — 非致命，日志即可
+            if isinstance(exc, RuntimeError) and "already deleted" in str(exc):
+                logger.warning("[qt-lifecycle] 访问已删除 QObject: %s", exc)
+                return
+            # 其他 async Task 异常 — 记录不崩溃
+            if exc:
+                logger.error("[async] 未处理的 Task 异常: %s\n%s", exc, "".join(
+                    __import__("traceback").format_tb(exc.__traceback__)
+                ))
+                return
+            # 非 exception 上下文（如 cancelled）— 交给默认处理器
+            _orig = loop.get_exception_handler()
+            if _orig and _orig is not _safe_asyncio_handler:
+                _orig(loop, context)
+        except Exception as handler_err:
+            logger.error("[async] 异常安全网自身崩溃: %s", handler_err, exc_info=True)
 
     loop.set_exception_handler(_safe_asyncio_handler)
 
@@ -3024,6 +3021,10 @@ def main():
         if isinstance(val, RuntimeError) and "Internal C++ object" in str(val):
             logger.debug("[qt-lifecycle] sys.excepthook (无害): %s", val)
             return
+        # 统一日志：所有未捕获异常同时走 logging 和 stderr
+        logger.error("[qt-lifecycle] 未捕获异常: %s: %s\n%s",
+                     typ.__name__, val,
+                     "".join(__import__("traceback").format_tb(tb)).rstrip())
         _orig_excepthook(typ, val, tb)
 
     sys.excepthook = _safe_excepthook
@@ -3070,13 +3071,15 @@ def main():
     try:
         window = MainWindow()
     except ConnectionError as e:
-        logger.error(str(e))
+        logger.error("[exit] 单实例检测失败 — %s", e)
         return
 
     window.show()
+    logger.debug("[main] window.show() 完成")
 
     # Qt event loop = asyncio event loop（QAsyncioEventLoop.run_forever 内部调用 app.exec()）
     loop.run_forever()
+    logger.debug("[main] event loop 退出")
 
     # ── 退出时清理 ──
     if _agentd_proc and _agentd_proc.poll() is None:
@@ -3093,6 +3096,10 @@ def main():
     # 强制退出，绕过 Python 的 wait_for_thread_shutdown
     # QtWebEngine 线程不配合退出，Python 会在 finalization 时卡死
     # 导致 app.lock 的 flock 永不释放，新实例无法启动
+    logger.info("[exit] event loop 结束，os._exit(0) 强制退出")
+    # os._exit 不 flush logging handler，显式 flush
+    for h in logger.handlers:
+        h.flush()
     os._exit(0)
 
 

@@ -13,9 +13,13 @@
 
 from __future__ import annotations
 
+import glob
+import json
 import os
 import socket as _sock
 import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from diydev._state import diy_home
 
@@ -79,6 +83,12 @@ def run_check(sock_dev: int | None = None, sock_ino: int | None = None) -> list[
 
     # L4: 运行时环境特性检查
     issues += _check_flock_integrity()
+
+    # L5: QWebEngine GPU 进程检测
+    issues += _check_webengine_gpu()
+
+    # L6: 最近 crash 检测
+    issues += _check_crash_reports()
 
     return issues
 
@@ -416,6 +426,16 @@ def format_report(issues: list[HealthIssue]) -> str:
     else:
         lines.append("  ✓ flock 线程互斥")
 
+    # L6: 最近 crash（仅警告级别）
+    l6 = [i for i in issues if i.code.startswith("crash_")]
+    if l6:
+        for issue in l6:
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            lines.append(f"  {emoji} {issue.message}")
+            if issue.detail:
+                for dl in issue.detail.strip().split("\n"):
+                    lines.append(f"    {dl}")
+
     # 摘要
     critical = [i for i in issues if i.severity == "critical"]
     warnings = [i for i in issues if i.severity == "warning"]
@@ -433,3 +453,91 @@ def format_report(issues: list[HealthIssue]) -> str:
         lines.append("所有检查通过 ✓")
 
     return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════
+# L5 — QWebEngine GPU 进程检测
+# ═══════════════════════════════════════════════════════
+
+
+def _check_webengine_gpu() -> list[HealthIssue]:
+    """检查 QWebEngine 进程配置是否可能导致 SIGSEGV。"""
+    results: list[HealthIssue] = []
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    # --single-process 在 PySide6 6.8 + macOS 上触发 V8 proxy resolver SIGSEGV
+    # 改用 --disable-gpu 阻止 GPU 子进程，避免 MachPort 冲突，同时保持 multi-process 模式
+    has_gpu = all(x not in flags for x in ("--single-process", "--disable-gpu", "--enable-gpu"))
+    if has_gpu and sys.platform == "darwin":
+        results.append(HealthIssue(
+            severity="warning",
+            code="webengine_gpu",
+            message="QWebEngine 未配置跨进程保护（建议设置 --disable-gpu）",
+            detail=(
+                "QTWEBENGINE_CHROMIUM_FLAGS 未设置 --disable-gpu 或 --single-process。"
+                "app 启动时会自动添加 --disable-gpu，但若通过环境变量覆盖了则不会。"
+                "确认：echo $QTWEBENGINE_CHROMIUM_FLAGS"
+            ),
+        ))
+    return results
+
+
+# ═══════════════════════════════════════════════════════
+# L6 — 最近 crash 检测
+# ═══════════════════════════════════════════════════════
+
+
+def _check_crash_reports() -> list[HealthIssue]:
+    """检查 macOS Crash Reporter 中是否有管控台的 SIGSEGV 记录。
+
+    扫描 ~/Library/Logs/DiagnosticReports/python3.13-*.ips，
+    匹配已知的 Qt/Cocoa 焦点事件 use-after-free 模式。
+    """
+    results: list[HealthIssue] = []
+    if sys.platform != "darwin":
+        return results
+
+    crash_dir = os.path.expanduser("~/Library/Logs/DiagnosticReports")
+    if not os.path.isdir(crash_dir):
+        return results
+
+    # 只看最近 600 秒内生成的 crash 报告
+    now = time.time()
+    pattern = os.path.join(crash_dir, "python3.13-*.ips")
+    for fpath in sorted(glob.glob(pattern), reverse=True)[:20]:
+        try:
+            mtime = os.path.getmtime(fpath)
+            if now - mtime > 120:
+                break  # 按 mtime 倒排，超出时间范围的后面更旧
+
+            with open(fpath) as f:
+                meta = json.loads(f.readline())
+                rest = f.read()
+
+            d = json.loads(rest[rest.index("{"):]) if "{" in rest else {}
+            threads = d.get("threads", [])
+            ft = d.get("faultingThread", 0)
+            if ft >= len(threads):
+                continue
+
+            frames = threads[ft].get("frames", [])
+            top_symbols = [f.get("symbol", "") for f in frames[:5]]
+            top_str = " ".join(top_symbols)
+
+            if "QMetaObject::cast" in top_str and "notifyActiveWindowChange" in top_str:
+                crash_time = meta.get("timestamp", "?")
+                results.append(HealthIssue(
+                    severity="critical",
+                    code="crash_qt_focus",
+                    message=f"管控台 SIGSEGV — Qt/Cocoa 焦点事件 use-after-free（{crash_time}）",
+                    detail=(
+                        "PySide6 6.8 + macOS 12 的已知 Qt/Cocoa 桥 bug："
+                        "窗口获得焦点时 QWebEngine 内部的 QObject 已被释放，"
+                        "触发 QMetaObject::cast → SIGSEGV。\n"
+                        "可行方案：① 升级 PySide6（>=6.9） ② 改用 QTextBrowser 替代 QWebEngineView 渲染 Markdown"
+                    ),
+                ))
+                break  # 一个足够
+        except (OSError, json.JSONDecodeError, ValueError, IndexError):
+            continue
+
+    return results

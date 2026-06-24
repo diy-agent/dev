@@ -25,6 +25,8 @@ from cyclopts import App, Parameter
 
 from ._dai_scan import find_spaces, find_workspace_root
 from ._state import (
+    _norm,
+    _subject_is_git,
     create_task,
     delete_task,
     diy_home,
@@ -223,23 +225,9 @@ def show(
 
 subject_app = App(name="subject", help="Subject 树管理")
 
-_HOME = os.path.expanduser("~")
-
-
-def _norm(path: str) -> str:
-    """把路径统一为 ~/... 格式存储。"""
-    expanded = os.path.abspath(os.path.expanduser(path))
-    if expanded.startswith(_HOME + "/"):
-        return "~" + expanded[len(_HOME):]
-    if expanded == _HOME:
-        return "~"
-    return expanded
-
-
-def _subject_is_git(path: str) -> bool:
-    """实时检测 subject 目录是否为 git 仓库。"""
-    full = os.path.expanduser(path)
-    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
+# ════════════════════════════════════════════════════════════════
+# 辅助函数
+# ════════════════════════════════════════════════════════════════
 
 
 def _enrich(subjects: dict[str, dict]) -> dict[str, dict]:
@@ -259,25 +247,9 @@ def subject_add(
     ] = False,
 ):
     """注册 subject。自动检测是否为 git 仓库。"""
-    path_n = _norm(path)
-    data = load_state()
-    subjects = data.setdefault("subjects", {})
-
-    if path_n in subjects:
-        print(f"错误: subject {shlex.quote(path_n)} 已存在", file=sys.stderr)
-        sys.exit(1)
-
-    entry: dict[str, object] = {}
-    if desc:
-        entry["description"] = desc
-    subjects[path_n] = entry
-    save_state(data)
-
-    result = {"status": "success", "data": {"path": path_n, **entry}}
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from .core.subject import add_subject
+    from .core.middleware import cli_call
+    cli_call(add_subject, path, desc=desc, json_output=json_output)
 
 
 @subject_app.command(name="list")
@@ -320,18 +292,9 @@ def subject_show(
     ] = False,
 ):
     """查看单个 subject（含实时 is_git 检测）。"""
-    path_n = _norm(path)
-    data = load_state()
-    subjects = data.get("subjects", {})
-    if path_n not in subjects:
-        print(f"subject {shlex.quote(path_n)} 不存在", file=sys.stderr)
-        sys.exit(1)
-    entry = dict(subjects[path_n])
-    entry["is_git"] = _subject_is_git(path_n)
-    if json_output:
-        print(json.dumps(entry, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(entry, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from .core.subject import show_subject
+    from .core.middleware import cli_call
+    cli_call(show_subject, path, json_output=json_output)
 
 
 @subject_app.command(name="remove")
@@ -342,25 +305,9 @@ def subject_remove(
     ] = False,
 ):
     """删除 subject。同时删除子 subject。"""
-    path_n = _norm(path)
-    data = load_state()
-    subjects = data.get("subjects", {})
-
-    if path_n not in subjects:
-        print(f"错误: subject {shlex.quote(path_n)} 不存在", file=sys.stderr)
-        sys.exit(1)
-
-    # 删除自身及子节点
-    to_delete = [p for p in subjects if p == path_n or p.startswith(path_n + "/")]
-    for p in to_delete:
-        del subjects[p]
-    save_state(data)
-
-    result = {"status": "success", "data": {"path": path_n, "removed": len(to_delete)}}
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from .core.subject import remove_subject
+    from .core.middleware import cli_call
+    cli_call(remove_subject, path, json_output=json_output)
 
 
 @subject_app.command(name="scan")
@@ -532,46 +479,12 @@ def task_create(
     ] = False,
 ):
     """创建任务。subject 必须已注册。"""
-    subject_n = _norm(subject)
-    data = load_state()
-    subjects = data.get("subjects", {})
-
-    if subject_n not in subjects:
-        print(f"错误: subject {shlex.quote(subject_n)} 未注册", file=sys.stderr)
-        sys.exit(1)
-
-    if parent is not None and get_task(parent) is None:
-        print(f"错误: parent {parent} 不存在", file=sys.stderr)
-        sys.exit(1)
-
-    body = ""
-    if body_file:
-        try:
-            body = Path(body_file).read_text(encoding="utf-8")
-        except OSError as exc:
-            print(f"错误: 无法读取 body 文件 {shlex.quote(body_file)}: {exc}", file=sys.stderr)
-            sys.exit(1)
-
-    try:
-        uri = create_task(
-            title=title, subject=subject_n, parent=parent, detail=detail,
-            source_type=source_type, source_uri=source_uri, body=body,
-        )
-    except ValueError as exc:
-        print(f"错误: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    # 自动 star 新任务
-    star_task(uri)
-
-    task = get_task(uri) or {}
-    task["starred"] = True
-    result = {"status": "success", "data": task}
+    from .core.task import create_task
+    from .core.middleware import cli_call
+    cli_call(create_task, title, subject, parent=parent, detail=detail,
+             body_file=body_file, source_type=source_type, source_uri=source_uri,
+             json_output=json_output)
     _notify_app_reload()
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
 @task_app.command(name="link")
@@ -618,6 +531,7 @@ def task_link(
         print(f"错误: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    star_task(uri)
     task = get_task(uri) or {}
     result = {"status": "success", "data": task}
     _notify_app_reload()
@@ -1267,32 +1181,43 @@ def _local_shutdown():
         capture_output=True, text=True, timeout=5,
     )
     if kill.returncode == 0:
+        # 清理残留的 QWebEngine 子进程
+        subprocess.run(["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3)
+        subprocess.run(["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3)
         info("管控台已强制关闭")
     else:
         info("管控台未运行")
 
 
 def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
-    """等待 app.lock 被释放（旧进程退出后内核自动释放 flock）。"""
-    import fcntl
-    import time as _time
+    """等待 app.lock 被释放（旧进程退出后内核自动释放 flock）。
 
-    deadline = _time.time() + timeout
-    while _time.time() < deadline:
-        try:
-            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # 拿到锁了就说明旧进程已退出
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-            return True
-        except BlockingIOError:
-            # 旧进程还在，继续等
-            _time.sleep(0.3)
-            continue
-        except OSError:
-            return True  # 文件系统问题，不阻塞
-    return False
+    注意：flock 不提供事件通知机制（非 selectable），
+    只能轮询。timeout 是最后兜底，不是预期耗时。
+    已弃用：改用 Backoff.until()，此处保留仅作兼容。
+    """
+    from diydev._backoff import Backoff
+    import fcntl
+
+    success, _ = Backoff.until(
+        lambda: _try_lock(lock_path),
+        timeout=timeout,
+        exceptions=(BlockingIOError,),
+    )
+    return success
+
+
+def _try_lock(lock_path: str) -> bool:
+    """尝试获取文件锁，成功返回 True。"""
+    import fcntl
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        return True
+    except OSError:
+        return True  # 文件系统问题，不阻塞
 
 
 def _app_restart():
@@ -1340,7 +1265,12 @@ def _app_restart():
                 error("旧管控台退出超时，且未找到可杀的进程")
                 sys.exit(1)
 
-    # 3) 强制清理残留 socket（旧 app 可能未及时清理或已死）
+    # 3) 清理残留 socket 文件
+    #   注意：已改用 --disable-gpu，不再有 GPU 子进程的 MachPort 污染问题，
+    #   无需 sleep 等待。kill QtWebEngineProcess 在旧版 --single-process
+    #   时是必要的，现在保留仅作防御。
+    subprocess.run(["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3)
+    subprocess.run(["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3)
     try:
         os.unlink(socket_path)
     except FileNotFoundError:
@@ -1354,15 +1284,22 @@ def _app_restart():
         env={**os.environ},
     )
 
-    # 5) 等 socket 就绪（文件存在 + 可连接）
-    deadline = _time.time() + 15
-    while _time.time() < deadline:
-        if os.path.exists(socket_path):
-            _time.sleep(0.3)
-            if _send_to_socket("diy", timeout=1.0) is not None:
-                info("管控台已重启")
-                return
-        _time.sleep(0.3)
+    # 5) 等 socket 就绪（指数退避连接，避免固定间隔轮询）
+    #   直接用 connect 探测，不用 file-exists 检查（TOCTOU 风险）。
+    from diydev._backoff import Backoff
+    import socket as _socket
+
+    def _try_connect() -> bool:
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect(socket_path)
+        s.close()
+        return True
+
+    success, _ = Backoff.until(_try_connect, timeout=15, exceptions=(OSError, FileNotFoundError, ConnectionRefusedError))
+    if success:
+        info("管控台已重启")
+        return
 
     # 6) 超时
     error("管控台启动超时，请检查日志")

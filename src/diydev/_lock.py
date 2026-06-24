@@ -120,8 +120,10 @@ class locked_file:
         """尝试在超时内获取锁。成功返回 locked_file 实例，超时返回 None。
 
         用于需要非阻塞+重试的场景（如 _forward.py 的 app 启动锁）。
-        内部用 LOCK_NB + 50ms 轮询。
+        内部用 LOCK_NB + 指数退避轮询（flock 无事件可监听）。
         """
+        from diydev._backoff import Backoff
+
         self = cls(path)
         self._thread_lock.acquire()
         try:
@@ -130,13 +132,12 @@ class locked_file:
             self._thread_lock.release()
             raise
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        for _ in Backoff(timeout=timeout, initial=0.05, max_delay=0.3):
             try:
                 fcntl.flock(self._fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return self  # 获锁成功，调用方自己 release
             except BlockingIOError:
-                time.sleep(0.05)
+                continue
 
         # 超时
         self._fd.close()

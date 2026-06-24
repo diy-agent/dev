@@ -63,17 +63,19 @@ def forward_to_app(args: list[str]) -> None:
         sys.stdout.write(resp)
         return
 
+    from diydev._backoff import Backoff
+
     # Step 2: acquire lock to serialize the launch path
     lf = locked_file.try_lock(_lock_path(), timeout=3.0)
     if lf is None:
         info("等待管控台启动...")
-        deadline = _time.time() + 10
-        while _time.time() < deadline:
-            _time.sleep(0.3)
-            resp = _send_to_socket(socket_path, payload)
-            if resp is not None:
-                sys.stdout.write(resp)
-                return
+        success, resp = Backoff.until(
+            lambda: _send_to_socket(socket_path, payload),
+            timeout=10,
+        )
+        if success:
+            sys.stdout.write(resp)
+            return
         error("app 启动超时（锁等待失败）")
         sys.exit(1)
 
@@ -96,13 +98,13 @@ def forward_to_app(args: list[str]) -> None:
     lf.__exit__(None, None, None)
 
     # Step 6: wait for socket 就绪（不持有锁，避免阻塞 app 的 Gateway 初始化）
-    deadline = _time.time() + 10
-    while _time.time() < deadline:
-        _time.sleep(0.3)
-        resp = _send_to_socket(socket_path, payload)
-        if resp is not None:
-            sys.stdout.write(resp)
-            return
+    success, resp = Backoff.until(
+        lambda: _send_to_socket(socket_path, payload),
+        timeout=10,
+    )
+    if success:
+        sys.stdout.write(resp)
+        return
 
     error("app 启动超时，请检查日志")
     sys.exit(1)
