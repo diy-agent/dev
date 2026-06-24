@@ -1202,7 +1202,6 @@ def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
     success, _ = Backoff.until(
         lambda: _try_lock(lock_path),
         timeout=timeout,
-        exceptions=(BlockingIOError,),
     )
     return success
 
@@ -1216,6 +1215,8 @@ def _try_lock(lock_path: str) -> bool:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
         return True
+    except BlockingIOError:
+        return False  # 锁仍在持有，Backoff 继续重试
     except OSError:
         return True  # 文件系统问题，不阻塞
 

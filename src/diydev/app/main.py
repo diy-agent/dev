@@ -2559,9 +2559,18 @@ class GatewayCLI:
 
         @ui_app.command(name="shutdown")
         def ui_shutdown():
-            """关闭管控台。app 退出后下次 dai 命令会自动启动。"""
-            self._main.invoke(QApplication.instance().quit)
-            return "OK app 正在退出"
+            """关闭管控台。app 退出后下次 dai 命令会自动启动。
+
+            不尝试优雅退出——QtWebEngine 线程不配合清理，Python finalization
+            会卡死导致 flock 永不到达、新实例无法启动。
+            直接 os._exit(0)，内核同步释放文件锁和 socket。
+            agent 子进程的 stdin/stdout pipe 会因父进程退出而断裂，
+            下次 I/O 时自动退出，无需逐个清理。
+            """
+            import logging as _lg
+            for h in _lg.getLogger("diy.app").handlers:
+                h.flush()
+            os._exit(0)
 
         # ── 注册 diy 组 ──
         self._app.command(diy)

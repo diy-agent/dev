@@ -127,23 +127,40 @@ class PiRpcAgent(AgentBackend):
             logger.info("[%s] pi 已停止", self._task_uri)
 
     async def _read_loop(self) -> None:
-        """持续读取 stdout JSONL 事件（使用 run_in_executor 兼容 QAsyncio）。"""
+        """持续读取 stdout JSONL 事件（使用 run_in_executor 兼容 QAsyncio）。
+
+        加入超时让 CancelledError 能及时传播——纯 run_in_executor 在线程池里
+        阻塞 readline，事件循环退出时无法中断该线程，导致 shutdown 卡死。
+        """
         if not self._proc or not self._proc.stdout:
             return
         loop = asyncio.get_running_loop()
         buf = ""
-        while True:
-            line = await loop.run_in_executor(None, self._proc.stdout.readline)
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace").rstrip("\n\r")
-            if not text:
-                continue
-            try:
-                ev = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            await self._on_event(ev)
+        try:
+            while True:
+                try:
+                    line = await asyncio.wait_for(
+                        loop.run_in_executor(None, self._proc.stdout.readline),
+                        timeout=1.0,
+                    )
+                except asyncio.TimeoutError:
+                    # 超时只是为了给 CancelledError 传播机会，不处理
+                    continue
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip("\n\r")
+                if not text:
+                    continue
+                try:
+                    ev = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                await self._on_event(ev)
+        except asyncio.CancelledError:
+            # 关闭子进程 stdout 让线程池里的 readline 立即返回
+            if self._proc and self._proc.stdout:
+                self._proc.stdout.close()
+            raise
 
     async def _on_event(self, ev: dict[str, Any]) -> None:
         t = ev.get("type")
