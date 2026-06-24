@@ -144,7 +144,12 @@ def _star_root() -> Path:
 
 
 def star_task(uri: str) -> None:
-    """star 任务：创建 symlink 到 ~/.diy/star/<uri>。"""
+    """star 任务：创建 symlink 到 ~/.diy/star/<uri>。
+
+    ⚠️ 创建任务有 4 个入口，全部必须调用此函数：
+    CLI task_create / CLI task_link / GatewayCLI socket handler / GUI CreateTaskDialog。
+    新增 task 副作用时 grep create_task 定位全部调用点。
+    """
     src = _uri_to_path(uri).parent  # ~/.diy/task/<uri>
     if not src.exists():
         raise FileNotFoundError(f"任务 {uri} 不存在")

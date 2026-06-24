@@ -88,6 +88,7 @@ ui_app = App(
     name="ui",
     help="管控台 UI 接口 — 走 socket 透传到桌面 app",
 )
+# ⚠️ 双注册：这里注册的 UI 命令必须同步在 app/main.py GatewayCLI 注册。
 
 
 @ui_app.command(name="status")
@@ -246,7 +247,11 @@ def subject_add(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """注册 subject。自动检测是否为 git 仓库。"""
+    """注册 subject。自动检测是否为 git 仓库。
+
+    范例: dai subject add ~/git/diy/_diy
+    注意: 路径必须是 git 仓库目录。
+    """
     from .core.subject import add_subject
     from .core.middleware import cli_call
     cli_call(add_subject, path, desc=desc, json_output=json_output)
@@ -258,7 +263,10 @@ def subject_list(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """扁平列表（实时 is_git 检测）。"""
+    """扁平列表（实时 is_git 检测）。
+
+    范例: dai subject list
+    """
     data = load_state()
     subjects = _enrich(data.get("subjects", {}))
     if json_output:
@@ -273,7 +281,10 @@ def subject_tree(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """树状展示（实时 is_git 检测）。"""
+    """树状展示（实时 is_git 检测）。
+
+    范例: dai subject tree
+    """
     data = load_state()
     subjects = _enrich(data.get("subjects", {}))
 
@@ -387,7 +398,11 @@ app.command(subject_app)
 
 
 # ════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════=
 # dai task — 任务管理
+#
+# ⚠️ 双注册：这里注册的命令必须同步在 app/main.py GatewayCLI 注册。
+# grep -rn '"diy task' src/ 确认两边一致。
 # ════════════════════════════════════════════════════════════════
 
 task_app = App(name="task", help="任务管理")
@@ -478,7 +493,21 @@ def task_create(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """创建任务。subject 必须已注册。"""
+    """创建本地任务，自动 star。
+
+    输出格式:
+      status: success
+      data:
+        title: 标题
+        state: pending
+        uri: local/task/42
+
+    范例:
+      $ dai task create --title "重构 CLI" --subject ~/git/diy/_diy
+      $ dai task create --title "子任务" --subject ~/git/diy/_diy --parent local/task/1
+
+    注意: subject 必须已通过 dai subject add 注册。
+    """
     from .core.task import create_task
     from .core.middleware import cli_call
     cli_call(create_task, title, subject, parent=parent, detail=detail,
@@ -498,7 +527,14 @@ def task_link(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """链接外部任务（GitHub issue / PR 等）。不修改远端，仅建立本地引用。"""
+    """链接外部任务（GitHub issue / PR）。只建立本地引用，不修改远端。
+    创建后需 dai task sync <uri> 拉取 title/body/state。
+
+    范例:
+      $ dai task link --title "bug 修复" --source-uri github.com/org/repo/issues/42 --subject ~/git/diy/_diy
+
+    注意: 首次 link 后 body 为空，必须 sync 拉取。
+    """
     if not source_uri:
         print("错误: --source-uri 必填", file=sys.stderr)
         sys.exit(1)
@@ -628,12 +664,13 @@ def task_sync(
 ):
     """同步外部任务内容到本地。
 
-    从远端拉取最新 title / state / body 并更新本地 AGENTS.md。
-    目前支持：GitHub issue（依赖 gh CLI）。
+    从远端拉取最新 title/state/body 并更新本地 AGENTS.md。
 
-    用法:
-      dai task sync <uri>          同步单个任务
-      dai task sync --all          同步所有聚焦任务及其子树
+    范例:
+      $ dai task sync github.com/org/repo/issues/42
+      $ dai task sync --all
+
+    注意: 目前只支持 GitHub issue（需 gh CLI）。parent 不覆盖。
     """
     if not uri and not all:
         print("错误: 请指定任务 URI 或使用 --all 同步全部", file=sys.stderr)
@@ -713,7 +750,12 @@ def task_list(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """列出任务。默认只显示 starred，--all 显示全部。"""
+    """列出任务。默认只显示 starred（焦点视图），--all 显示全部。
+
+    范例:
+      $ dai task list
+      $ dai task list --all
+    """
     if all:
         tasks = list_tasks()
     else:
@@ -739,7 +781,11 @@ def task_show(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """查看单个任务。"""
+    """查看单个任务详情。
+
+    范例:
+      $ dai task show local/task/1
+    """
     task = get_task(uri)
     if task is None:
         print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
@@ -767,7 +813,13 @@ def task_edit(
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
 ):
-    """编辑任务。返回编辑后的完整字段。"""
+    """编辑任务元数据。返回编辑后的完整字段。
+
+    范例:
+      $ dai task edit local/task/1 --title "新标题" --state active
+
+    注意: 不传的参数保持不变。
+    """
     if get_task(uri) is None:
         print(f"错误: 任务 {uri} 不存在", file=sys.stderr)
         sys.exit(1)
@@ -1317,6 +1369,18 @@ def _dai_ui() -> None:
 
 
 def main():
+    """CLI 路由入口。
+
+    路由表：
+      restart/shutdown → 本地 cyclopts
+      agent            → 本地 AgentManager
+      ui (无参数)       → 启动桌面 app
+      ui <subcmd>      → socket → diy ui ...
+      其他所有命令      → socket → diy ... (协议前缀 diy = v1)
+
+    ⚠️ 加命令必须同步在 app/main.py GatewayCLI 注册。
+    移动命令时搜 grep -rn '"diy <旧>"' src/ 更新所有硬编码字符串。
+    """
     from ._forward import forward_to_app
 
     tokens = sys.argv[1:] if len(sys.argv) > 1 else []

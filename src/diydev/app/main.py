@@ -527,7 +527,10 @@ class DetailView(QWidget):
     # ── 编辑模式 ──
 
     def _toggle_edit(self) -> None:
-        """切换到编辑模式。"""
+        """切换到编辑模式。
+
+        ⚠️ setCurrentIndex(1) 是必须的——只填字段不切页 = 用户看到还是只读视图。
+        """
         if not self._current_node:
             return
         self._edit_title.setText(self._current_node.title or "")
@@ -1580,6 +1583,9 @@ class GatewayCLI:
 
     协议前缀:
       diy <cmd>   — v1 协议
+
+    ⚠️ 双注册：这里注册的命令必须同步在 _dai_cli.py 注册。
+    加命令→两处都加。移动命令→搜 grep -rn '"diy <旧>"' src/。
     """
 
     def __init__(self, window: "MainWindow"):
@@ -1604,12 +1610,19 @@ class GatewayCLI:
 
         @ui_app.command(name="tree")
         def ui_tree():
-            """完整任务树（和 UI 一致）"""
+            """完整任务树（和 GUI 一致）。
+
+            范例: dai ui tree
+            """
             return self._main.invoke(self._window.format_tree)
 
         @ui_app.command(name="status")
         def ui_status():
-            """健康检查（pid/窗口/树/定时器）"""
+            """健康检查（pid/dock 可见性/焦点/窗口/定时器）。
+
+            范例: dai ui status
+            输出: pid, uptime, window, docks: tree=✓ chat=✓ panel=✗, focus: QTreeView
+            """
             return self._main.invoke(self._window.format_status)
 
         @ui_app.command(name="agents")
@@ -1629,7 +1642,10 @@ class GatewayCLI:
             uri: str,
             /,
         ):
-            """<uri> 任务节点详情"""
+            """<uri> 任务节点详情。
+
+            范例: dai ui node local/task/1
+            """
             return self._main.invoke(lambda: self._window.format_node(uri))
 
         # ── task（查看/详情/编辑） ──
@@ -1640,7 +1656,13 @@ class GatewayCLI:
             uri: str,
             /,
         ):
-            """<uri> 展示任务详情并设为当前选中任务。后续 edit input 无需再传 URI。"""
+            """<uri> 展示任务详情并设为当前选中任务。
+
+            三合一: 详情展示 + 切聊天面板 + 设 _current_task_uri。
+            后续 edit input 无需再传 URI。
+
+            范例: dai ui task detail local/task/1
+            """
             def _do():
                 panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
                 if panel is None:
@@ -1779,7 +1801,10 @@ class GatewayCLI:
 
         @chat_app.command
         def state() -> str:
-            """当前 AgentChatPanel 状态（task_uri, mode, sessions）。"""
+            """当前面板状态（task_uri, mode, sessions）。
+
+            范例: dai ui chat state
+            """
             import yaml as _yaml
             panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
@@ -1811,7 +1836,11 @@ class GatewayCLI:
             *,
             task: str | None = None,
         ):
-            """读取当前对话文本（UI 层 _log）。"""
+            """读取当前对话文本。
+
+            范例: dai ui chat read
+            流程: send → wait → read
+            """
             panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
@@ -1824,7 +1853,10 @@ class GatewayCLI:
             task: str | None = None,
             timeout: int = 60,
         ):
-            """等待 agent 完成，轮询 UI 层 _log 文本。"""
+            """等待 agent 回复完成（轮询）。
+
+            范例: dai ui chat wait --timeout 120
+            """
             import time as _time
             panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
@@ -1873,7 +1905,11 @@ class GatewayCLI:
             *,
             task: str | None = None,
         ):
-            """向 task 发送消息（走 UI 层）。"""
+            """向当前 task 发送消息。
+
+            范例: dai ui chat send "帮我分析这个项目"
+            流程: dai ui task detail <uri> → send → wait → read
+            """
             panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
             if panel is None:
                 return "error: UI 尚未初始化"
@@ -1973,7 +2009,12 @@ class GatewayCLI:
             desc: str | None = None,
             json_output: bool = False,
         ):
-            """注册 subject"""
+            """注册 subject。自动检测是否为 git 仓库。
+
+            范例: dai subject add ~/git/diy/_diy
+            范例: dai subject add ~/git/diy/_diy --desc "dev 工具项目"
+            注意: 路径必须是 git 仓库目录。
+            """
             from diydev.core.subject import add_subject
             from diydev.core.middleware import gateway_call
             return gateway_call(add_subject, path, desc=desc)
@@ -1983,7 +2024,10 @@ class GatewayCLI:
             *,
             json_output: bool = False,
         ):
-            """扁平列表"""
+            """列出所有已注册的 subject。
+
+            范例: dai subject list
+            """
             from diydev._state import load_state, _subject_is_git
             import yaml as _yaml, json as _json, io as _io
             data = load_state()
@@ -2024,7 +2068,10 @@ class GatewayCLI:
             *,
             json_output: bool = False,
         ):
-            """树状展示 subject（实时 is_git 检测）"""
+            """树状展示 subject（按路径层级嵌套）。
+
+            范例: dai subject tree
+            """
             from diydev._state import load_state, _subject_is_git
             from diydev._dai_cli import _build_subject_tree
             import yaml as _yaml, json as _json, io as _io
@@ -2141,7 +2188,10 @@ class GatewayCLI:
             *,
             json_output: bool = False,
         ):
-            """查看单个任务"""
+            """查看单个任务详情。
+
+            范例: dai task show local/task/1
+            """
             from diydev._state import get_task
             import yaml as _yaml, json as _json, sys as _sys
             task = get_task(uri)
@@ -2172,7 +2222,13 @@ class GatewayCLI:
             source_uri: str | None = None,
             json_output: bool = False,
         ):
-            """创建任务"""
+            """创建本地任务，自动 star。
+
+            输出格式: status: success / data: {title, state, uri, ...}
+            范例: dai task create "标题" ~/git/diy/_diy
+            范例: dai task create "子任务" ~/git/diy/_diy --parent local/task/1
+            注意: subject 必须已通过 dai subject add 注册。
+            """
             from diydev.core.task import create_task
             from diydev.core.middleware import gateway_call
             return gateway_call(create_task, title, subject, parent=parent,
@@ -2192,7 +2248,11 @@ class GatewayCLI:
             body_file: str | None = None,
             json_output: bool = False,
         ):
-            """编辑任务"""
+            """编辑任务元数据。返回编辑后的完整字段。
+
+            范例: dai task edit local/task/1 --title "新标题" --state active
+            注意: 不传的参数保持不变。
+            """
             from diydev._state import get_task, update_task_field, _norm
             import yaml as _yaml, json as _json, sys as _sys
             if get_task(uri) is None:

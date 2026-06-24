@@ -53,7 +53,14 @@ def _socket_path() -> str:
 
 
 def forward_to_app(args: list[str]) -> None:
-    """Send args to app.sock. Start app if needed. Print response or error."""
+    """Send args to app.sock. Start app if needed. Print response or error.
+
+    单实例保护：fcntl.flock(LOCK_EX | LOCK_NB) on app.lock。
+    - CLI 侧：锁内双检 socket → 确认无实例才启动
+    - App 侧 Gateway.start()：同步锁内检查
+    - 锁必须持到进程退出，stop() 不能释放（内核在进程退出时自动释放）
+    - macOS: fstat(fd).st_ino ≠ stat(path).st_ino，用 stat() 记、stat() 比
+    """
     socket_path = _socket_path()
     payload = shlex.join(args) + "\n"
 
