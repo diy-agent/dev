@@ -30,11 +30,13 @@ QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import logging.handlers
 import os
 import re
+import subprocess
 from collections import deque
 from pathlib import Path
 from diydev._state import diy_home
@@ -51,11 +53,76 @@ __all__ = ["setup_app_logger", "logger", "QtLogHandler", "get_logger"]
 # 模块级 logger — logging.getLogger() 在 setup_app_logger 调用前返回安全空 logger
 logger: logging.Logger = logging.getLogger("diy.app")
 
-# 所有 handler 共享的格式（含时间戳、logger 名，三路一致）
-_SHARED_FMT = logging.Formatter(
-    "%(asctime)s [%(levelname)-5s] [%(name)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
+# ── PID 树缓存 ──
+_ROOT_PID: int | None = None
+
+
+def _compute_root_pid() -> int:
+    """沿 PPID 链找到应用根进程 PID。
+
+    优先使用 DIY_ROOT_PID 环境变量（主进程在 spawn 子进程前设置），
+    否则沿 PPID 走到顶，将结果写入环境变量供后续子进程继承。
+    """
+    global _ROOT_PID
+    if _ROOT_PID is not None:
+        return _ROOT_PID
+
+    # 环境变量覆盖（主进程 spawn 子进程前设好的）
+    env_root = os.environ.get("DIY_ROOT_PID")
+    if env_root:
+        try:
+            _ROOT_PID = int(env_root)
+            return _ROOT_PID
+        except (ValueError, TypeError):
+            pass
+
+    # 沿 PPID 走到顶（macOS 用 ps 查询）
+    pid = os.getpid()
+    seen: set[int] = set()
+    while pid > 1 and pid not in seen:  # PID 1 = launchd，停
+        seen.add(pid)
+        try:
+            r = subprocess.run(
+                ["ps", "-o", "ppid=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=3,
+            )
+            ppid = r.stdout.strip()
+            if not ppid:
+                break
+            pid = int(ppid)
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            break
+    _ROOT_PID = pid if pid > 1 else os.getpid()
+
+    # 写入环境变量，后续子进程（如 agentd）直接继承
+    os.environ["DIY_ROOT_PID"] = str(_ROOT_PID)
+    return _ROOT_PID
+
+
+def _fmt_tz_ms(record: logging.LogRecord) -> str:
+    """RFC 3339 时间戳：ISO 本地时间 + 毫秒 + 时区偏移。"""
+    created = datetime.datetime.fromtimestamp(record.created)
+    return f"{created.strftime('%Y-%m-%dT%H:%M:%S')}.{int(record.msecs):03d}+08:00"
+
+
+# 所有 handler 共享的格式串
+_APP_FMT = "%(asctime)s [%(levelname)-5s] [pid=%(pid)d ppid=%(ppid)d rpid=%(rootpid)d] [%(name)s] %(message)s"
+
+
+class AppFormatter(logging.Formatter):
+    """终端/stderr/LogPanel 格式器 — ISO 时间 + PID 树 + 级别 + logger + 消息。"""
+
+    def formatTime(self, record, datefmt=None):
+        return _fmt_tz_ms(record)
+
+    def format(self, record):
+        record.pid = os.getpid()
+        record.ppid = os.getppid()
+        record.rootpid = _compute_root_pid()
+        return super().format(record)
+
+
+_SHARED_FMT = AppFormatter(_APP_FMT)
 
 # 从消息中提取 [category] 前缀
 _RE_CATEGORY = re.compile(r"^\[([\w-]+)\]")
@@ -65,12 +132,18 @@ class JsonlFormatter(logging.Formatter):
     """JSONL formatter — 每行一个 JSON 对象，适合 jq/grep 查询。
 
     字段:
-      t — 时间 (HH:MM:SS)
-      l — 级别 (DEBUG/INFO/WARNING/ERROR)
+      t — RFC 3339 时间戳
+      l — 级别
       n — logger 名称
+      pid — 进程 ID
+      ppid — 父进程 ID
+      rpid — 根进程 ID
       c — 分类前缀（如 watcher/timer/probe）
       m — 消息正文（不含前缀）
     """
+
+    def formatTime(self, record, datefmt=None):
+        return _fmt_tz_ms(record)
 
     def format(self, record: logging.LogRecord) -> str:
         msg = record.getMessage()
@@ -82,9 +155,12 @@ class JsonlFormatter(logging.Formatter):
             body = msg[m.end():].strip()
         return json.dumps(
             {
-                "t": self.formatTime(record, "%H:%M:%S"),
+                "t": _fmt_tz_ms(record),
                 "l": record.levelname,
                 "n": record.name,
+                "pid": os.getpid(),
+                "ppid": os.getppid(),
+                "rpid": _compute_root_pid(),
                 "c": cat,
                 "m": body,
             },

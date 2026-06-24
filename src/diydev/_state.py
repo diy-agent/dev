@@ -49,6 +49,27 @@ def _state_path() -> Path:
     return diy_home() / "state.yaml"
 
 
+def _norm(path: str) -> str:
+    """把路径统一为 ~/... 格式存储。
+
+    运行时调用 os.path.expanduser("~")（不缓存模块级 _HOME），
+    原因见 core/task.py _norm 的 docstring 详细说明。
+    """
+    home = os.path.expanduser("~")
+    expanded = os.path.abspath(os.path.expanduser(path))
+    if expanded.startswith(home + "/"):
+        return "~" + expanded[len(home):]
+    if expanded == home:
+        return "~"
+    return expanded
+
+
+def _subject_is_git(path: str) -> bool:
+    """实时检测 subject 目录是否为 git 仓库。"""
+    full = os.path.expanduser(path)
+    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
+
+
 # ════════════════════════════════════════════════════════════════
 # 加载 / 保存（state.yaml — profiles + tasks）
 # ════════════════════════════════════════════════════════════════

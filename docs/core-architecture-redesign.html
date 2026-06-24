@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>diy Core Architecture Redesign</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+      margin-bottom: 2rem;
+    }
+    svg { width: 100%; min-width: 1000px; display: block; }
+    .section-label {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      padding-left: 0.5rem;
+      border-left: 3px solid;
+    }
+    .section-label.red { border-color: #fb7185; color: #fb7185; }
+    .section-label.green { border-color: #34d399; color: #34d399; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.rose { background: #fb7185; }
+    .card-dot.orange { background: #fb923c; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .card li strong { color: #e2e8f0; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>diy Core Architecture Redesign</h1>
+      </div>
+      <p class="subtitle">业务逻辑收拢到 core，验证器消除前端 if 判断</p>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- CURRENT STATE (broken) -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="section-label red">现状：业务逻辑散落三层，前端全是 if 判断</div>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 520">
+        <defs>
+          <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arr-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- CLI -->
+        <rect x="40" y="60" width="200" height="130" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="140" y="85" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">_dai_cli.py</text>
+        <text x="140" y="105" fill="#94a3b8" font-size="9" text-anchor="middle">CLI（应该只是壳）</text>
+        <line x1="55" y1="118" x2="225" y2="118" stroke="#334155" stroke-width="0.5"/>
+        <text x="55" y="133" fill="#fb7185" font-size="8">❌ if subject 未注册: exit(1)</text>
+        <text x="55" y="147" fill="#fb7185" font-size="8">❌ if parent 不存在: exit(1)</text>
+        <text x="55" y="161" fill="#fb7185" font-size="8">❌ if body_file 读失败: exit(1)</text>
+        <text x="55" y="175" fill="#fb7185" font-size="8">❌ star_task() 写在 CLI 里</text>
+
+        <!-- Socket Handler -->
+        <rect x="400" y="60" width="200" height="130" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="500" y="85" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">app.sock Gateway</text>
+        <text x="500" y="105" fill="#94a3b8" font-size="9" text-anchor="middle">Socket（应该只是路由）</text>
+        <line x1="415" y1="118" x2="585" y2="118" stroke="#334155" stroke-width="0.5"/>
+        <text x="415" y="133" fill="#fb7185" font-size="8">❌ if subject 未注册: return error</text>
+        <text x="415" y="147" fill="#fb7185" font-size="8">❌ if parent 不存在: return error</text>
+        <text x="415" y="161" fill="#fb7185" font-size="8">❌ if 读文件失败: return error</text>
+        <text x="415" y="175" fill="#fb7185" font-size="8">❌ star_task() 写在 socket 里</text>
+
+        <!-- GUI Dialog -->
+        <rect x="760" y="60" width="200" height="130" rx="8" fill="rgba(30, 41, 59, 0.5)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="860" y="85" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">GUI Dialog</text>
+        <text x="860" y="105" fill="#94a3b8" font-size="9" text-anchor="middle">PySide6 对话框</text>
+        <line x1="775" y1="118" x2="945" y2="118" stroke="#334155" stroke-width="0.5"/>
+        <text x="775" y="133" fill="#fb7185" font-size="8">❌ 之前没校验 subject</text>
+        <text x="775" y="147" fill="#fb7185" font-size="8">❌ 之前没 star_task()</text>
+        <text x="775" y="161" fill="#fb7185" font-size="8">❌ 错误处理用 QMessageBox</text>
+        <text x="775" y="175" fill="#fb7185" font-size="8">❌ 各层错误处理不一致</text>
+
+        <!-- Arrows -->
+        <line x1="240" y1="120" x2="398" y2="120" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr-red)"/>
+        <line x1="600" y1="120" x2="758" y2="120" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr-red)"/>
+
+        <!-- Core (thin, just writes) -->
+        <rect x="300" y="260" width="400" height="100" rx="8" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1"/>
+        <text x="500" y="285" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">_state.py: create_task()</text>
+        <text x="500" y="305" fill="#94a3b8" font-size="9" text-anchor="middle">只做：parent 检查 + URI 生成 + 写 AGENTS.md</text>
+        <line x1="315" y1="315" x2="685" y2="315" stroke="#334155" stroke-width="0.5"/>
+        <text x="315" y="335" fill="#fb7185" font-size="8" font-weight="600">⚠ 职责不完整</text>
+        <text x="315" y="349" fill="#fb7185" font-size="8" font-weight="600">⚠ 调用方被迫自己补逻辑</text>
+        <text x="500" y="335" fill="#fb7185" font-size="8" font-weight="600" text-anchor="middle">⚠ 各调用方补法不同 → 行为不一致</text>
+        <text x="500" y="349" fill="#fb7185" font-size="8" font-weight="600" text-anchor="middle">⚠ 前端散落大量 if 系判断</text>
+
+        <!-- All three point down to core -->
+        <line x1="140" y1="190" x2="400" y2="260" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr-red)"/>
+        <line x1="500" y1="190" x2="500" y2="258" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr-red)"/>
+        <line x1="860" y1="190" x2="600" y2="260" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr-red)"/>
+
+        <!-- Storage -->
+        <rect x="350" y="420" width="300" height="60" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="500" y="445" fill="white" font-size="11" font-weight="600" text-anchor="middle">~/.diy/</text>
+        <text x="500" y="465" fill="#94a3b8" font-size="9" text-anchor="middle">task/ • star/ • state.yaml</text>
+        <line x1="500" y1="360" x2="500" y2="418" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- Legend -->
+        <rect x="40" y="420" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#fb7185" stroke-width="1"/>
+        <text x="62" y="428" fill="#fb7185" font-size="8">⚠ 前端含业务 if 判断（不应该）</text>
+        <rect x="40" y="440" width="16" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="62" y="448" fill="#94a3b8" font-size="8">存储层</text>
+      </svg>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- TARGET STATE -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="section-label green">目标：四层分离，验证器消灭前端 if 判断</div>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 780">
+        <defs>
+          <marker id="arr2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arr-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arr-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arr-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c" />
+          </marker>
+          <marker id="arr-fail" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <pattern id="grid2" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid2)" />
+
+        <!-- ══════════ Layer 1: Thin Shells ══════════ -->
+        <text x="50" y="35" fill="#22d3ee" font-size="11" font-weight="700">Layer 1 · 前端壳（零业务逻辑，零 if 判断）</text>
+
+        <!-- CLI -->
+        <rect x="50" y="50" width="260" height="120" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="180" y="75" fill="white" font-size="12" font-weight="700" text-anchor="middle">_dai_cli.py</text>
+        <text x="180" y="93" fill="#22d3ee" font-size="9" text-anchor="middle">CLI 薄壳</text>
+        <line x1="65" y1="102" x2="295" y2="102" stroke="#334155" stroke-width="0.5"/>
+        <text x="65" y="118" fill="#34d399" font-size="8">1. cyclopts 解析参数</text>
+        <text x="65" y="132" fill="#34d399" font-size="8">2. 转发到 socket</text>
+        <text x="150" y="156" fill="#fbbf24" font-size="8" text-anchor="middle">收到 ValidErrors → 遍历打印</text>
+        <text x="150" y="168" fill="#fbbf24" font-size="8" text-anchor="middle">收到 Success → 展示</text>
+
+        <!-- Socket Gateway -->
+        <rect x="370" y="50" width="260" height="120" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="500" y="75" fill="white" font-size="12" font-weight="700" text-anchor="middle">app.sock Gateway</text>
+        <text x="500" y="93" fill="#22d3ee" font-size="9" text-anchor="middle">Socket 路由</text>
+        <line x1="385" y1="102" x2="615" y2="102" stroke="#334155" stroke-width="0.5"/>
+        <text x="385" y="118" fill="#34d399" font-size="8">1. 解析 CLI 协议文本</text>
+        <text x="385" y="132" fill="#34d399" font-size="8">2. 调 Core 函数 → 序列化返回</text>
+        <text x="500" y="156" fill="#fbbf24" font-size="8" text-anchor="middle">收到 ValidErrors → 序列化返回</text>
+        <text x="500" y="168" fill="#fbbf24" font-size="8" text-anchor="middle">收到 Success → 序列化返回</text>
+
+        <!-- GUI Dialog -->
+        <rect x="690" y="50" width="260" height="120" rx="8" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="820" y="75" fill="white" font-size="12" font-weight="700" text-anchor="middle">GUI Dialog</text>
+        <text x="820" y="93" fill="#22d3ee" font-size="9" text-anchor="middle">PySide6 对话框</text>
+        <line x1="705" y1="102" x2="935" y2="102" stroke="#334155" stroke-width="0.5"/>
+        <text x="705" y="118" fill="#34d399" font-size="8">1. 收集用户输入</text>
+        <text x="705" y="132" fill="#34d399" font-size="8">2. 调 Core → 展示结果/错误</text>
+        <text x="820" y="156" fill="#fbbf24" font-size="8" text-anchor="middle">（同进程，直接调 Core）</text>
+
+        <!-- Down arrow to Validator -->
+        <line x1="180" y1="170" x2="500" y2="260" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+        <text x="300" y="218" fill="#22d3ee" font-size="8">socket 转发</text>
+        <line x1="500" y1="170" x2="500" y2="260" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+        <text x="515" y="228" fill="#22d3ee" font-size="8">调 Core</text>
+        <line x1="820" y1="170" x2="500" y2="260" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arr-cyan)"/>
+        <text x="700" y="218" fill="#22d3ee" font-size="8">同进程直接调</text>
+
+        <!-- ══════════ Layer 2: Validator ══════════ -->
+        <rect x="200" y="260" width="600" height="140" rx="12" fill="rgba(251, 146, 60, 0.12)" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="8,4"/>
+        <text x="212" y="280" fill="#fb923c" font-size="11" font-weight="700">Layer 2 · Validator（统一校验，收集全部错误）</text>
+
+        <rect x="230" y="295" width="260" height="90" rx="8" fill="rgba(251, 146, 60, 0.25)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="360" y="318" fill="white" font-size="11" font-weight="600" text-anchor="middle">Schema 定义（Pydantic 风格）</text>
+        <line x1="245" y1="328" x2="475" y2="328" stroke="#334155" stroke-width="0.5"/>
+        <text x="245" y="344" fill="#e2e8f0" font-size="8">CreateTaskSchema</text>
+        <text x="245" y="358" fill="#e2e8f0" font-size="8">  title: str (required < 200)</text>
+        <text x="245" y="372" fill="#e2e8f0" font-size="8">  subject: str (must exist in state)</text>
+
+        <rect x="510" y="295" width="260" height="90" rx="8" fill="rgba(251, 146, 60, 0.25)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="640" y="318" fill="white" font-size="11" font-weight="600" text-anchor="middle">validate() 输出</text>
+        <line x1="525" y1="328" x2="755" y2="328" stroke="#334155" stroke-width="0.5"/>
+        <text x="525" y="344" fill="#34d399" font-size="8">✓ Valid() → pass to Core</text>
+        <text x="525" y="358" fill="#fb7185" font-size="8">✗ ValidErrors(errors: [...])</text>
+        <text x="525" y="372" fill="#fbbf24" font-size="7">每个 error 带 field + code + msg</text>
+
+        <!-- Validator down arrow (success) -->
+        <line x1="500" y1="400" x2="500" y2="480" stroke="#34d399" stroke-width="2" marker-end="url(#arr-emerald)"/>
+        <text x="515" y="445" fill="#34d399" font-size="8">✓ Valid → Core 执行业务</text>
+
+        <!-- Validator left arrow (failure) -->
+        <line x1="230" y1="340" x2="100" y2="340" stroke="#fb7185" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr-fail)"/>
+        <text x="110" y="332" fill="#fb7185" font-size="8">✗ ValidErrors →</text>
+        <text x="110" y="348" fill="#fb7185" font-size="8">  直接返回前端</text>
+        <text x="110" y="364" fill="#94a3b8" font-size="7">  CLI: 遍历打印</text>
+        <text x="110" y="378" fill="#94a3b8" font-size="7">  GUI: QMessageBox 列表</text>
+        <text x="110" y="392" fill="#94a3b8" font-size="7">  Socket: JSON 序列化</text>
+
+        <!-- ══════════ Layer 3: Core ══════════ -->
+        <rect x="200" y="480" width="600" height="220" rx="12" fill="rgba(6, 78, 59, 0.15)" stroke="#34d399" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="212" y="500" fill="#34d399" font-size="11" font-weight="700">Layer 3 · Core（纯业务逻辑，不做校验）</text>
+
+        <rect x="230" y="515" width="540" height="90" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="500" y="540" fill="white" font-size="12" font-weight="700" text-anchor="middle">core/task.py</text>
+        <text x="500" y="558" fill="#34d399" font-size="9" text-anchor="middle">create_task(data: ValidatedCreateTask) → Result[T]</text>
+        <line x1="245" y1="568" x2="755" y2="568" stroke="#334155" stroke-width="0.5"/>
+        <text x="245" y="583" fill="#e2e8f0" font-size="8">✓ 数据已由 Validator 校验过，不做 if 检查</text>
+        <text x="500" y="583" fill="#e2e8f0" font-size="8">✓ star_task(data) 自动执行</text>
+        <text x="500" y="597" fill="#e2e8f0" font-size="8">✓ _notify_app_reload() 自动执行</text>
+
+        <!-- Other core modules -->
+        <rect x="230" y="615" width="260" height="70" rx="8" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1"/>
+        <text x="360" y="640" fill="white" font-size="10" font-weight="600" text-anchor="middle">core/subject.py</text>
+        <text x="360" y="660" fill="#94a3b8" font-size="8" text-anchor="middle">add / remove / list / tree</text>
+
+        <rect x="510" y="615" width="260" height="70" rx="8" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1"/>
+        <text x="640" y="640" fill="white" font-size="10" font-weight="600" text-anchor="middle">core/state.py</text>
+        <text x="640" y="660" fill="#94a3b8" font-size="8" text-anchor="middle">load / save / query</text>
+
+        <!-- ══════════ Layer 4: Storage ══════════ -->
+        <rect x="300" y="720" width="400" height="50" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="500" y="742" fill="white" font-size="11" font-weight="600" text-anchor="middle">Layer 4 · 存储 ~/.diy/</text>
+        <text x="500" y="758" fill="#94a3b8" font-size="9" text-anchor="middle">task/  •  star/  •  state.yaml  •  app.sock</text>
+
+        <line x1="500" y1="685" x2="500" y2="718" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+        <!-- Legend -->
+        <rect x="750" y="515" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="772" y="523" fill="#22d3ee" font-size="8">前端壳（零 if）</text>
+        <rect x="750" y="533" width="16" height="10" rx="2" fill="rgba(251, 146, 60, 0.25)" stroke="#fb923c" stroke-width="1"/>
+        <text x="772" y="541" fill="#fb923c" font-size="8">Validator（收集全部错误）</text>
+        <rect x="750" y="551" width="16" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="772" y="559" fill="#34d399" font-size="8">Core（纯业务）</text>
+        <rect x="750" y="569" width="16" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="772" y="577" fill="#a78bfa" font-size="8">存储层</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>现状问题</h3>
+        </div>
+        <ul>
+          <li>• <strong>前端散落大量 if</strong> — CLI/GUI/Socket 各写一套校验</li>
+          <li>• <strong>subject 校验 ×4</strong> — 每个调用方自己查 state.yaml</li>
+          <li>• <strong>parent 校验 ×4</strong> — create_task 内部也查一次（冗余）</li>
+          <li>• <strong>star_task 散落 ×4</strong> — 本次 bug 根因</li>
+          <li>• <strong>错误处理各异</strong> — sys.exit / return str / QMessageBox</li>
+          <li>• <strong>验证失败就 exit</strong> — 只能报第一个错误，用户得反复试</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot orange"></div>
+          <h3>Validator 设计</h3>
+        </div>
+        <ul>
+          <li>• <strong>Schema 定义</strong> — Pydantic BaseModel 或 dataclass</li>
+          <li>• <strong>validate() 收集全部错误</strong> — 不短路，逐个 field 检查</li>
+          <li>• <strong>返回 Valid() 或 ValidErrors([...])</strong> — 不抛异常</li>
+          <li>• <strong>每个 error 结构</strong> — {field, code, msg} 三字段</li>
+          <li>• <strong>前端通用展示</strong> — 遍历 errors，打印/对话框展示</li>
+          <li>• <strong>不依赖前端类型</strong> — CLI/GUI 用同一套 error 结构</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>重构路径</h3>
+        </div>
+        <ul>
+          <li>• <strong>1. 新建 core/ 模块 + core/validator.py</strong></li>
+          <li>• <strong>2. 定义 Schema + validate() 函数</strong></li>
+          <li>• <strong>3. Core 函数改为接收 ValidatedData</strong> — 校验过的数据</li>
+          <li>• <strong>4. CLI 瘦身</strong> — 删除所有 if/exit(1) → 调 Core 展示结果</li>
+          <li>• <strong>5. Socket 瘦身</strong> — 只协议解析 + 路由</li>
+          <li>• <strong>6. GUI 瘦身</strong> — 只收集输入 + 展示错误列表</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      diy Core Architecture Redesign · 2026-06-23
+    </p>
+  </div>
+</body>
+</html>

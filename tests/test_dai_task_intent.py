@@ -425,3 +425,68 @@ def test_intent_task_edit_multiple_fields(sh: ShellTest, fake_home: Path):
         state: active
         subject: ~/diy
     """)
+
+
+def test_intent_task_create_subject_not_found(sh: ShellTest, fake_home: Path):
+    """创建任务时 subject 不存在 → 返回全部收集的错误。"""
+    sh.assert_session("""
+        $ dai task create --title "任务" --subject ~/nonexistent
+        ---
+        *subject*not_found*
+    """)
+
+
+def test_intent_task_create_title_empty(sh: ShellTest, fake_home: Path):
+    """创建任务时标题为空 → 收集错误。"""
+    (fake_home / "git").mkdir()
+    (fake_home / "git" / ".git").touch()
+
+    sh.assert_session("""
+        $ dai subject add ~/git --desc "测试"
+        status: success
+
+        $ dai task create --title "" --subject ~/git
+        ---
+        *title*required*
+    """)
+
+
+def test_intent_task_create_parent_not_found(sh: ShellTest, fake_home: Path):
+    """创建任务时 parent URI 不存在 → 收集错误。"""
+    (fake_home / "git").mkdir()
+    (fake_home / "git" / ".git").touch()
+
+    sh.assert_session("""
+        $ dai subject add ~/git --desc "测试"
+        status: success
+
+        $ dai task create --title "新任务" --subject ~/git --parent local/task/999
+        ---
+        *parent*not_found*
+    """)
+
+
+def test_intent_task_create_multiple_errors(sh: ShellTest, fake_home: Path):
+    """创建任务时多个参数同时错误 → 一次返回全部错误（不短路）。"""
+    sh.assert_session("""
+        $ dai task create --title "" --subject ~/nonexistent --parent local/task/999
+        ---
+        *title*required*
+        *subject*not_found*
+        *parent*not_found*
+    """)
+
+
+def test_intent_task_create_body_file_not_found(sh: ShellTest, fake_home: Path):
+    """创建任务时 body_file 路径无效 → 收集错误。"""
+    (fake_home / "git").mkdir()
+    (fake_home / "git" / ".git").touch()
+
+    sh.assert_session("""
+        $ dai subject add ~/git --desc "测试"
+        status: success
+
+        $ dai task create --title "正文导入" --subject ~/git --body-file /nonexistent/foo.md
+        ---
+        *body_file*read_error*
+    """)

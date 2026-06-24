@@ -887,8 +887,12 @@ class AgentChatPanel(QWidget):
 
     def _scroll_to_bottom(self) -> None:
         if self._auto_scroll:
-            sb = self._scroll_area.verticalScrollBar()
-            sb.setValue(sb.maximum())
+            # 延迟到下一次事件循环，确保布局已更新、scrollbar.maximum() 正确
+            QTimer.singleShot(0, self._do_scroll_to_bottom)
+
+    def _do_scroll_to_bottom(self) -> None:
+        sb = self._scroll_area.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     # ═══════════════════════════════════════════════════
     # 消息读取与渲染（批处理，不重建）

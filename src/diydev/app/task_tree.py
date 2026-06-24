@@ -36,6 +36,8 @@ class TaskNode:
     body: str = ""                   # markdown body（设计文档等）
     parent_uri: str | None = None    # 父任务 URI
     subject_path: str = ""
+    created: str = ""                # 创建时间 ISO 8601
+    updated: str = ""                # 最后更新时间 ISO 8601
     source: dict = field(default_factory=dict)
     agents: list[AgentInfo] = field(default_factory=list)
     children: list[TaskNode] = field(default_factory=list)
@@ -109,6 +111,8 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
             state=info.get("state", "pending"),
             subject_path=info.get("subject", ""),
             parent_uri=info.get("parent"),
+            created=info.get("created", ""),
+            updated=info.get("updated", ""),
             source=info.get("source", {}),
         )
         task_nodes[uri] = tn

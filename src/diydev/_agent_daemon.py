@@ -601,6 +601,7 @@ def run_daemon():
         s.connect(str(_SOCKET_PATH))
         s.close()
         print(f"错误: 已有运行中的 agentd (socket: {_SOCKET_PATH})", file=sys.stderr)
+        logger.info("[exit] agentd 单实例检测失败")
         sys.exit(1)
     except (OSError, _sock.timeout):
         pass  # 连不上 → 残留或不存在
@@ -631,9 +632,11 @@ def run_daemon():
                 st = os.stat(_SOCKET_PATH)
             except FileNotFoundError:
                 logger.critical("agentd socket 文件被删除，退出")
+                logging.shutdown()
                 os._exit(1)
             if (st.st_dev, st.st_ino) != (_sock_dev, _sock_ino):
                 logger.critical("agentd socket 文件被替换，退出")
+                logging.shutdown()
                 os._exit(1)
 
     t = threading.Thread(target=_health_beat, daemon=True)
