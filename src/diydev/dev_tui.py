@@ -11,8 +11,8 @@ import os
 import shutil
 import socket
 import sys
-from diydev._state import diy_home
 
+from diydev._state import diy_home
 
 SOCK = str(diy_home() / "app.sock")
 
@@ -51,7 +51,9 @@ def tui():
         sys.stdout.write("\033[2J\033[H")
         bar = "━" * width
         sys.stdout.write(f"\033[36m╭{bar}╮\033[0m\n")
-        sys.stdout.write(f"\033[36m│\033[1m TUI → diy 管控台 \033[0m\033[36m{' ' * (width - 17)}│\033[0m\n")
+        sys.stdout.write(
+            f"\033[36m│\033[1m TUI → diy 管控台 \033[0m\033[36m{' ' * (width - 17)}│\033[0m\n"
+        )
         sys.stdout.write(f"\033[36m╰{bar}╯\033[0m\n")
         chat_area = min(th - 5, 20)
         for role, text in history[-chat_area:]:
@@ -60,7 +62,9 @@ def tui():
             else:
                 sys.stdout.write(f"\033[32m> {text}\033[0m\n")
         sys.stdout.write(f"\033[36m{'─' * width}\033[0m\n")
-        sys.stdout.write(f"\033[36m│\033[0m 输入消息回车发送  Ctrl+D 退出 \033[36m│\033[0m\n")
+        sys.stdout.write(
+            "\033[36m│\033[0m 输入消息回车发送  Ctrl+D 退出 \033[36m│\033[0m\n"
+        )
 
     redraw()
     while True:

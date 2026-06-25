@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
 
 from diydev.app.task_tree import (
     TaskNode,
@@ -15,10 +14,10 @@ from diydev.app.task_tree import (
     parse_agents_md_tree,
 )
 
-
 # ═══════════════════════════════════════════════════════
 # parse_agents_md_tree
 # ═══════════════════════════════════════════════════════
+
 
 def test_parse_md_tree_empty():
     nodes = _parse_md_tree("")
@@ -112,13 +111,24 @@ def test_parse_json_block():
 # merge_state_data
 # ═══════════════════════════════════════════════════════
 
+
 def test_merge_state_data():
     nodes = [
-        TaskNode(key="local/task/58", uri="local/task/58", kind="task", state="pending", title=""),
+        TaskNode(
+            key="local/task/58",
+            uri="local/task/58",
+            kind="task",
+            state="pending",
+            title="",
+        ),
     ]
     state = {
         "tasks": {
-            "local/task/58": {"title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
+            "local/task/58": {
+                "title": "Epic: dev",
+                "state": "active",
+                "subject": "~/git/diy/_diy",
+            },
         }
     }
     merged = merge_state_data(nodes, state)
@@ -142,6 +152,7 @@ def test_merge_adds_new_tasks():
 # ═══════════════════════════════════════════════════════
 # build_hierarchy
 # ═══════════════════════════════════════════════════════
+
 
 def test_build_hierarchy_by_depth():
     nodes = [

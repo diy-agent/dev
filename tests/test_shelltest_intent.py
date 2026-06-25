@@ -54,7 +54,7 @@ def test_intent_error_output_separate():
 
 def test_intent_sentinel():
     """* 通配符和 {{regex:...}} 匹配。"""
-    ShellTest().assert_session("""
+    ShellTest().assert_session(r"""
         $ echo '任务 #42 创建成功'
         任务 * 创建成功
 

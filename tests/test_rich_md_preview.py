@@ -17,8 +17,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QSplitter,
     QTextEdit,
-    QVBoxLayout,
-    QWidget,
 )
 from rich.console import Console
 from rich.markdown import Markdown
@@ -31,11 +29,16 @@ def md_to_terminal_text(md_text: str, width: int = 88) -> str:
     return console.export_text()
 
 
-TEST_MD = (Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
+TEST_MD = (
+    Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md"
+).read_text(encoding="utf-8")
 
 # 去掉 frontmatter（---...--- 之间的 YAML 头）
 import re
-TEST_MD = re.sub(r"^---\n.*?^---\n", "", TEST_MD, count=1, flags=re.DOTALL | re.MULTILINE)
+
+TEST_MD = re.sub(
+    r"^---\n.*?^---\n", "", TEST_MD, count=1, flags=re.DOTALL | re.MULTILINE
+)
 
 
 class RichMdPreview(QMainWindow):

@@ -1,5 +1,26 @@
 {
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}/../diy/pkgs/diy-ui/src"
-    ]
+    "python.analysis.typeCheckingMode": "standard",
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.indexing": true,
+    "python.analysis.inlayHints.variableTypes": true,
+    "python.analysis.inlayHints.functionReturnTypes": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.terminal.activateEnvironment": false,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "terminal.integrated.gpuAcceleration": "on",
+       "terminal.integrated.macOptionClickForcesSelection": true,
+"terminal.integrated.sendKeybindingsToShell": true   ,
+
+
+    "search.exclude": {
+        ".venv": true,
+        "archive": true,
+        "**/__pycache__": true
+    }
 }

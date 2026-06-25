@@ -16,7 +16,6 @@ import os
 import re
 import shlex
 import sys
-from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -74,8 +73,9 @@ def shutdown():
 def doctor_cmd():
     """分层健康自检 — app 状态 / socket / state.yaml。"""
     # 实际由 main() 转发到 socket，本函数仅用于 help
+
     from ._forward import forward_to_app
-    import sys
+
     forward_to_app(["diy", "doctor"])
 
 
@@ -95,6 +95,7 @@ ui_app = App(
 def ui_status():
     """健康检查（pid/窗口/树/定时器）。"""
     from ._forward import forward_to_app
+
     forward_to_app(["diy", "ui", "status"])
 
 
@@ -102,6 +103,7 @@ def ui_status():
 def ui_tree():
     """完整任务树。"""
     from ._forward import forward_to_app
+
     forward_to_app(["diy", "ui", "tree"])
 
 
@@ -109,6 +111,7 @@ def ui_tree():
 def ui_agents():
     """agent 列表。"""
     from ._forward import forward_to_app
+
     forward_to_app(["diy", "ui", "agents"])
 
 
@@ -233,10 +236,7 @@ subject_app = App(name="subject", help="Subject 树管理")
 
 def _enrich(subjects: dict[str, dict]) -> dict[str, dict]:
     """给 subject 条目添加实时检测的 is_git 字段。"""
-    return {
-        p: {**entry, "is_git": _subject_is_git(p)}
-        for p, entry in subjects.items()
-    }
+    return {p: {**entry, "is_git": _subject_is_git(p)} for p, entry in subjects.items()}
 
 
 @subject_app.command(name="add")
@@ -252,8 +252,9 @@ def subject_add(
     范例: dai subject add ~/git/diy/_diy
     注意: 路径必须是 git 仓库目录。
     """
-    from .core.subject import add_subject
     from .core.middleware import cli_call
+    from .core.subject import add_subject
+
     cli_call(add_subject, path, desc=desc, json_output=json_output)
 
 
@@ -272,7 +273,13 @@ def subject_list(
     if json_output:
         print(json.dumps(subjects, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(subjects, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            subjects,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @subject_app.command(name="tree")
@@ -292,7 +299,13 @@ def subject_tree(
     if json_output:
         print(json.dumps(tree, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(tree, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            tree,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @subject_app.command(name="show")
@@ -303,8 +316,9 @@ def subject_show(
     ] = False,
 ):
     """查看单个 subject（含实时 is_git 检测）。"""
-    from .core.subject import show_subject
     from .core.middleware import cli_call
+    from .core.subject import show_subject
+
     cli_call(show_subject, path, json_output=json_output)
 
 
@@ -316,8 +330,9 @@ def subject_remove(
     ] = False,
 ):
     """删除 subject。同时删除子 subject。"""
-    from .core.subject import remove_subject
     from .core.middleware import cli_call
+    from .core.subject import remove_subject
+
     cli_call(remove_subject, path, json_output=json_output)
 
 
@@ -336,7 +351,9 @@ def subject_scan(
 
     found: dict[str, dict[str, object]] = {}
     for dirpath, dirs, _ in os.walk(root_path):
-        if os.path.isdir(os.path.join(dirpath, ".git")) or os.path.isfile(os.path.join(dirpath, ".git")):
+        if os.path.isdir(os.path.join(dirpath, ".git")) or os.path.isfile(
+            os.path.join(dirpath, ".git")
+        ):
             found[_norm(dirpath)] = {}
             dirs.clear()  # 不深入 git 仓库内部
 
@@ -350,7 +367,13 @@ def subject_scan(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 def _build_subject_tree(subjects: dict[str, dict]) -> dict[str, object]:
@@ -411,6 +434,7 @@ task_app = App(name="task", help="任务管理")
 def _notify_app_reload() -> None:
     """通知 GUI app 刷新任务树（如果正在运行）。失败静默。"""
     import socket as _sock
+
     socket_path = os.path.join(
         diy_home(),
         "app.sock",
@@ -429,6 +453,7 @@ def _notify_app_reload() -> None:
 # ════════════════════════════════════════════════════════════════
 # dai task star / unstar
 # ════════════════════════════════════════════════════════════════
+
 
 @task_app.command(name="star")
 def task_star(
@@ -454,7 +479,13 @@ def task_star(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="unstar")
@@ -477,7 +508,13 @@ def task_unstar(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="create")
@@ -486,9 +523,15 @@ def task_create(
     subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
     parent: Annotated[str | None, Parameter(name="--parent", help="父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
-    body_file: Annotated[str | None, Parameter(name="--body-file", help="markdown body 文件路径")] = None,
-    source_type: Annotated[str, Parameter(name="--source-type", help="任务来源类型")] = "local",
-    source_uri: Annotated[str | None, Parameter(name="--source-uri", help="外部任务 URI（非 local 必填）")] = None,
+    body_file: Annotated[
+        str | None, Parameter(name="--body-file", help="markdown body 文件路径")
+    ] = None,
+    source_type: Annotated[
+        str, Parameter(name="--source-type", help="任务来源类型")
+    ] = "local",
+    source_uri: Annotated[
+        str | None, Parameter(name="--source-uri", help="外部任务 URI（非 local 必填）")
+    ] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -508,11 +551,20 @@ def task_create(
 
     注意: subject 必须已通过 dai subject add 注册。
     """
-    from .core.task import create_task
     from .core.middleware import cli_call
-    cli_call(create_task, title, subject, parent=parent, detail=detail,
-             body_file=body_file, source_type=source_type, source_uri=source_uri,
-             json_output=json_output)
+    from .core.task import create_task
+
+    cli_call(
+        create_task,
+        title,
+        subject,
+        parent=parent,
+        detail=detail,
+        body_file=body_file,
+        source_type=source_type,
+        source_uri=source_uri,
+        json_output=json_output,
+    )
     _notify_app_reload()
 
 
@@ -520,7 +572,13 @@ def task_create(
 def task_link(
     title: Annotated[str, Parameter(name="--title", help="任务标题")],
     subject: Annotated[str, Parameter(name="--subject", help="subject 路径")],
-    source_uri: Annotated[str, Parameter(name="--source-uri", help="外部任务 URI（如 github.com/owner/repo/issues/58）")],
+    source_uri: Annotated[
+        str,
+        Parameter(
+            name="--source-uri",
+            help="外部任务 URI（如 github.com/owner/repo/issues/58）",
+        ),
+    ],
     parent: Annotated[str | None, Parameter(name="--parent", help="父任务 URI")] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="任务详情")] = None,
     json_output: Annotated[
@@ -560,8 +618,12 @@ def task_link(
 
     try:
         uri = create_task(
-            title=title, subject=subject_n, parent=parent, detail=detail,
-            source_type=source_type, source_uri=source_uri,
+            title=title,
+            subject=subject_n,
+            parent=parent,
+            detail=detail,
+            source_type=source_type,
+            source_uri=source_uri,
         )
     except ValueError as exc:
         print(f"错误: {exc}", file=sys.stderr)
@@ -574,7 +636,13 @@ def task_link(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -615,9 +683,19 @@ def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
 
     try:
         result = subprocess.run(
-            ["gh", "issue", "view", number, "--repo", repo_full,
-             "--json", "title,body,state,updatedAt"],
-            capture_output=True, text=True, timeout=15,
+            [
+                "gh",
+                "issue",
+                "view",
+                number,
+                "--repo",
+                repo_full,
+                "--json",
+                "title,body,state,updatedAt",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except FileNotFoundError:
         return "gh CLI 未安装，请先安装 GitHub CLI (brew install gh)"
@@ -630,7 +708,7 @@ def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
             # GitHub issue 已删除 → 取消关注（数据不动）
             try:
                 unstar_task(uri)
-                return f"GitHub issue 已不存在，已取消关注（unstar）"
+                return "GitHub issue 已不存在，已取消关注（unstar）"
             except FileNotFoundError:
                 return "GitHub issue 已不存在（本地数据同步前已移除）"
         return f"gh 调用失败: {err}"
@@ -654,7 +732,10 @@ def _sync_github_issue(uri: str, task: dict[str, Any]) -> dict[str, Any] | str:
 
 @task_app.command(name="sync")
 def task_sync(
-    uri: Annotated[str | None, Parameter(help="任务 URI（如 github.com/owner/repo/issues/58），--all 时省略")] = None,
+    uri: Annotated[
+        str | None,
+        Parameter(help="任务 URI（如 github.com/owner/repo/issues/58），--all 时省略"),
+    ] = None,
     all: Annotated[
         bool, Parameter(name=["--all", "-a"], help="同步所有外部任务")
     ] = False,
@@ -738,7 +819,13 @@ def task_sync(
     if json_output:
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(output, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            output,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="list")
@@ -771,7 +858,13 @@ def task_list(
     if json_output:
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(output, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            output,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="show")
@@ -794,7 +887,13 @@ def task_show(
     if json_output:
         print(json.dumps(task, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(task, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            task,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
         if body:
             print()
             print(body)
@@ -805,10 +904,16 @@ def task_edit(
     uri: Annotated[str, Parameter(help="任务 URI")],
     title: Annotated[str | None, Parameter(name="--title", help="新标题")] = None,
     state: Annotated[str | None, Parameter(name="--state", help="新状态")] = None,
-    subject: Annotated[str | None, Parameter(name="--subject", help="新 subject")] = None,
-    parent: Annotated[str | None, Parameter(name="--parent", help="新父任务 URI")] = None,
+    subject: Annotated[
+        str | None, Parameter(name="--subject", help="新 subject")
+    ] = None,
+    parent: Annotated[
+        str | None, Parameter(name="--parent", help="新父任务 URI")
+    ] = None,
     detail: Annotated[str | None, Parameter(name="--detail", help="新详情")] = None,
-    body_file: Annotated[str | None, Parameter(name="--body-file", help="markdown body 文件路径")] = None,
+    body_file: Annotated[
+        str | None, Parameter(name="--body-file", help="markdown body 文件路径")
+    ] = None,
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -842,7 +947,10 @@ def task_edit(
         try:
             fields["body"] = Path(body_file).read_text(encoding="utf-8")
         except OSError as exc:
-            print(f"错误: 无法读取 body 文件 {shlex.quote(body_file)}: {exc}", file=sys.stderr)
+            print(
+                f"错误: 无法读取 body 文件 {shlex.quote(body_file)}: {exc}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     task = update_task_field(uri, **fields)
@@ -851,7 +959,13 @@ def task_edit(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="delete")
@@ -869,7 +983,9 @@ def task_delete(
 
     src = task.get("source", {})
     if src.get("type") != "local":
-        print(f"错误: {uri} 是外部任务，请用 dai task unlink {uri} 解绑", file=sys.stderr)
+        print(
+            f"错误: {uri} 是外部任务，请用 dai task unlink {uri} 解绑", file=sys.stderr
+        )
         sys.exit(1)
 
     delete_task(uri)
@@ -878,12 +994,20 @@ def task_delete(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 @task_app.command(name="unlink")
 def task_unlink(
-    uri: Annotated[str, Parameter(help="外部任务 URI（如 github.com/owner/repo/issues/58）")],
+    uri: Annotated[
+        str, Parameter(help="外部任务 URI（如 github.com/owner/repo/issues/58）")
+    ],
     json_output: Annotated[
         bool, Parameter(name=["--json"], help="JSON 格式输出")
     ] = False,
@@ -905,7 +1029,13 @@ def task_unlink(
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(result, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            result,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
 
 
 app.command(task_app)
@@ -940,7 +1070,7 @@ def _short_uri(uri: str) -> str:
 
 def dai_doctor() -> None:
     """健康自检 — 分层检查 Socket 状态、多实例、state.yaml。
-    
+
     有 app 运行时走 socket 获取完整上下文（含 inode 对比），
     无 app 运行时降级为客户端探针（检测 sock 残留/缺失）。
     """
@@ -948,6 +1078,7 @@ def dai_doctor() -> None:
     import socket as _sock
 
     from diydev.app._doctor import format_report, run_check
+
     socket_path = str(diy_home() / "app.sock")
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
@@ -976,7 +1107,7 @@ def dai_doctor() -> None:
 
 def dai_doctor_metrics() -> None:
     """查看运行中 app 的指标快照。
-    
+
     需要 app 正在运行。
     """
     resp = _send_to_socket("diy ui metrics", timeout=5.0)
@@ -984,6 +1115,7 @@ def dai_doctor_metrics() -> None:
         print("管控台未运行，无法获取指标", file=sys.stderr)
         sys.exit(1)
     import re  # noqa: PLC0415
+
     clean = re.sub(r"\x1b\[\d+(;\d+)*m", "", resp).strip()
     sys.stdout.write(clean)
     if not clean.endswith("\n"):
@@ -1009,16 +1141,19 @@ def _get_session_counts(task_uri: str) -> tuple[int, int]:
     alive = 0
     total = 0
     from diydev.core.agent_manager import get_manager
+
     if get_manager().get(task_uri):
         alive = 1
     db = Path.home() / ".hermes" / "state.db"
     if db.exists():
         try:
             import sqlite3
+
             conn = sqlite3.connect(str(db), timeout=1)
             sid = f"agent-{task_uri}"
             rows = conn.execute(
-                "SELECT COUNT(DISTINCT session_id) FROM messages WHERE session_id=?", (sid,)
+                "SELECT COUNT(DISTINCT session_id) FROM messages WHERE session_id=?",
+                (sid,),
             ).fetchone()
             if rows and rows[0]:
                 total = rows[0]
@@ -1033,26 +1168,38 @@ def _output(data: Any, json_output: bool = False) -> None:
     if json_output:
         print(json.dumps(data, indent=2, ensure_ascii=False))
     else:
-        yaml.dump(data, sys.stdout, allow_unicode=True, default_flow_style=False, sort_keys=False, explicit_start=True)
+        yaml.dump(
+            data,
+            sys.stdout,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            explicit_start=True,
+        )
 
 
 @agent_app.command(name="list")
 def agent_list(
     *,
-    json_output: Annotated[bool, Parameter(name=["--json"], help="JSON 格式输出")] = False,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
 ):
     """列出存活 agent（当前进程）。"""
     from diydev.core.agent_manager import get_manager
+
     mgr = get_manager()
     agents = mgr.list()
     data: list[dict[str, Any]] = []
     for a in agents:
         live, total = _get_session_counts(a.task_uri)
-        data.append({
-            "task_uri": a.task_uri,
-            "session": {"alive": live, "total": total},
-            "messages": a.message_count,
-        })
+        data.append(
+            {
+                "task_uri": a.task_uri,
+                "session": {"alive": live, "total": total},
+                "messages": a.message_count,
+            }
+        )
     if not data:
         _output({"agents": []}, json_output)
         return
@@ -1064,10 +1211,13 @@ def agent_status(
     task_uri: Annotated[str, Parameter(help="任务 URI")],
     /,
     *,
-    json_output: Annotated[bool, Parameter(name=["--json"], help="JSON 格式输出")] = False,
+    json_output: Annotated[
+        bool, Parameter(name=["--json"], help="JSON 格式输出")
+    ] = False,
 ):
     """查看 agent 状态。"""
     from diydev.core.agent_manager import get_manager
+
     mgr = get_manager()
     a = mgr.get(task_uri)
     if a is None:
@@ -1081,8 +1231,7 @@ def agent_status(
         "messages": s.message_count,
         "session": {"alive": live, "total": total},
         "history": [
-            {"role": m.role, "content": m.content[:120]}
-            for m in a.history[-6:]
+            {"role": m.role, "content": m.content[:120]} for m in a.history[-6:]
         ],
     }
     _output(data, json_output)
@@ -1099,22 +1248,47 @@ def agent_chat(
     model: Annotated[str | None, Parameter(help="LLM 模型")] = None,
 ):
     """交互式聊天终端。"""
-    import shlex
     _cwd = cwd or os.getcwd()
     from diydev.core.backend import AgentCallbacks
+
     cb = AgentCallbacks(
-        on_delta=lambda t: (print(t, end="", flush=True)),
+        on_delta=lambda t: print(t, end="", flush=True),
         on_reasoning=lambda t: print(f"\n[思考] {t}"),
         on_tool_start=lambda n, i, a: print(f"\n[工具] {n}"),
         on_error=lambda e: print(f"\n[错误] {e}", file=sys.stderr),
     )
-    asyncio.run(_async_chat(task_uri, _cwd, callbacks=cb, backend=backend, provider=provider, model=model))
+    asyncio.run(
+        _async_chat(
+            task_uri,
+            _cwd,
+            callbacks=cb,
+            backend=backend,
+            provider=provider,
+            model=model,
+        )
+    )
 
 
-async def _async_chat(task_uri: str, cwd: str, callbacks, *, backend: str = "hermes", provider: str | None = None, model: str | None = None) -> None:
+async def _async_chat(
+    task_uri: str,
+    cwd: str,
+    callbacks,
+    *,
+    backend: str = "hermes",
+    provider: str | None = None,
+    model: str | None = None,
+) -> None:
     from diydev.core.agent_manager import get_manager
+
     mgr = get_manager()
-    agent = await mgr.get_or_create(task_uri, cwd, backend=backend, provider=provider, model=model, callbacks=callbacks)
+    agent = await mgr.get_or_create(
+        task_uri,
+        cwd,
+        backend=backend,
+        provider=provider,
+        model=model,
+        callbacks=callbacks,
+    )
     print(f"Session: {agent.session_id}")
     print("输入消息 / Ctrl+D 退出")
     print("-" * 50)
@@ -1146,17 +1320,43 @@ def agent_send(
 ):
     """向 agent 发送单条消息。"""
     from diydev.core.backend import AgentCallbacks
+
     cb = AgentCallbacks(
-        on_delta=lambda t: (print(t, end="", flush=True)),
+        on_delta=lambda t: print(t, end="", flush=True),
         on_error=lambda e: print(f"\n[错误] {e}", file=sys.stderr),
     )
-    asyncio.run(_async_send(task_uri, text, callbacks=cb, backend=backend, provider=provider, model=model))
+    asyncio.run(
+        _async_send(
+            task_uri,
+            text,
+            callbacks=cb,
+            backend=backend,
+            provider=provider,
+            model=model,
+        )
+    )
 
 
-async def _async_send(task_uri: str, text: str, callbacks, *, backend: str = "hermes", provider: str | None = None, model: str | None = None) -> None:
+async def _async_send(
+    task_uri: str,
+    text: str,
+    callbacks,
+    *,
+    backend: str = "hermes",
+    provider: str | None = None,
+    model: str | None = None,
+) -> None:
     from diydev.core.agent_manager import get_manager
+
     mgr = get_manager()
-    agent = await mgr.get_or_create(task_uri, os.getcwd(), backend=backend, provider=provider, model=model, callbacks=callbacks)
+    agent = await mgr.get_or_create(
+        task_uri,
+        os.getcwd(),
+        backend=backend,
+        provider=provider,
+        model=model,
+        callbacks=callbacks,
+    )
     reason = await agent.send(text)
     print(f"\n--- {reason} ---")
     print(f"历史: {len(agent.history)} 条（agent 继续存活）")
@@ -1176,6 +1376,7 @@ app.command(agent_app)
 
 async def _async_stop(task_uri: str) -> None:
     from diydev.core.agent_manager import get_manager
+
     mgr = get_manager()
     agent = mgr.get(task_uri)
     if agent is None:
@@ -1191,6 +1392,7 @@ def _send_to_socket(cmd_line: str, timeout: float = 5) -> str | None:
     用于 restart/shutdown 等需要控制 app 生命周期的命令。
     """
     import socket as sock
+
     socket_path = str(diy_home() / "app.sock")
     try:
         s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
@@ -1216,8 +1418,9 @@ def _local_shutdown():
     先试 socket 优雅关闭，socket 不存在或连不上时
     用 pkill 兜底杀 diydev.app.main 进程。
     """
+    from diydev._log import info
+
     from ._forward import _send_to_socket
-    from diydev._log import info, error
 
     socket_path = str(diy_home() / "app.sock")
     if os.path.exists(socket_path):
@@ -1228,14 +1431,21 @@ def _local_shutdown():
 
     # socket 不存在或不通 → 进程级兜底
     import subprocess
+
     kill = subprocess.run(
         ["pkill", "-f", "diydev.app.main"],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     if kill.returncode == 0:
         # 清理残留的 QWebEngine 子进程
-        subprocess.run(["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3)
-        subprocess.run(["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3)
+        subprocess.run(
+            ["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3
+        )
+        subprocess.run(
+            ["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3
+        )
         info("管控台已强制关闭")
     else:
         info("管控台未运行")
@@ -1248,8 +1458,8 @@ def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
     只能轮询。timeout 是最后兜底，不是预期耗时。
     已弃用：改用 Backoff.until()，此处保留仅作兼容。
     """
+
     from diydev._backoff import Backoff
-    import fcntl
 
     success, _ = Backoff.until(
         lambda: _try_lock(lock_path),
@@ -1261,6 +1471,7 @@ def _wait_lock_released(lock_path: str, timeout: float = 8.0) -> bool:
 def _try_lock(lock_path: str) -> bool:
     """尝试获取文件锁，成功返回 True。"""
     import fcntl
+
     try:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1287,7 +1498,8 @@ def _app_restart():
     """
     import subprocess
     import time as _time
-    from diydev._log import info, warn, error
+
+    from diydev._log import error, info, warn
 
     socket_path = str(diy_home() / "app.sock")
     lock_path = str(diy_home() / "app.lock")
@@ -1303,9 +1515,12 @@ def _app_restart():
         if not _wait_lock_released(lock_path, timeout=5.0):
             warn("旧管控台未在 5s 内退出，尝试强杀...")
             import subprocess as _sp
+
             kill = _sp.run(
                 ["pkill", "-f", "diydev.app.main"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if kill.returncode == 0:
                 _time.sleep(1.0)
@@ -1322,7 +1537,9 @@ def _app_restart():
     #   注意：已改用 --disable-gpu，不再有 GPU 子进程的 MachPort 污染问题，
     #   无需 sleep 等待。kill QtWebEngineProcess 在旧版 --single-process
     #   时是必要的，现在保留仅作防御。
-    subprocess.run(["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3)
+    subprocess.run(
+        ["pkill", "-f", "QtWebEngineProcess"], capture_output=True, timeout=3
+    )
     subprocess.run(["pkill", "-f", "Chromium Helper"], capture_output=True, timeout=3)
     try:
         os.unlink(socket_path)
@@ -1339,8 +1556,9 @@ def _app_restart():
 
     # 5) 等 socket 就绪（指数退避连接，避免固定间隔轮询）
     #   直接用 connect 探测，不用 file-exists 检查（TOCTOU 风险）。
-    from diydev._backoff import Backoff
     import socket as _socket
+
+    from diydev._backoff import Backoff
 
     def _try_connect() -> bool:
         s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
@@ -1349,7 +1567,11 @@ def _app_restart():
         s.close()
         return True
 
-    success, _ = Backoff.until(_try_connect, timeout=15, exceptions=(OSError, FileNotFoundError, ConnectionRefusedError))
+    success, _ = Backoff.until(
+        _try_connect,
+        timeout=15,
+        exceptions=(OSError, FileNotFoundError, ConnectionRefusedError),
+    )
     if success:
         info("管控台已重启")
         return
@@ -1361,7 +1583,8 @@ def _app_restart():
 
 def _dai_ui() -> None:
     """启动 PySide6 管控台。"""
-    import subprocess, sys
+    import subprocess
+    import sys
     from pathlib import Path
 
     app_main = Path(__file__).resolve().parent / "app" / "main.py"

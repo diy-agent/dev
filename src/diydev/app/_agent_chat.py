@@ -16,14 +16,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal  # type: ignore[import-untyped]
-from PySide6.QtGui import QTextOption  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QFrame,
     QHBoxLayout,
@@ -34,15 +32,15 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from diydev._state import diy_home
 from diydev.app._app_log import logger as _logger
 from diydev.app.agent_bridge_qt import SignalBridge
 from diydev.core.backend import AgentCallbacks
-from diydev._state import diy_home
 
 _HERMES_DB = Path.home() / ".hermes" / "state.db"
 
@@ -80,6 +78,7 @@ def _resolve_session_id(task_uri: str) -> str | None:
     """从 task AGENTS.md frontmatter 读取真实 session_id。"""
     try:
         from diydev._state import get_task
+
         info = get_task(task_uri)
         if info:
             agent = info.get("agent") or {}
@@ -119,7 +118,9 @@ def _read_messages(session_id: str, after_id: int = 0) -> list[dict]:
 _MAX_HISTORY_LINES = 2000
 
 
-def _trim_to_line_limit(rows: list[dict], max_lines: int = _MAX_HISTORY_LINES) -> list[dict]:
+def _trim_to_line_limit(
+    rows: list[dict], max_lines: int = _MAX_HISTORY_LINES
+) -> list[dict]:
     """将消息列表截断到不超过 max_lines 行，保证完整消息体。
 
     从最新的消息向前累积行数，超过 max_lines 后从前面丢弃，
@@ -197,7 +198,9 @@ def _format_tool_calls(tool_calls: str | None, tool_name: str | None) -> str:
         if isinstance(calls, list):
             parts = []
             for c in calls:
-                name = c.get("function", {}).get("name", c.get("name", tool_name or "?"))
+                name = c.get("function", {}).get(
+                    "name", c.get("name", tool_name or "?")
+                )
                 args = c.get("function", {}).get("arguments", c.get("arguments", ""))
                 if isinstance(args, str):
                     try:
@@ -242,6 +245,7 @@ def _format_tool_result(content: str | None) -> str:
 @dataclass
 class DisplayMessage:
     """显示用的消息模型。"""
+
     role: str  # user | assistant | tool
     content: str = ""  # 显示用 HTML
     raw_content: str = ""  # 原始文本
@@ -255,7 +259,9 @@ class DisplayMessage:
     session_ended: bool = False
 
 
-def _rows_to_display(rows: list[dict], existing_last: DisplayMessage | None = None) -> list[DisplayMessage]:
+def _rows_to_display(
+    rows: list[dict], existing_last: DisplayMessage | None = None
+) -> list[DisplayMessage]:
     """将 Hermes DB rows 批处理为 DisplayMessage 列表（tool 合并到前一条 assistant）。
     existing_last: 已有会话的最后一条 assistant，新 tool 会合并到它身上。"""
     result: list[DisplayMessage] = []
@@ -300,12 +306,14 @@ def _rows_to_display(rows: list[dict], existing_last: DisplayMessage | None = No
             if tc_html:
                 last_assistant.tool_calls_html = (
                     last_assistant.tool_calls_html + "<br>" + tc_html
-                    if last_assistant.tool_calls_html else tc_html
+                    if last_assistant.tool_calls_html
+                    else tc_html
                 )
             if result_summary:
                 last_assistant.tool_result_summary = (
                     last_assistant.tool_result_summary + "<br>" + result_summary
-                    if last_assistant.tool_result_summary else result_summary
+                    if last_assistant.tool_result_summary
+                    else result_summary
                 )
 
     return result
@@ -316,13 +324,90 @@ def _rows_to_display(rows: list[dict], existing_last: DisplayMessage | None = No
 # ═══════════════════════════════════════════════════════
 
 
+class CollapsibleBlock(QFrame):
+    """可折叠块 — 用于 tool call / reasoning。
+
+    默认收起只显示一行摘要，点击展开完整内容。
+    """
+
+    def __init__(self, icon: str, summary: str, content_html: str, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet("background: transparent;")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 1, 0, 1)
+        layout.setSpacing(0)
+
+        # 头部 — 用 QToolButton 实现安全点击
+        self._header = QToolButton()
+        self._header.setCheckable(True)
+        self._header.setChecked(False)
+        self._header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._header.setFixedHeight(22)
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setText(f"{icon}  {summary}")
+        self._header.setToolTip("点击展开/折叠")
+        self._header.setStyleSheet(f"""
+            QToolButton {{
+                color: {_TEXT_DIM};
+                font-size: 11px;
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 0 4px;
+                text-align: left;
+            }}
+            QToolButton:hover {{
+                background: {_BG_Surface};
+                color: {_TEXT};
+            }}
+            QToolButton:checked {{
+                color: {_TEXT};
+            }}
+        """)
+        layout.addWidget(self._header)
+
+        # 内容 — 默认隐藏
+        self._content = QLabel()
+        self._content.setTextFormat(Qt.TextFormat.RichText)
+        self._content.setWordWrap(True)
+        self._content.setText(content_html)
+        self._content.setStyleSheet(f"""
+            QLabel {{
+                color: {_TEXT_DIM};
+                background: {_BG_DARK};
+                font-size: 11px;
+                font-family: 'SF Mono', 'Menlo', monospace;
+                padding: 6px 8px 6px 24px;
+                border-radius: 4px;
+                border: 1px solid {_border};
+            }}
+        """)
+        self._content.setVisible(False)
+        layout.addWidget(self._content)
+
+        self._header.toggled.connect(self._on_toggle)
+        self._expanded = False
+
+    def _on_toggle(self, checked: bool) -> None:
+        self._expanded = checked
+        self._content.setVisible(checked)
+        # 更新图标样式
+        chevron = "▾" if checked else "▸"
+        current = self._header.text()
+        # 保持前缀不变，只更新末尾箭头
+        self._header.setText(
+            current
+        )  # text already includes icon+summary, we append later
+
+
 class ChatMessageWidget(QFrame):
-    """单条消息的渲染组件。QLabel 自然撑开，无独立滚动条。"""
+    """单条消息的渲染组件。统一 QLabel，无独立滚动条。"""
 
     def __init__(self, msg: DisplayMessage, parent=None):
         super().__init__(parent)
         self._msg = msg
-        self._is_compact = len(msg.raw_content) < 80 and not msg.reasoning_html and not msg.tool_calls_html
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -336,7 +421,7 @@ class ChatMessageWidget(QFrame):
         is_user = self._msg.role == "user"
         is_tool = self._msg.role == "tool"
 
-        # 图标
+        # 角色图标
         if is_tool:
             icon_char = "⚙"
             icon_color = _PEACH
@@ -353,13 +438,14 @@ class ChatMessageWidget(QFrame):
         icon.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(icon)
 
+        # 内容列
         content_widget = QWidget()
         content_widget.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(1)
 
-        # 头部
+        # 头部：角色名 + 时间戳
         if not is_tool:
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
@@ -378,74 +464,60 @@ class ChatMessageWidget(QFrame):
                 f"color: {_TEXT_DIM}; font-size: 9px; background: transparent;"
             )
             header.addWidget(ts_label)
-
             header.addStretch()
             content_layout.addLayout(header)
 
-        # reasoning（思考过程）
+        # 思考过程 — 折叠块
         if self._msg.reasoning_html:
-            reasoning = QLabel()
-            reasoning.setTextFormat(Qt.TextFormat.RichText)
-            reasoning.setWordWrap(True)
-            reasoning.setText(
-                f'<div style="color:{_YELLOW};font-size:11px;font-style:italic;'
-                f'border-left:2px solid {_YELLOW};padding-left:8px;margin:1px 0">'
-                f"{self._msg.reasoning_html}</div>"
+            reasoning_short = _truncate_text(self._msg.raw_content, 60)
+            block = CollapsibleBlock(
+                "💭",
+                f"思考: {reasoning_short}",
+                self._msg.reasoning_html,
             )
-            content_layout.addWidget(reasoning)
+            content_layout.addWidget(block)
 
-        # tool call 标注
+        # 工具调用 — 折叠块
         if self._msg.tool_calls_html:
-            tc = QLabel()
-            tc.setTextFormat(Qt.TextFormat.RichText)
-            tc.setWordWrap(True)
-            tc.setText(
-                f'<div style="color:{_PEACH};font-size:11px;font-family:monospace;'
-                f'margin:1px 0">{self._msg.tool_calls_html}</div>'
+            tool_summary = self._msg.tool_name or "工具调用"
+            block = CollapsibleBlock(
+                "⚙",
+                tool_summary,
+                self._msg.tool_calls_html,
             )
-            content_layout.addWidget(tc)
+            content_layout.addWidget(block)
 
-        # tool result
+        # 工具结果 — 折叠块
         if self._msg.tool_result_summary:
-            tr = QLabel()
-            tr.setTextFormat(Qt.TextFormat.RichText)
-            tr.setWordWrap(True)
-            tr.setText(
-                f'<div style="color:{_TEXT_DIM};font-size:11px;'
-                f'border-left:2px solid {_PEACH_DIM};padding-left:8px;margin:1px 0">'
-                f"{self._msg.tool_result_summary}</div>"
+            result_short = _truncate_text(self._msg.tool_result_summary, 60)
+            block = CollapsibleBlock(
+                "📎",
+                f"结果: {result_short}",
+                self._msg.tool_result_summary,
             )
-            content_layout.addWidget(tr)
+            content_layout.addWidget(block)
 
-        # 消息正文 — 短消息用 QLabel（紧凑），长消息用 QTextEdit（正确换行）
+        # 消息正文 — 统一用 QLabel，无独立滚动条
         if self._msg.content:
-            if self._is_compact:
-                body = QLabel()
-                body.setTextFormat(Qt.TextFormat.RichText)
-                body.setWordWrap(True)
-                body.setText(self._msg.content)
-                body.setStyleSheet(
-                    f"color: {_TEXT}; background: transparent; "
-                    f"font-size: 12px; padding: 0;"
-                )
-            else:
-                body = QTextEdit()
-                body.setReadOnly(True)
-                body.document().setTextWidth(0)
-                body.document().setDocumentMargin(0)
-                body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-                body.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-                body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-                body.setHtml(self._msg.content)
-                body.setStyleSheet(
-                    f"QTextEdit {{ background: transparent; color: {_TEXT}; border: none; "
-                    f"padding: 0; font-size: 12px; }}"
-                )
+            body = QLabel()
+            body.setTextFormat(Qt.TextFormat.RichText)
+            body.setWordWrap(True)
+            body.setText(self._msg.content)
+            body.setStyleSheet(
+                f"color: {_TEXT}; background: transparent; font-size: 12px; padding: 0;"
+            )
+            body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             content_layout.addWidget(body)
 
         layout.addWidget(content_widget, 1)
+
+
+def _truncate_text(text: str, max_len: int = 60) -> str:
+    """截断文本，显示前 max_len 字符 + ..."""
+    clean = text.replace("\n", " ").strip()
+    if len(clean) <= max_len:
+        return clean
+    return clean[:max_len] + "..."
 
 
 # ═══════════════════════════════════════════════════════
@@ -477,6 +549,7 @@ def _session_icon(state: str) -> str:
 # Pi session 持久化
 # ═══════════════════════════════════════════════════════
 
+
 def _pi_session_path(task_uri: str) -> Path:
     """task URI 对应的 pi session 文件路径（与 PiRpcAgent._session_path 一致）。"""
     safe_name = task_uri.replace("/", "_")
@@ -490,7 +563,7 @@ def _load_pi_session(task_uri: str) -> list[DisplayMessage]:
         return []
     msgs: list[DisplayMessage] = []
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -509,7 +582,11 @@ def _load_pi_session(task_uri: str) -> list[DisplayMessage]:
                 if not content:
                     continue
                 ts_ms = msg.get("timestamp", 0)
-                ts = datetime.fromtimestamp(ts_ms / 1000).strftime("%H:%M:%S") if ts_ms else ""
+                ts = (
+                    datetime.fromtimestamp(ts_ms / 1000).strftime("%H:%M:%S")
+                    if ts_ms
+                    else ""
+                )
                 if role == "user":
                     dm = DisplayMessage(
                         role="user",
@@ -524,7 +601,9 @@ def _load_pi_session(task_uri: str) -> list[DisplayMessage]:
                         content=_render_message_content(content),
                         raw_content=content,
                         timestamp=ts,
-                        reasoning_html=_render_message_content(reasoning) if reasoning else "",
+                        reasoning_html=_render_message_content(reasoning)
+                        if reasoning
+                        else "",
                     )
                 msgs.append(dm)
     except OSError:
@@ -722,17 +801,19 @@ class AgentChatPanel(QWidget):
 
         mgr = get_manager()
 
-        # 1. 停掉旧 task 的 agent（不同 task）并置空其回调
-        if self._agent is not None and self._agent.task_uri != task_uri:
-            self._agent.set_callbacks(AgentCallbacks())  # null callbacks，旧 agent 不再碰旧 bridge
-            await mgr.stop(self._agent.task_uri)
-
-        # 2. 安全销毁旧 bridge
+        # 1. 先断开旧 bridge（确保停 agent 时信号不泄漏）
         if self._bridge is not None:
             self._disconnect_bridge()
+        # self._bridge 现在是 None
+
+        # 2. 停掉旧 task 的 agent
+        if self._agent is not None and self._agent.task_uri != task_uri:
+            self._agent.set_callbacks(AgentCallbacks())
+            await mgr.stop(self._agent.task_uri)
 
         # 3. 从 task frontmatter 读取后端类型，默认 pi（兼容旧数据）
         from diydev._state import get_task
+
         task_info = get_task(task_uri)
         agent_meta = (task_info or {}).get("agent", {}) or {}
         backend_type = agent_meta.get("type", "pi")
@@ -769,7 +850,7 @@ class AgentChatPanel(QWidget):
             self._bridge.tool_started.disconnect(self._on_acp_tool)
             self._bridge.finished.disconnect(self._on_acp_finished)
             self._bridge.error_occurred.disconnect(self._on_acp_error)
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass
         self._bridge.deleteLater()
         self._bridge = None
@@ -859,9 +940,7 @@ class AgentChatPanel(QWidget):
             self._cached_msgs.setdefault(self._task_uri, []).append(dm)
         widget = ChatMessageWidget(dm)
         self._message_widgets.append(widget)
-        self._messages_layout.insertWidget(
-            self._messages_layout.count() - 1, widget
-        )
+        self._messages_layout.insertWidget(self._messages_layout.count() - 1, widget)
         self._scroll_to_bottom()
 
     def set_compact(self, compact: bool = True) -> None:
@@ -897,8 +976,6 @@ class AgentChatPanel(QWidget):
     # ═══════════════════════════════════════════════════
     # 消息读取与渲染（批处理，不重建）
     # ═══════════════════════════════════════════════════
-
-
 
     def _poll_messages(self) -> None:
         """轮询 Hermes DB，更新 _cached_msgs 并刷新 UI。"""
@@ -1005,6 +1082,7 @@ class AgentChatPanel(QWidget):
         self._rendered_count = 0
         self._load_more_btn = None
         self._switch_to_send_btn()
+        self._auto_scroll = True  # 新任务 → 必定滚到底
 
         self._clear_messages_container()
 
@@ -1013,14 +1091,14 @@ class AgentChatPanel(QWidget):
 
         # 全量 DisplayMessage 缓存（仅读取+处理，不建 widget）
         if task_uri not in self._cached_msgs:
-            if self._session_id_for_db:
-                # ACP 后端：用真实 session_id 查 Hermes DB
-                rows = _read_messages(self._session_id_for_db)
+            # 先试真实 session_id，再试默认格式
+            for sid in filter(None, [self._session_id_for_db, f"agent-{task_uri}"]):
+                rows = _read_messages(sid)
                 if rows:
-                    # 2000 行截断，保证完整消息
                     rows = _trim_to_line_limit(rows)
                     self._last_msg_id = max(r["id"] for r in rows)
                     self._cached_msgs[task_uri] = _rows_to_display(rows)
+                    break
             if task_uri not in self._cached_msgs:
                 # 回退到 pi session 文件（PiRpcAgent 自动保存）
                 pi_msgs = _load_pi_session(task_uri)
@@ -1028,6 +1106,9 @@ class AgentChatPanel(QWidget):
                     self._cached_msgs[task_uri] = pi_msgs
         # 渲染最近 PAGE_SIZE 条
         self._render_window(task_uri)
+        # 立即滚动 + 下一事件循环兜底（布局完成后滚动正确）
+        self._do_scroll_to_bottom()
+        QTimer.singleShot(0, self._do_scroll_to_bottom)
         self._input.setFocus()
 
         # 异步获取 agent（SignalBridge 自动连接）
@@ -1087,7 +1168,7 @@ class AgentChatPanel(QWidget):
             )
 
     def _on_load_more(self) -> None:
-        """"加载更多"按钮点击 → 渲染上一批消息。"""
+        """ "加载更多"按钮点击 → 渲染上一批消息。"""
         self._render_window(self._task_uri)
         self._scroll_to_bottom()
 
@@ -1192,11 +1273,15 @@ class AgentChatPanel(QWidget):
             "agent_state": agent_state,
             "agent_alive": self._agent.is_alive if self._agent else False,
             "messages": msg_count,
-            "sessions": [] if not self._agent else [{
-                "id": self._agent.session_id,
-                "state": self._agent.state,
-                "messages": msg_count,
-            }],
+            "sessions": []
+            if not self._agent
+            else [
+                {
+                    "id": self._agent.session_id,
+                    "state": self._agent.state,
+                    "messages": msg_count,
+                }
+            ],
         }
 
     def ui_chat_log(self) -> str:
@@ -1212,4 +1297,3 @@ class AgentChatPanel(QWidget):
             ts = m.timestamp or ""
             lines.append(f"[{ts}] {arrow} {txt}")
         return "\n".join(lines)
-

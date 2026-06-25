@@ -25,7 +25,10 @@ from pathlib import Path
 #   改用 --disable-gpu 避免 GPU 子进程的 MachPort 冲突，同时保持 multi-process
 #   模式，V8 Proxy Resolver 正常工作。
 _qtwebengine_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-if "--single-process" not in _qtwebengine_flags and "--disable-gpu" not in _qtwebengine_flags:
+if (
+    "--single-process" not in _qtwebengine_flags
+    and "--disable-gpu" not in _qtwebengine_flags
+):
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
         _qtwebengine_flags + " --disable-gpu"
     ).strip()
@@ -37,10 +40,14 @@ from PySide6.QtCore import (  # type: ignore[import-untyped]
     QSortFilterProxyModel,
     Qt,
     QTimer,
-    Slot,
     Signal,
+    Slot,
 )
-from PySide6.QtGui import QAction, QFont, QStandardItem, QStandardItemModel  # type: ignore[import-untyped]
+from PySide6.QtGui import (  # type: ignore[import-untyped]
+    QAction,
+    QStandardItem,
+    QStandardItemModel,
+)
 
 # ── QWebEngineView 安全创建守卫 ──
 #
@@ -71,24 +78,23 @@ def _mark_webengine_ready() -> None:
     """标记 WebEngine 可安全创建（由 MainWindow 在收到激活事件后调用）。"""
     global _webengine_ready
     _webengine_ready = True
+
+
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QAbstractItemView,
     QApplication,
     QComboBox,
     QDialog,
     QDockWidget,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QTabWidget,
-    QTextBrowser,
     QTextEdit,
     QToolButton,
     QTreeView,
@@ -96,15 +102,18 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QWidget,
 )
 
-from diydev.app._activity_bar import ActivityBar
-from diydev.app._agent_chat import AgentChatPanel
-from diydev.app._app_log import get_logger, logger, setup_app_logger
-from diydev.app._log_panel import LogPanel
-from diydev.core.agent_manager import get_manager
-from diydev.app.task_tree import TaskNode, load_task_tree
-from diydev.app._doctor import HealthIssue, is_locked, run_check, set_locked
-from diydev.app._metrics import MetricsStore
 from diydev._state import diy_home
+from diydev.app._agent_chat import AgentChatPanel
+from diydev.app._app_log import logger, setup_app_logger
+from diydev.app._doctor import HealthIssue, run_check
+from diydev.app._log_panel import LogPanel
+from diydev.app._metrics import MetricsStore
+from diydev.app._overlay_panel import OverlayPanel
+from diydev.app._status_bar import StatusBar
+from diydev.app._title_bar import TitleBar
+from diydev.app.screen import Area, Panel, Screen
+from diydev.app.task_tree import TaskNode, load_task_tree
+from diydev.core.agent_manager import get_manager
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -151,49 +160,57 @@ class Theme:
     """语义化颜色令牌 — 高对比度暗色主题"""
 
     # 基色
-    surface = "#1e1e2e"        # 主背景
-    surface_alt = "#181825"    # 侧栏/面板背景
-    on_surface = "#cdd6f4"     # 主文本
+    surface = "#1e1e2e"  # 主背景
+    surface_alt = "#181825"  # 侧栏/面板背景
+    on_surface = "#cdd6f4"  # 主文本
     on_surface_variant = "#a6adc8"  # 次要文本
-    outline = "#45475a"        # 分隔线
+    outline = "#45475a"  # 分隔线
 
     # 状态色 — 高对比度版本
-    pending_bg = "#e5c07b"     # 琥珀黄背景
-    pending_fg = "#1e1e2e"     # 琥珀上文本（深色）
-    active_bg = "#7aa2f7"      # 明亮蓝
+    pending_bg = "#e5c07b"  # 琥珀黄背景
+    pending_fg = "#1e1e2e"  # 琥珀上文本（深色）
+    active_bg = "#7aa2f7"  # 明亮蓝
     active_fg = "#1e1e2e"
-    done_bg = "#9ece6a"        # 明亮绿
+    done_bg = "#9ece6a"  # 明亮绿
     done_fg = "#1e1e2e"
-    cancelled_bg = "#565f89"   # 灰紫
+    cancelled_bg = "#565f89"  # 灰紫
     cancelled_fg = "#cdd6f4"
-    blocked_bg = "#f7768e"     # 明亮红
+    blocked_bg = "#f7768e"  # 明亮红
     blocked_fg = "#1e1e2e"
-    shelved_bg = "#e0af68"     # 橙
+    shelved_bg = "#e0af68"  # 橙
     shelved_fg = "#1e1e2e"
-    new_bg = "#73daca"         # 青
+    new_bg = "#73daca"  # 青
     new_fg = "#1e1e2e"
 
     # 调试/沙箱模式 — 暖色替代蓝
-    sandbox_bg = "#e5c07b"      # 琥珀色（替代 active_bg 的蓝）
+    sandbox_bg = "#e5c07b"  # 琥珀色（替代 active_bg 的蓝）
     sandbox_fg = "#1e1e2e"
 
     @classmethod
     def state_bg(cls, state: str) -> str:
         return {
-            "pending": cls.pending_bg, "active": cls.active_bg,
-            "open": cls.active_bg, "done": cls.done_bg,
-            "closed": cls.done_bg, "cancelled": cls.cancelled_bg,
-            "blocked": cls.blocked_bg, "shelved": cls.shelved_bg,
+            "pending": cls.pending_bg,
+            "active": cls.active_bg,
+            "open": cls.active_bg,
+            "done": cls.done_bg,
+            "closed": cls.done_bg,
+            "cancelled": cls.cancelled_bg,
+            "blocked": cls.blocked_bg,
+            "shelved": cls.shelved_bg,
             "new": cls.new_bg,
         }.get(state, cls.cancelled_bg)
 
     @classmethod
     def state_fg(cls, state: str) -> str:
         return {
-            "pending": cls.pending_fg, "active": cls.active_fg,
-            "open": cls.active_fg, "done": cls.done_fg,
-            "closed": cls.done_fg, "cancelled": cls.cancelled_fg,
-            "blocked": cls.blocked_fg, "shelved": cls.shelved_fg,
+            "pending": cls.pending_fg,
+            "active": cls.active_fg,
+            "open": cls.active_fg,
+            "done": cls.done_fg,
+            "closed": cls.done_fg,
+            "cancelled": cls.cancelled_fg,
+            "blocked": cls.blocked_fg,
+            "shelved": cls.shelved_fg,
             "new": cls.new_fg,
         }.get(state, cls.on_surface)
 
@@ -305,7 +322,11 @@ def _add_node(
     else:
         icon = node.state_icon
         display_uri = _short_uri(node.uri or "")
-        text = f"{icon} {display_uri} {node.title}" if node.title else f"{icon} {display_uri}"
+        text = (
+            f"{icon} {display_uri} {node.title}"
+            if node.title
+            else f"{icon} {display_uri}"
+        )
 
     if node.agents:
         running = [a for a in node.agents if a.state == "running"]
@@ -355,13 +376,16 @@ def guarded(context: str):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             return safe_call(fn, *args, _context=context, _on_error="silent", **kwargs)
+
         return wrapper
+
     return deco
 
 
 # ═══════════════════════════════════════════════════════
 # DetailView — HTML 元数据 + WebEngine body
 # ═══════════════════════════════════════════════════════
+
 
 class DetailView(QWidget):
     """详情面板：查看/编辑任务。GitHub/Jira 风格的两栏布局。"""
@@ -382,7 +406,9 @@ class DetailView(QWidget):
         tb_lay.setSpacing(6)
 
         self._uri_label = QLabel()
-        self._uri_label.setStyleSheet("color: #cdd6f4; font-size: 12px; font-weight: bold;")
+        self._uri_label.setStyleSheet(
+            "color: #cdd6f4; font-size: 12px; font-weight: bold;"
+        )
 
         self._state_label = QLabel()
         self._state_label.setStyleSheet("color: #a6adc8; font-size: 11px;")
@@ -556,9 +582,18 @@ class DetailView(QWidget):
         new_body = self._edit_body.toPlainText()
         try:
             from diydev._state import update_task_field  # noqa: PLC0415
-            if new_title != (self._current_node.title or "") if self._current_node else True:
+
+            if (
+                new_title != (self._current_node.title or "")
+                if self._current_node
+                else True
+            ):
                 update_task_field(uri, title=new_title)
-            if new_body != (self._current_node.body or "") if self._current_node else True:
+            if (
+                new_body != (self._current_node.body or "")
+                if self._current_node
+                else True
+            ):
                 update_task_field(uri, body=new_body)
         except Exception as e:
             logger.error("保存失败: uri=%s %s", uri, e)
@@ -574,6 +609,7 @@ class DetailView(QWidget):
 # 主窗口
 # ═══════════════════════════════════════════════════════
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -581,9 +617,7 @@ class MainWindow(QMainWindow):
         # ── 沙箱检测（调试/测试/多实例模式） ──
         self._sandbox, self._sandbox_path = _detect_sandbox()
         if self._sandbox:
-            self.setWindowTitle(
-                f"🧪 diy 管控台 [测试: {self._sandbox_path}]"
-            )
+            self.setWindowTitle(f"🧪 diy 管控台 [测试: {self._sandbox_path}]")
         else:
             self.setWindowTitle(f"diy 管控台 [{self._sandbox_path}]")
         self.resize(1000, 650)
@@ -595,38 +629,28 @@ class MainWindow(QMainWindow):
         self._gateway = Gateway(self)
         logger.debug("[init] Gateway 创建完成")
 
-        # ── Activity Bar（左侧活动栏） ──
-        self._activity_bar = ActivityBar(self)
-        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self._activity_bar)
-        logger.debug("[init] ActivityBar 创建完成")
+        # ── 顶栏（过滤栏 + 区域切换按钮） ──
+        self._title_bar = TitleBar(self)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._title_bar)
+        self._filter_text = self._title_bar.filter_text
+        self._filter_state = self._title_bar.filter_state
+        logger.debug("[init] TitleBar 创建完成")
 
-        # ── 过滤栏（搜索 + 状态过滤） ──
-        self._filter_text = QLineEdit()
-        self._filter_text.setPlaceholderText("搜索任务...")
-        self._filter_text.setClearButtonEnabled(True)
+        # ── Screen / Area 抽象 ──
+        self._screen = Screen("默认")
 
-        self._filter_state = QComboBox()
-        self._filter_state.addItems(["所有状态", "pending", "active", "done", "blocked", "cancelled"])
-        logger.debug("[init] 过滤栏创建完成")
-
-        filter_row = QHBoxLayout()
-        filter_row.setContentsMargins(4, 4, 4, 0)
-        filter_row.setSpacing(4)
-        filter_row.addWidget(self._filter_text, 3)
-        filter_row.addWidget(self._filter_state, 2)
-
-        # ── 树视图（主侧边栏） ──
+        # ── 任务树（主工作区，全宽） ──
         self._tree = QTreeView()
         self._tree.setHeaderHidden(True)
         self._tree.setAnimated(True)
-        self._tree.setIndentation(14)  # 缩进减半
+        self._tree.setIndentation(14)
         self._tree.setRootIsDecorated(True)
         self._tree.setExpandsOnDoubleClick(True)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
-        # ── 树头部栏（标题 + 刷新按钮） ──
+        # ── 树头部栏（标题 + 刷新 + 展开按钮） ──
         tree_header = QWidget()
         tree_header_lay = QHBoxLayout(tree_header)
         tree_header_lay.setContentsMargins(8, 4, 4, 4)
@@ -649,9 +673,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_btn.clicked.connect(self._load)
         tree_header_lay.addWidget(self._refresh_btn)
-
-        # ── 展开/折叠切换按钮 ──
-        self._expand_all = True  # 当前状态：已展开
+        self._expand_all = True
         self._expand_btn = QToolButton()
         self._expand_btn.setText("▼")
         self._expand_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -670,40 +692,37 @@ class MainWindow(QMainWindow):
         tree_layout.setContentsMargins(0, 0, 0, 0)
         tree_layout.setSpacing(0)
         tree_layout.addWidget(tree_header)
-        tree_layout.addLayout(filter_row)
         tree_layout.addWidget(self._tree)
 
-        self._primary_sidebar = QDockWidget("任务树", self)
-        self._primary_sidebar.setObjectName("PrimarySidebar")
-        self._primary_sidebar.setWidget(tree_container)
-        self._primary_sidebar.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._primary_sidebar)
-        logger.debug("[init] 树面板 + Dock 创建完成")
-
-        # ── 详情面板（中央 Editor） ──
+        # ── 详情面板（后续嵌入 Overlay） ──
         self._detail = DetailView()
         self._detail.task_saved.connect(self._on_task_saved)
-        self.setCentralWidget(self._detail)
 
-        # _detail 就绪后再启动 socket（防止 GatewayCLI 命令在 _detail 未创建时到达）
-
-        # ── Agent 对话面板（右侧 dock） ──
+        # ── Agent 对话面板（后续嵌入 Overlay tab） ──
         self._chat = AgentChatPanel(self)
-        self._chat_dock = QDockWidget("Agent", self)
-        self._chat_dock.setObjectName("ChatPanel")
-        self._chat_dock.setWidget(self._chat)
-        self._chat_dock.setMinimumWidth(360)
-        self._chat_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._chat_dock)
+
+        # ── Overlay 面板（右侧滑入，含详情 + Agent tab） ──
+        self._overlay = OverlayPanel()
+        self._overlay.set_panels(self._detail, self._chat)
+        self._overlay.panel_closed.connect(self._on_overlay_closed)
+
+        # ── 中央 Splitter（推挤布局：树 + overlay） ──
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setHandleWidth(1)
+        self._splitter.setStyleSheet("QSplitter::handle { background: #45475a; }")
+        self._splitter.addWidget(tree_container)
+        self._splitter.addWidget(self._overlay)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._splitter.setSizes([800, 0])
+        self.setCentralWidget(self._splitter)
+        logger.debug("[init] 中央 Splitter + Overlay 创建完成")
 
         self._gateway.start()
         logger.debug("[init] Gateway 启动完成")
 
-        # ── 底部面板（输出 / Agent 列表等） ──
+        # ── 底部面板（输出 / Agent 列表 / 指标） ──
         self._log_panel = LogPanel(self)
 
         self._agent_panel = QPlainTextEdit()
@@ -717,17 +736,48 @@ class MainWindow(QMainWindow):
         self._panel_dock = QDockWidget("面板", self)
         self._panel_dock.setObjectName("Panel")
         self._panel_dock.setWidget(self._panel_tabs)
-        self._panel_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
+        self._panel_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._panel_dock)
         self._panel_dock.hide()
-        logger.debug("[init] 底部面板创建完成")
 
-        # ── ActivityBar → Dock 绑定 ──
-        self._activity_bar.set_dock(0, self._primary_sidebar)   # 📁
-        self._activity_bar.set_dock(1, self._chat_dock)         # 💬
-        self._activity_bar.set_dock(2, self._panel_dock)        # 📋
+        # ── Screen → Area 组装 ──
+        tree_panel = Panel("task_tree", "任务树", tree_container, "📁")
+        self._screen.add_area(Area("left", [tree_panel]))
+
+        detail_panel = Panel("task_detail", "详情", self._detail, "🖥")
+        chat_panel = Panel("agent_chat", "Agent", self._chat, "💬")
+        self._screen.add_area(
+            Area(
+                "right",
+                [detail_panel, chat_panel],
+                exclusive_group="side",
+                is_overlay=True,
+                max_width=OverlayPanel.DEFAULT_WIDTH,
+            )
+        )
+
+        output_panel = Panel("output_log", "输出", self._log_panel, "📋")
+        agent_list_panel = Panel("agent_list", "Agent 列表", self._agent_panel, "🤖")
+        self._screen.add_area(
+            Area(
+                "bottom",
+                [output_panel, agent_list_panel],
+            )
+        )
+
+        self._screen.on_toggle(self._sync_ui)
+        logger.debug("[init] Screen/Area 组装完成")
+
+        # ── 顶栏/底栏按钮 → Screen toggle ──
+        self._title_bar.toggle_area.connect(
+            lambda aid, pid: self._screen.toggle_area(aid, panel_id=pid)
+        )
+        self._status_bar = StatusBar(self)
+        self.setStatusBar(self._status_bar)
+        self._status_bar.toggle_area.connect(
+            lambda aid, pid: self._screen.toggle_area(aid, panel_id=pid)
+        )
+        logger.debug("[init] 底栏 + 顶栏创建完成")
 
         # ── 菜单栏 ──
         self._setup_menu()
@@ -736,11 +786,13 @@ class MainWindow(QMainWindow):
         self._metrics = MetricsStore()
         # 注入 MetricsStore 到日志 → metrics handler
         from diydev.app._app_log import get_metrics_handler
+
         mh = get_metrics_handler()
         if mh is not None:
             mh.set_store(self._metrics)
         # 指标面板（依赖 _metrics）
         from diydev.app._metrics_panel import MetricsPanel
+
         self._metrics_panel = MetricsPanel(self._metrics)
         self._panel_tabs.addTab(self._metrics_panel, "指标")
         logger.debug("[init] MetricsPanel 创建完成")
@@ -766,6 +818,7 @@ class MainWindow(QMainWindow):
         self._watcher.addPath(state_path)
         # ~/.diy/task/ 目录变化（CLI 创建/删除任务）→ 自动 reload
         from diydev._state import _data_root
+
         data_path = str(_data_root())
         os.makedirs(data_path, exist_ok=True)
         self._watcher.addPath(data_path)
@@ -808,7 +861,11 @@ class MainWindow(QMainWindow):
         这对应 macOS 的 NSApplicationDidBecomeActiveNotification，
         在此之前创建 QWebEngineView 会导致 use-after-free SIGSEGV。
         """
-        if event and event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+        if (
+            event
+            and event.type() == QEvent.Type.ActivationChange
+            and self.isActiveWindow()
+        ):
             _mark_webengine_ready()
         super().changeEvent(event)
 
@@ -826,15 +883,6 @@ class MainWindow(QMainWindow):
         # ── 视图菜单 ──
         view_menu = menubar.addMenu("视图")
 
-        toggle_sidebar = QAction("任务树", self, checkable=True)
-        toggle_sidebar.setChecked(True)
-        toggle_sidebar.setShortcut("Ctrl+B")
-        toggle_sidebar.triggered.connect(self._primary_sidebar.setVisible)
-        self._primary_sidebar.visibilityChanged.connect(toggle_sidebar.setChecked)
-        view_menu.addAction(toggle_sidebar)
-
-        view_menu.addSeparator()
-
         toggle_output = QAction("输出", self, checkable=True)
         toggle_output.setChecked(False)
         toggle_output.setShortcut("Ctrl+`")
@@ -843,10 +891,35 @@ class MainWindow(QMainWindow):
         view_menu.addAction(toggle_output)
 
     def _toggle_panel(self, visible: bool, tab_index: int = 0) -> None:
-        self._panel_dock.setVisible(visible)
-        if visible:
-            self._panel_tabs.setCurrentIndex(tab_index)
-            self._panel_dock.raise_()
+        # 通过 Screen 统一管理（同步到按钮状态）
+        panel_id = "output_log" if tab_index == 0 else "agent_list"
+        self._screen.toggle_area("bottom", panel_id=panel_id)
+
+    def _sync_ui(self, aid: str, visible: bool, panel_id: str) -> None:
+        """Screen toggle → Qt UI 同步。"""
+        if aid == "right":
+            if visible:
+                area = self._screen.area("right")
+                idx = area.active_panel_index if area else 0
+                self._overlay.show_panel(idx)
+            else:
+                self._overlay.close_panel()
+            self._title_bar.set_button_checked(aid, panel_id, visible)
+        elif aid == "bottom":
+            self._panel_dock.setVisible(visible)
+            if visible:
+                area = self._screen.area("bottom")
+                idx = area.active_panel_index if area else 0
+                self._panel_tabs.setCurrentIndex(idx)
+                self._panel_dock.raise_()
+            self._status_bar.set_button_checked(visible)
+        elif aid == "left":
+            # 任务树始终可见，无需 toggle
+            pass
+
+    def _on_overlay_closed(self) -> None:
+        """Overlay 关闭（Esc / 点击树区）→ 同步 Screen 状态。"""
+        self._screen.hide_area("right")
 
     @guarded("task_saved")
     def _on_task_saved(self, uri: str) -> None:
@@ -883,7 +956,12 @@ class MainWindow(QMainWindow):
         self._render_tree()
         subjects = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "subject")
         tasks = sum(1 for n in self._iter_nodes(self._nodes) if n.kind == "task")
-        logger.debug("[main] 重载完成 — %d subject, %d task, %d root", subjects, tasks, len(self._nodes))
+        logger.debug(
+            "[main] 重载完成 — %d subject, %d task, %d root",
+            subjects,
+            tasks,
+            len(self._nodes),
+        )
 
     def _render_tree(self) -> None:
         source = build_model(self._nodes)
@@ -976,6 +1054,7 @@ class MainWindow(QMainWindow):
         if time.time() - self._started_at < 3.0:
             return
         from diydev._state import _data_root
+
         tasks_dir = str(_data_root())
         d_dir = str(diy_home() / "d")
         star_dir = str(diy_home() / "star")
@@ -1007,9 +1086,11 @@ class MainWindow(QMainWindow):
     # ── 健康自检 ──
     @guarded("health")
     def _on_health_check(self) -> None:
-        sock_dev = getattr(self._gateway, '_sock_dev', None)
-        sock_ino = getattr(self._gateway, '_sock_ino', None)
-        critical = [i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"]
+        sock_dev = getattr(self._gateway, "_sock_dev", None)
+        sock_ino = getattr(self._gateway, "_sock_ino", None)
+        critical = [
+            i for i in run_check(sock_dev, sock_ino) if i.severity == "critical"
+        ]
         self._metrics.gauge("health.critical", len(critical))
         self._metrics.counter("health.checks")
         if critical:
@@ -1017,7 +1098,9 @@ class MainWindow(QMainWindow):
             logger.warning("[health] 发现 %d 个严重问题, 退出", len(critical))
             # ... 退出逻辑不变
             for iss in critical:
-                logger.warning("[health]   [%s] %s — %s", iss.code, iss.message, iss.detail[:200])
+                logger.warning(
+                    "[health]   [%s] %s — %s", iss.code, iss.message, iss.detail[:200]
+                )
             self._health_timer.stop()
             # 直接退出，不留错误面板
             QApplication.instance().quit()
@@ -1052,16 +1135,13 @@ class MainWindow(QMainWindow):
             html += (
                 f'<div class="issue">'
                 f'<div class="msg">[{iss.code}] {iss.message}</div>'
-                f'<div>{self._esc_html(iss.detail)}</div>'
-                f'</div>'
+                f"<div>{self._esc_html(iss.detail)}</div>"
+                f"</div>"
             )
         html += (
-            '<div class="hint">'
-            '建议：关闭本窗口 → kill 残留进程 → 重新启动'
-            '</div></div>'
+            '<div class="hint">建议：关闭本窗口 → kill 残留进程 → 重新启动</div></div>'
         )
         self._detail.show_placeholder(html)
-        self.setCentralWidget(self._detail)
         self.setWindowTitle("⚠️ 应用故障")
 
     # ── 右键菜单 ──
@@ -1083,14 +1163,23 @@ class MainWindow(QMainWindow):
         # 所有节点都可以创建子任务
         new_act = menu.addAction("✨ 新建任务")
         if kind == "task":
-            new_act.triggered.connect(lambda checked, t=task_uri: self._open_create_task(parent_uri=t))
+            new_act.triggered.connect(
+                lambda checked, t=task_uri: self._open_create_task(parent_uri=t)
+            )
         elif kind == "subject":
             subj = index.data(ROLE_SUBJECT) or next(
-                (k for k, v in _subjects_from_state().items()
-                 if k == subject_path or k == index.data(Qt.ItemDataRole.DisplayRole)),
-                None
+                (
+                    k
+                    for k, v in _subjects_from_state().items()
+                    if k == subject_path or k == index.data(Qt.ItemDataRole.DisplayRole)
+                ),
+                None,
             )
-            new_act.triggered.connect(lambda checked, s=subj or subject_path: self._open_create_task(subject=s))
+            new_act.triggered.connect(
+                lambda checked, s=subj or subject_path: self._open_create_task(
+                    subject=s
+                )
+            )
         else:
             new_act.triggered.connect(lambda: self._open_create_task())
 
@@ -1101,17 +1190,25 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
 
             state_menu = menu.addMenu("更改状态")
-            for s, label in [("pending", "⏳ Pending"), ("active", "🔄 Active"),
-                             ("done", "✅ Done"), ("blocked", "🚫 Blocked"),
-                             ("cancelled", "❌ Cancelled")]:
+            for s, label in [
+                ("pending", "⏳ Pending"),
+                ("active", "🔄 Active"),
+                ("done", "✅ Done"),
+                ("blocked", "🚫 Blocked"),
+                ("cancelled", "❌ Cancelled"),
+            ]:
                 if s != state:
                     act = state_menu.addAction(label)
-                    act.triggered.connect(lambda checked, t=task_uri, ns=s: self._set_state(t, ns))
+                    act.triggered.connect(
+                        lambda checked, t=task_uri, ns=s: self._set_state(t, ns)
+                    )
 
             menu.addSeparator()
 
             spawn_act = menu.addAction("🤖 启动 agent")
-            spawn_act.triggered.connect(lambda checked, t=task_uri: self._spawn_agent(t))
+            spawn_act.triggered.connect(
+                lambda checked, t=task_uri: self._spawn_agent(t)
+            )
 
             steer_act = menu.addAction("💬 /steer 通信")
             steer_act.triggered.connect(lambda checked, t=task_uri: self._open_steer(t))
@@ -1129,6 +1226,7 @@ class MainWindow(QMainWindow):
     @guarded("action.state")
     def _set_state(self, uri: str, new_state: str) -> None:
         import subprocess
+
         subprocess.run(
             ["dai", "task", "edit", uri, "--state", new_state],
             capture_output=True,
@@ -1139,6 +1237,7 @@ class MainWindow(QMainWindow):
     def _unstar_task(self, uri: str) -> None:
         """取消关注（unstar）任务 — 删除 symlink，数据不动。"""
         from diydev._state import get_task, unstar_task
+
         task = get_task(uri)
         if not task:
             return
@@ -1150,6 +1249,7 @@ class MainWindow(QMainWindow):
         """启动 agent for 一个 task。"""
         # 通过 Gateway 发送 diy agent spawn 命令
         from diydev._state import get_task
+
         task = get_task(uri)
         if not task:
             return
@@ -1158,7 +1258,9 @@ class MainWindow(QMainWindow):
         self._chat.send_text(prompt)
 
     @guarded("action.create")
-    def _open_create_task(self, parent_uri: str | None = None, subject: str | None = None) -> None:
+    def _open_create_task(
+        self, parent_uri: str | None = None, subject: str | None = None
+    ) -> None:
         """打开创建任务对话框。"""
         dlg = _CreateTaskDialog(self, parent_uri=parent_uri, initial_subject=subject)
         if dlg.exec():
@@ -1197,9 +1299,9 @@ class MainWindow(QMainWindow):
             return
 
         if kind != "task" or not task_uri:
-            self._detail.show_placeholder(f"""<!DOCTYPE html>
+            self._detail.show_placeholder("""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-  body {{ background: #1e1e2e; color: #a6adc8; font-family: -apple-system, sans-serif; font-size: 14px; padding: 20px; }}
+  body { background: #1e1e2e; color: #a6adc8; font-family: -apple-system, sans-serif; font-size: 14px; padding: 20px; }
 </style></head><body>
 <div>选择任务查看详情</div>
 </body></html>""")
@@ -1227,6 +1329,7 @@ class MainWindow(QMainWindow):
         full_body_html: str | None = None
         if node and node.body:
             from markdown_it import MarkdownIt
+
             md = MarkdownIt("gfm-like", {"breaks": True, "html": True})
             md.disable("linkify")  # 不依赖 linkify-it-py
             rendered = md.render(node.body)
@@ -1235,7 +1338,9 @@ class MainWindow(QMainWindow):
         # Metadata row
         meta: list[str] = []
         if node and node.subject_path:
-            meta.append(f"""<span class="tag">📂 {_esc_html(node.subject_path)}</span>""")
+            meta.append(
+                f"""<span class="tag">📂 {_esc_html(node.subject_path)}</span>"""
+            )
         if node and node.parent_uri:
             meta.append(f"""<span class="tag">⬆ 父任务 {node.parent_uri}</span>""")
         if node and node.created:
@@ -1243,7 +1348,7 @@ class MainWindow(QMainWindow):
         if node and node.updated:
             meta.append(f"""<span class="tag">🔄 更新 {node.updated}</span>""")
         if meta:
-            parts.append(f"""<div class="meta">{' '.join(meta)}</div>""")
+            parts.append(f"""<div class="meta">{" ".join(meta)}</div>""")
 
         # Divider
         parts.append("<hr>")
@@ -1254,7 +1359,9 @@ class MainWindow(QMainWindow):
             for a in node.agents:
                 icons = {"running": "🟢", "done": "✅", "blocked": "🔴"}
                 icon = icons.get(a.state, "⏳")
-                parts.append(f"""<div class="agent">{icon} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>""")
+                parts.append(
+                    f"""<div class="agent">{icon} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>"""
+                )
         else:
             parts.append("""<div class="hint">无运行中的 agent</div>""")
 
@@ -1302,6 +1409,8 @@ class MainWindow(QMainWindow):
 
         self._detail.show_task(task_uri, node, html_doc)
         self._chat.set_task(task_uri)
+        # 选中任务 → 展示右侧面板（不 toggle）
+        self._screen.show_area("right", panel_id="task_detail")
 
     @guarded("tree.double")
     def _on_double_click(self, index):
@@ -1318,6 +1427,7 @@ class MainWindow(QMainWindow):
                 if r:
                     return r
             return None
+
         return _search(self._nodes)
 
     # ── 通知弹窗 ──
@@ -1362,6 +1472,7 @@ class MainWindow(QMainWindow):
         """
         if all_tasks:
             from diydev.app.task_tree import load_task_tree
+
             nodes = load_task_tree(all_tasks=True)
             return self._render_nodes_text(nodes)
         proxy = self._tree.model()
@@ -1405,7 +1516,8 @@ class MainWindow(QMainWindow):
                 else:
                     t += 1
                 cs, ct = _count(n.children)
-                s += cs; t += ct
+                s += cs
+                t += ct
             return s, t
 
         subjects, tasks = _count(self._nodes)
@@ -1415,26 +1527,145 @@ class MainWindow(QMainWindow):
         state_path = str(diy_home() / "state.yaml")
         state_exists = os.path.isfile(state_path)
 
-        return "\n".join([
-            f"pid:       {os.getpid()}",
-            f"uptime:    {now - self._started_at:.0f}s",
-            f"reload:    {now - self._last_reload:.0f}s ago",
-            f"window:    {geom.width()}×{geom.height()} @ ({geom.x()},{geom.y()}) "
-            f"{'hidden' if self.isHidden() else 'visible'}"
-            f"{' minimized' if self.isMinimized() else ''}",
-            f"tree:      {subjects} subjects + {tasks} tasks = {subjects + tasks} nodes "
-            f"(model rows: {model_rows})",
-            f"state:     {state_path} {'✅' if state_exists else '❌ missing'}",
-            f"socket:    {self._gateway._path} {'✅' if self._gateway._server else '❌'}",
-            f"watchers:  {len(self._watcher.files()) + len(self._watcher.directories())} paths",
-            f"timers:    refresh={self._refresh_timer.interval()}ms",
-            f"qt:        {'running' if QApplication.instance() else 'stopped'}",
-            f"focus:     {type(self.focusWidget()).__name__ if self.focusWidget() else 'none'}",
-            f"sandbox:   {'⚡ ' + self._sandbox_path if self._sandbox else 'no'}",
-            f"docks:     tree={'✓' if self._primary_sidebar.isVisible() else '✗'} "
-            f"chat={'✓' if hasattr(self, '_chat_dock') and self._chat_dock.isVisible() else '✗'} "
-            f"panel={'✓' if hasattr(self, '_panel_dock') and self._panel_dock.isVisible() else '✗'}",
-        ])
+        return "\n".join(
+            [
+                f"pid:       {os.getpid()}",
+                f"uptime:    {now - self._started_at:.0f}s",
+                f"reload:    {now - self._last_reload:.0f}s ago",
+                f"window:    {geom.width()}×{geom.height()} @ ({geom.x()},{geom.y()}) "
+                f"{'hidden' if self.isHidden() else 'visible'}"
+                f"{' minimized' if self.isMinimized() else ''}",
+                f"tree:      {subjects} subjects + {tasks} tasks = {subjects + tasks} nodes "
+                f"(model rows: {model_rows})",
+                f"state:     {state_path} {'✅' if state_exists else '❌ missing'}",
+                f"socket:    {self._gateway._path} {'✅' if self._gateway._server else '❌'}",
+                f"watchers:  {len(self._watcher.files()) + len(self._watcher.directories())} paths",
+                f"timers:    refresh={self._refresh_timer.interval()}ms",
+                f"qt:        {'running' if QApplication.instance() else 'stopped'}",
+                f"focus:     {type(self.focusWidget()).__name__ if self.focusWidget() else 'none'}",
+                f"sandbox:   {'⚡ ' + self._sandbox_path if self._sandbox else 'no'}",
+                f"docks:     tree=✓ "
+                f"overlay={'✓' if self._overlay.is_visible() else '✗'} "
+                f"panel={'✓' if hasattr(self, '_panel_dock') and self._panel_dock.isVisible() else '✗'}",
+            ]
+        )
+
+    def format_screen(self) -> str:
+        """Screen / Area / Overlay 状态快照（供 dai ui screen 查询）。"""
+        lines = [f"screen: {self._screen.name}"]
+        for aid in ["left", "right", "bottom"]:
+            area = self._screen.area(aid)
+            if area is None:
+                continue
+            vis = "✓" if area.visible else "✗"
+            panels = ", ".join(
+                f"{'👉' if i == area.active_panel_index else ' '}{p.id}"
+                for i, p in enumerate(area.panels)
+            )
+            exclusive = (
+                f" [互斥组:{area.exclusive_group}]" if area.exclusive_group else ""
+            )
+            lines.append(f"  {aid}: {vis} panels=[{panels}]{exclusive}")
+
+        # overlay 细节
+        ov = self._overlay.state()
+        lines.append(
+            f"overlay: width={ov['width']} max={ov['max_width']} "
+            f"anim={'是' if ov['animating'] else '否'} "
+            f"show_count={ov['show_count']} tab={ov['tab_index']}"
+        )
+
+        # 按钮状态
+        btn_state = []
+        for btn in self._title_bar.findChildren(QToolButton):
+            if isinstance(btn, QToolButton) and btn.isCheckable():
+                btn_state.append(f"{btn.text()}{'✓' if btn.isChecked() else '✗'}")
+        if btn_state:
+            lines.append(f"buttons: {' '.join(btn_state)}")
+
+        return "\n".join(lines)
+
+    def format_log(
+        self,
+        n: int = 50,
+        level: str | None = None,
+        category: str | None = None,
+        pretty: bool = True,
+    ) -> str:
+        """读取 ~/.diy/app.log，返回最近 n 条日志。
+
+        pretty=True → 人类可读文本（含级别/分类/消息，与 LogPanel 一致）
+        pretty=False → 原始 JSONL（精确对比）
+        """
+        log_path = diy_home() / "app.log"
+        if not log_path.exists():
+            return "[日志文件不存在]"
+        try:
+            import json
+            from collections import deque
+
+            VALID_LEVELS = {"ERROR", "WARNING", "INFO", "DEBUG"}
+
+            buf = deque()
+            with open(log_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # 级别过滤
+                    if level and entry.get("l") != level.upper():
+                        continue
+                    # 分类过滤
+                    if category and entry.get("c") != category:
+                        continue
+
+                    buf.append(entry)
+                    if len(buf) > n:
+                        buf.popleft()
+
+            if pretty:
+                lines = []
+                for e in buf:
+                    cat = e.get("c", "")
+                    lvl = e.get("l", "")
+                    msg = e.get("m", "")
+                    t = e.get("t", "")[11:19]  # HH:MM:SS
+                    cat_str = f"[{cat}] " if cat else ""
+                    lines.append(f"{t} {lvl:5s} {cat_str}{msg}")
+                result = "\n".join(lines)
+                # 统计
+                counts: dict[str, int] = {}
+                for e in buf:
+                    l = e.get("l", "")
+                    counts[l] = counts.get(l, 0) + 1
+                summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+                return f"--- 最近 {len(buf)} 条 ({summary}) ---\n{result}"
+            else:
+                # 原始 JSONL
+                return "\n".join(json.dumps(e, ensure_ascii=False) for e in buf)
+        except Exception as exc:
+            return f"[读取日志失败] {exc}"
+
+    def format_logpanel(self) -> str:
+        """读取 LogPanel 当前显示的文本（直接读 widget），用于对比 UI 与文件。"""
+        if not hasattr(self, "_log_panel") or not self._log_panel:
+            return "[LogPanel 未初始化]"
+        try:
+            text = self._log_panel._text.toPlainText()
+            if not text:
+                return "[LogPanel 为空]"
+            lines = text.split("\n")
+            # 只返回最后 50 行
+            recent = lines[-50:] if len(lines) > 50 else lines
+            stats = f"--- LogPanel 共 {len(lines)} 行，显示最近 {len(recent)} 行 ---"
+            return stats + "\n" + "\n".join(recent)
+        except Exception as exc:
+            return f"[读取 LogPanel 失败] {exc}"
 
     @staticmethod
     def _dump_model_rows(
@@ -1472,7 +1703,9 @@ class MainWindow(QMainWindow):
         if node.body:
             # 探针输出 body 第一行 + ... 提示
             body_preview = node.body.split("\n")[0]
-            lines.append(f"  body:    {body_preview}{' ...' if len(node.body.splitlines()) > 1 else ''}")
+            lines.append(
+                f"  body:    {body_preview}{' ...' if len(node.body.splitlines()) > 1 else ''}"
+            )
         if node.children:
             lines.append("  child_list:")
             for c in node.children:
@@ -1480,7 +1713,9 @@ class MainWindow(QMainWindow):
         if node.agents:
             lines.append("  agents:")
             for a in node.agents:
-                icon = {"running": "🤖", "done": "✅", "blocked": "🚫"}.get(a.state, "⏳")
+                icon = {"running": "🤖", "done": "✅", "blocked": "🚫"}.get(
+                    a.state, "⏳"
+                )
                 lines.append(f"    {icon} {a.agent_id} (pid={a.pid}, state={a.state})")
         return "\n".join(lines)
 
@@ -1514,13 +1749,17 @@ import fcntl
 import socket
 import socketserver
 import threading
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from cyclopts import App as CycloptsApp
 from cyclopts.exceptions import UnknownCommandError
-from PySide6.QtCore import QMetaObject, Qt as QtCore, Q_ARG, QTimer  # type: ignore[import-untyped]
-from PySide6.QtCore import QObject  # type: ignore[import-untyped]
-
+from PySide6.QtCore import (  # type: ignore[import-untyped]
+    Q_ARG,
+    QMetaObject,
+    QObject,  # type: ignore[import-untyped]
+)
+from PySide6.QtCore import Qt as QtCore
 
 T = TypeVar("T")
 
@@ -1544,7 +1783,9 @@ class _InvokeEvent(QEvent):
         self.done.set()
 
     @classmethod
-    def create(cls, fn: Callable[[], T], ret: list[T], done: threading.Event) -> "_InvokeEvent":
+    def create(
+        cls, fn: Callable[[], T], ret: list[T], done: threading.Event
+    ) -> _InvokeEvent:
         return cls(fn, ret, done)
 
 
@@ -1567,6 +1808,7 @@ class MainThread:
         timeout 超时后抛出 TimeoutError。
         """
         import threading
+
         ret: list[T] = []
         done = threading.Event()
         evt = _InvokeEvent.create(fn, ret, done)
@@ -1588,7 +1830,7 @@ class GatewayCLI:
     加命令→两处都加。移动命令→搜 grep -rn '"diy <旧>"' src/。
     """
 
-    def __init__(self, window: "MainWindow"):
+    def __init__(self, window: MainWindow):
         self._window = window
         self._main = MainThread(window)
         self._app = CycloptsApp(name="gateway")
@@ -1600,9 +1842,10 @@ class GatewayCLI:
         def doctor():
             """分层健康自检 — app 状态 / socket 健康 / 多实例 / state.yaml"""
             from diydev.app._doctor import format_report, run_check
+
             gw = self._window._gateway
-            sock_dev = getattr(gw, '_sock_dev', None)
-            sock_ino = getattr(gw, '_sock_ino', None)
+            sock_dev = getattr(gw, "_sock_dev", None)
+            sock_ino = getattr(gw, "_sock_ino", None)
             return format_report(run_check(sock_dev, sock_ino))
 
         # ── ui ── 聊天面板交互 ──
@@ -1621,14 +1864,56 @@ class GatewayCLI:
             """健康检查（pid/dock 可见性/焦点/窗口/定时器）。
 
             范例: dai ui status
-            输出: pid, uptime, window, docks: tree=✓ chat=✓ panel=✗, focus: QTreeView
+            输出: pid, uptime, window, overlay=✗, panel=✗, focus: QTreeView
             """
             return self._main.invoke(self._window.format_status)
+
+        @ui_app.command(name="screen")
+        def ui_screen():
+            """Screen / Area / Overlay 状态快照。
+
+            范例: dai ui screen
+            输出: screen 名称 + 各 area 可见性/活跃 panel + overlay 动画状态
+            """
+            return self._main.invoke(self._window.format_screen)
 
         @ui_app.command(name="agents")
         def ui_agents():
             """agent 列表"""
             return self._main.invoke(self._window.format_agents)
+
+        @ui_app.command(name="log")
+        def ui_log(
+            *,
+            lines: int = 50,
+            level: str | None = None,
+            category: str | None = None,
+            pretty: bool = True,
+        ):
+            """读取 ~/.diy/app.log，用于对比 UI LogPanel 与实际日志。
+
+            Args:
+                lines: 返回行数（默认 50）
+                level: 过滤级别（ERROR / WARNING / INFO / DEBUG）
+                category: 过滤分类前缀（watcher / timer / health / async 等）
+                pretty: True=人类可读文本 False=原始 JSONL
+            """
+            return self._main.invoke(
+                lambda: self._window.format_log(
+                    n=lines,
+                    level=level,
+                    category=category,
+                    pretty=pretty,
+                )
+            )
+
+        @ui_app.command(name="logpanel")
+        def ui_logpanel():
+            """直接读取 LogPanel widget 当前显示的内容，与日志文件对比。
+
+            用于验证文件/stderr/LogPanel 三路输出是否一致。
+            """
+            return self._main.invoke(self._window.format_logpanel)
 
         @ui_app.command(name="reload")
         def ui_reload():
@@ -1663,38 +1948,57 @@ class GatewayCLI:
 
             范例: dai ui task detail local/task/1
             """
+
             def _do():
-                panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+                panel = (
+                    self._window._chat
+                    if hasattr(self._window, "_chat") and self._window._chat
+                    else None
+                )
                 if panel is None:
                     return "error: UI 尚未初始化"
                 panel.set_task(uri)
                 from markdown_it import MarkdownIt as _md
+
                 node = self._window._find_node(uri)
                 if not node:
                     return f"错误: 任务 {uri} 不存在"
                 _md_parser = _md("gfm-like", {"breaks": True, "html": True})
                 _md_parser.disable("linkify")
-                parts = [f'<div class="header">{uri} ' + _state_badge(node.state) + '</div>']
+                parts = [
+                    f'<div class="header">{uri} ' + _state_badge(node.state) + "</div>"
+                ]
                 if node.title:
                     parts.append(f'<div class="title">{_esc_html(node.title)}</div>')
                 if node.detail:
-                    parts.append(f'<div class="detail">{_esc_html(node.detail).replace(chr(10), "<br>")}</div>')
+                    parts.append(
+                        f'<div class="detail">{_esc_html(node.detail).replace(chr(10), "<br>")}</div>'
+                    )
                 body_html = ""
                 if node.body:
                     rendered = _md_parser.render(node.body)
                     body_html = f'<hr><div class="section-title">📄 文档</div><div class="md-body">{rendered}</div>'
                 meta_parts = []
                 if node.subject_path:
-                    meta_parts.append(f'<span class="tag">📂 {_esc_html(node.subject_path)}</span>')
+                    meta_parts.append(
+                        f'<span class="tag">📂 {_esc_html(node.subject_path)}</span>'
+                    )
                 if node.parent_uri:
-                    meta_parts.append(f'<span class="tag">⬆ 父任务 {node.parent_uri}</span>')
+                    meta_parts.append(
+                        f'<span class="tag">⬆ 父任务 {node.parent_uri}</span>'
+                    )
                 if meta_parts:
                     parts.append(f'<div class="meta">{" ".join(meta_parts)}</div>')
                 parts.append("<hr>")
-                parts.append('<div class="hint">无运行中的 agent</div>' if not node.agents else
-                    '<div class="section-title">🤖 Agent</div>' + "".join(
-                        f'<div class="agent">{"🟢" if a.state=="running" else "✅" if a.state=="done" else "🔴"} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>'
-                        for a in node.agents))
+                parts.append(
+                    '<div class="hint">无运行中的 agent</div>'
+                    if not node.agents
+                    else '<div class="section-title">🤖 Agent</div>'
+                    + "".join(
+                        f'<div class="agent">{"🟢" if a.state == "running" else "✅" if a.state == "done" else "🔴"} <code>{_esc_html(a.agent_id)}</code> — {a.state}</div>'
+                        for a in node.agents
+                    )
+                )
                 header_html = "".join(parts)
                 if body_html:
                     header_html += body_html
@@ -1737,6 +2041,7 @@ class GatewayCLI:
                 # show_task 内部调用 _ensure_view，若窗口未 active 会自动延迟重试。
                 # 参见 DetailView._ensure_view / show_task 的 macOS 安全检测。
                 self._window._detail.show_task(uri, node, html_doc)
+                self._window._screen.show_area("right", panel_id="task_detail")
                 return f"OK: 已选中 {uri}"
 
             return self._main.invoke(_do)
@@ -1753,11 +2058,14 @@ class GatewayCLI:
             """为当前已选中的任务设置编辑字段并切换到编辑模式。
             先用 `dai ui task detail <uri>` 选中任务。
             支持 --title / --body / --body-file。"""
+
             def _set_fields():
                 detail = self._window._detail
                 uri = detail._current_task_uri
                 if not uri:
-                    return "错误: 没有选中的任务。先用 `dai ui task detail <uri>` 选中。"
+                    return (
+                        "错误: 没有选中的任务。先用 `dai ui task detail <uri>` 选中。"
+                    )
                 node = self._window._find_node(uri)
                 if node is None:
                     return f"错误: 任务 {uri} 不存在"
@@ -1766,13 +2074,18 @@ class GatewayCLI:
                 if body_file is not None and body is None:
                     try:
                         from pathlib import Path
+
                         body_text = Path(body_file).read_text(encoding="utf-8")
                     except OSError as exc:
                         return f"错误: 无法读取 body 文件: {exc}"
 
                 detail._current_node = node
-                detail._edit_title.setText(title if title is not None else (node.title or ""))
-                detail._edit_body.setPlainText(body_text if body_text is not None else (node.body or ""))
+                detail._edit_title.setText(
+                    title if title is not None else (node.title or "")
+                )
+                detail._edit_body.setPlainText(
+                    body_text if body_text is not None else (node.body or "")
+                )
                 detail._stack.setCurrentIndex(1)
                 detail._edit_btn.hide()
                 detail._save_btn.show()
@@ -1784,6 +2097,7 @@ class GatewayCLI:
         @edit_app.command(name="submit")
         def ui_edit_submit():
             """保存当前编辑并回到查看模式。"""
+
             def _do_save():
                 detail = self._window._detail
                 uri = detail._current_task_uri
@@ -1806,21 +2120,39 @@ class GatewayCLI:
             范例: dai ui chat state
             """
             import yaml as _yaml
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI 尚未初始化"
             panel_state = self._main.invoke(panel.ui_state)
             import io as _io
+
             buf = _io.StringIO()
-            _yaml.dump(panel_state, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                panel_state,
+                buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return buf.getvalue()
 
         @chat_app.command
         def sessions() -> str:
             """当前 task 的 session 列表。"""
-            import yaml as _yaml
             import io as _io
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+
+            import yaml as _yaml
+
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI 尚未初始化"
             panel_state = self._main.invoke(panel.ui_state)
@@ -1828,7 +2160,13 @@ class GatewayCLI:
             if not sessions_list:
                 return "sessions: []"
             buf = _io.StringIO()
-            _yaml.dump({"sessions": sessions_list, "count": len(sessions_list)}, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                {"sessions": sessions_list, "count": len(sessions_list)},
+                buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return buf.getvalue()
 
         @chat_app.command
@@ -1841,7 +2179,11 @@ class GatewayCLI:
             范例: dai ui chat read
             流程: send → wait → read
             """
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI 尚未初始化"
             text = self._main.invoke(panel.ui_chat_log)
@@ -1858,7 +2200,12 @@ class GatewayCLI:
             范例: dai ui chat wait --timeout 120
             """
             import time as _time
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI 尚未初始化"
             out = getattr(self, "_stream_out", None)
@@ -1867,7 +2214,7 @@ class GatewayCLI:
             while _time.time() < deadline:
                 cur = self._main.invoke(panel.ui_chat_log) or ""
                 if cur != last_text:
-                    delta = cur[len(last_text):]
+                    delta = cur[len(last_text) :]
                     last_text = cur
                     if out:
                         out.write(delta)
@@ -1889,13 +2236,22 @@ class GatewayCLI:
         @chat_app.command
         def status():
             """当前 chat panel 状态（task / agent / session / running）。"""
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI \u5c1a\u672a\u521d\u59cb\u5316"
             s = panel.ui_state()
-            import yaml as _yaml, io as _io
+            import io as _io
+
+            import yaml as _yaml
+
             buf = _io.StringIO()
-            _yaml.dump(s, buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                s, buf, allow_unicode=True, default_flow_style=False, sort_keys=False
+            )
             return buf.getvalue()
 
         @chat_app.command
@@ -1910,7 +2266,11 @@ class GatewayCLI:
             范例: dai ui chat send "帮我分析这个项目"
             流程: dai ui task detail <uri> → send → wait → read
             """
-            panel = self._window._chat if hasattr(self._window, '_chat') and self._window._chat else None
+            panel = (
+                self._window._chat
+                if hasattr(self._window, "_chat") and self._window._chat
+                else None
+            )
             if panel is None:
                 return "error: UI 尚未初始化"
             if task:
@@ -1934,25 +2294,38 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """扫描 workspace 与 spaces"""
-            from diydev._dai_scan import find_spaces, find_workspace_root
             import os as _os
+
+            from diydev._dai_scan import find_spaces, find_workspace_root
+
             start = _os.path.realpath(path) if path else _os.path.realpath(_os.getcwd())
             ws = find_workspace_root(start)
             if ws is None:
                 return "错误: 未找到 diy.yaml"
             spaces = find_spaces(ws)
-            import yaml as _yaml
             import json as _json
+
+            import yaml as _yaml
+
             result = {"workspace": ws, "spaces": spaces}
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             import io as _io
+
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         # ── ai profile ──
-        profile_app = CycloptsApp(name="profile", help="查询 state.yaml 中的 profile 预设")
+        profile_app = CycloptsApp(
+            name="profile", help="查询 state.yaml 中的 profile 预设"
+        )
 
         @profile_app.command(name="list")
         def profile_list(
@@ -1960,15 +2333,25 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """列出所有 profile"""
-            from diydev._state import load_state
             import json as _json
+
+            from diydev._state import load_state
+
             profiles = load_state().get("profiles", {})
             if json_output:
                 return _json.dumps(profiles, indent=2, ensure_ascii=False)
             import io as _io
+
             import yaml as _yaml
+
             _buf = _io.StringIO()
-            _yaml.dump(profiles, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                profiles,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @profile_app.command
@@ -1979,17 +2362,27 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """查看单个 profile"""
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._state import load_state
-            import yaml as _yaml, json as _json
+
             profiles = load_state().get("profiles", {})
             if name not in profiles:
                 return f"错误: profile {name} 不存在"
             if json_output:
                 return _json.dumps(profiles[name], indent=2, ensure_ascii=False)
             import io as _io
-            import yaml as _yaml
+
             _buf = _io.StringIO()
-            _yaml.dump(profiles[name], _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                profiles[name],
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         diy.command(profile_app)
@@ -2015,8 +2408,9 @@ class GatewayCLI:
             范例: dai subject add ~/git/diy/_diy --desc "dev 工具项目"
             注意: 路径必须是 git 仓库目录。
             """
-            from diydev.core.subject import add_subject
             from diydev.core.middleware import gateway_call
+            from diydev.core.subject import add_subject
+
             return gateway_call(add_subject, path, desc=desc)
 
         @subject_app.command(name="list")
@@ -2028,15 +2422,29 @@ class GatewayCLI:
 
             范例: dai subject list
             """
-            from diydev._state import load_state, _subject_is_git
-            import yaml as _yaml, json as _json, io as _io
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
+            from diydev._state import _subject_is_git, load_state
+
             data = load_state()
             subjects = data.get("subjects", {})
-            enriched = {p: {**entry, "is_git": _subject_is_git(p)} for p, entry in subjects.items()}
+            enriched = {
+                p: {**entry, "is_git": _subject_is_git(p)}
+                for p, entry in subjects.items()
+            }
             if json_output:
                 return _json.dumps(enriched, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(enriched, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                enriched,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @subject_app.command(name="remove")
@@ -2047,8 +2455,9 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """删除 subject"""
-            from diydev.core.subject import remove_subject
             from diydev.core.middleware import gateway_call
+            from diydev.core.subject import remove_subject
+
             return gateway_call(remove_subject, path)
 
         @subject_app.command(name="show")
@@ -2059,8 +2468,9 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """查看单个 subject（含实时 is_git 检测）"""
-            from diydev.core.subject import show_subject
             from diydev.core.middleware import gateway_call
+            from diydev.core.subject import show_subject
+
             return gateway_call(show_subject, path)
 
         @subject_app.command(name="tree")
@@ -2072,17 +2482,31 @@ class GatewayCLI:
 
             范例: dai subject tree
             """
-            from diydev._state import load_state, _subject_is_git
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._dai_cli import _build_subject_tree
-            import yaml as _yaml, json as _json, io as _io
+            from diydev._state import _subject_is_git, load_state
+
             data = load_state()
             subjects = data.get("subjects", {})
-            enriched = {p: {**entry, "is_git": _subject_is_git(p)} for p, entry in subjects.items()}
+            enriched = {
+                p: {**entry, "is_git": _subject_is_git(p)}
+                for p, entry in subjects.items()
+            }
             tree = _build_subject_tree(enriched)
             if json_output:
                 return _json.dumps(tree, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(tree, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                tree,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @subject_app.command(name="scan")
@@ -2093,15 +2517,22 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """扫描文件系统，发现 git 仓库作为 subject"""
+            import io as _io
+            import json as _json
             import os as _os
-            from diydev._state import load_state, save_state, _norm
-            import yaml as _yaml, json as _json, io as _io
+
+            import yaml as _yaml
+
+            from diydev._state import _norm, load_state, save_state
+
             root_path = _os.path.abspath(_os.path.expanduser(root))
             if not _os.path.isdir(root_path):
                 return f"错误: 目录不存在 {root}"
             found: dict[str, dict] = {}
             for dirpath, dirs, _ in _os.walk(root_path):
-                if _os.path.isdir(_os.path.join(dirpath, ".git")) or _os.path.isfile(_os.path.join(dirpath, ".git")):
+                if _os.path.isdir(_os.path.join(dirpath, ".git")) or _os.path.isfile(
+                    _os.path.join(dirpath, ".git")
+                ):
                     found[_norm(dirpath)] = {}
                     dirs.clear()
             data = load_state()
@@ -2112,7 +2543,13 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         diy.command(subject_app)
@@ -2128,8 +2565,13 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """star 任务（创建 symlink）"""
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._state import get_task, star_task
-            import yaml as _yaml, json as _json, io as _io
+
             task = get_task(uri)
             if task is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2138,7 +2580,13 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @task_app.command(name="unstar")
@@ -2149,8 +2597,13 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """unstar 任务（删除 symlink）"""
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._state import get_task, unstar_task
-            import yaml as _yaml, json as _json, io as _io
+
             task = get_task(uri)
             if task is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2159,7 +2612,13 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @task_app.command(name="list")
@@ -2169,8 +2628,13 @@ class GatewayCLI:
             all: bool = False,
         ):
             """列出任务。默认只显示 starred，--all 显示全部。"""
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._state import is_starred, list_starred, list_tasks
-            import yaml as _yaml, json as _json, io as _io
+
             tasks = dict(list_tasks() if all else list_starred())
             if not all:
                 for k in tasks:
@@ -2178,7 +2642,13 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps({"tasks": tasks}, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump({"tasks": tasks}, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                {"tasks": tasks},
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @task_app.command(name="show")
@@ -2192,8 +2662,12 @@ class GatewayCLI:
 
             范例: dai task show local/task/1
             """
+            import json as _json
+
+            import yaml as _yaml
+
             from diydev._state import get_task
-            import yaml as _yaml, json as _json, sys as _sys
+
             task = get_task(uri)
             if task is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2201,9 +2675,15 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(task, indent=2, ensure_ascii=False)
             import io as _io
-            import yaml as _yaml
+
             _buf = _io.StringIO()
-            _yaml.dump(task, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                task,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             result = _buf.getvalue()
             if body:
                 result += "\n" + body
@@ -2229,11 +2709,19 @@ class GatewayCLI:
             范例: dai task create "子任务" ~/git/diy/_diy --parent local/task/1
             注意: subject 必须已通过 dai subject add 注册。
             """
-            from diydev.core.task import create_task
             from diydev.core.middleware import gateway_call
-            return gateway_call(create_task, title, subject, parent=parent,
-                                detail=detail, body_file=body_file,
-                                source_type=source_type, source_uri=source_uri)
+            from diydev.core.task import create_task
+
+            return gateway_call(
+                create_task,
+                title,
+                subject,
+                parent=parent,
+                detail=detail,
+                body_file=body_file,
+                source_type=source_type,
+                source_uri=source_uri,
+            )
 
         @task_app.command(name="edit")
         def task_edit(
@@ -2253,8 +2741,12 @@ class GatewayCLI:
             范例: dai task edit local/task/1 --title "新标题" --state active
             注意: 不传的参数保持不变。
             """
-            from diydev._state import get_task, update_task_field, _norm
-            import yaml as _yaml, json as _json, sys as _sys
+            import json as _json
+
+            import yaml as _yaml
+
+            from diydev._state import _norm, get_task, update_task_field
+
             if get_task(uri) is None:
                 return f"错误: 任务 {uri} 不存在"
             fields: dict = {}
@@ -2273,6 +2765,7 @@ class GatewayCLI:
             if body_file is not None:
                 try:
                     from pathlib import Path
+
                     fields["body"] = Path(body_file).read_text(encoding="utf-8")
                 except OSError as exc:
                     return f"错误: 无法读取 body 文件: {exc}"
@@ -2281,9 +2774,15 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             import io as _io
-            import yaml as _yaml
+
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @task_app.command(name="delete")
@@ -2294,8 +2793,10 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """删除本地任务"""
-            from diydev._state import get_task, delete_task
             import json as _json
+
+            from diydev._state import delete_task, get_task
+
             task = get_task(uri)
             if task is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2320,8 +2821,19 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """链接外部任务（GitHub issue / PR 等）。不修改远端，仅建立本地引用。"""
-            from diydev._state import load_state, get_task, create_task, star_task, _norm
-            import yaml as _yaml, json as _json, io as _io
+            import io as _io
+            import json as _json
+
+            import yaml as _yaml
+
+            from diydev._state import (
+                _norm,
+                create_task,
+                get_task,
+                load_state,
+                star_task,
+            )
+
             if not source_uri:
                 return "错误: --source-uri 必填"
             if "github.com" in source_uri:
@@ -2336,8 +2848,12 @@ class GatewayCLI:
                 return f"错误: parent {parent} 不存在"
             try:
                 uri = create_task(
-                    title=title, subject=subject_n, parent=parent, detail=detail,
-                    source_type=source_type, source_uri=source_uri,
+                    title=title,
+                    subject=subject_n,
+                    parent=parent,
+                    detail=detail,
+                    source_type=source_type,
+                    source_uri=source_uri,
                 )
                 star_task(uri)
             except ValueError as exc:
@@ -2347,7 +2863,13 @@ class GatewayCLI:
             if json_output:
                 return _json.dumps(result, indent=2, ensure_ascii=False)
             _buf = _io.StringIO()
-            _yaml.dump(result, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                result,
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         @task_app.command(name="unlink")
@@ -2358,8 +2880,10 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """解绑外部任务引用。不删除远端 issue，仅移除本地记录。"""
-            from diydev._state import get_task, delete_task
             import json as _json
+
+            from diydev._state import delete_task, get_task
+
             task = get_task(uri)
             if task is None:
                 return f"错误: 任务 {uri} 不存在"
@@ -2380,8 +2904,14 @@ class GatewayCLI:
             json_output: bool = False,
         ):
             """同步外部任务内容到本地（目前支持：GitHub issue）。"""
+            import io as _io
+            import json as _json
+            import re as _re
+            import subprocess
+
+            import yaml as _yaml
+
             from diydev._state import get_task, list_tasks, update_task_field
-            import json as _json, subprocess, re as _re, yaml as _yaml, io as _io
 
             if not uri and not all:
                 return "错误: 请指定任务 URI 或使用 --all 同步全部"
@@ -2403,9 +2933,19 @@ class GatewayCLI:
                 owner, repo, number = parsed
                 try:
                     r = subprocess.run(
-                        ["gh", "issue", "view", number, "--repo", f"{owner}/{repo}",
-                         "--json", "title,body,state,updatedAt"],
-                        capture_output=True, text=True, timeout=15,
+                        [
+                            "gh",
+                            "issue",
+                            "view",
+                            number,
+                            "--repo",
+                            f"{owner}/{repo}",
+                            "--json",
+                            "title,body,state,updatedAt",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
                     )
                 except FileNotFoundError:
                     return "gh CLI 未安装"
@@ -2416,8 +2956,9 @@ class GatewayCLI:
                     if "not found" in err.lower():
                         try:
                             from diydev._state import unstar_task
+
                             unstar_task(t_uri)
-                            return f"GitHub issue 已不存在，已取消关注（unstar）"
+                            return "GitHub issue 已不存在，已取消关注（unstar）"
                         except FileNotFoundError:
                             return "GitHub issue 已不存在（已移除）"
                     return f"gh 调用失败: {err}"
@@ -2444,8 +2985,16 @@ class GatewayCLI:
                 ok = sum(1 for v in results.values() if isinstance(v, dict))
                 fail = sum(1 for v in results.values() if isinstance(v, str))
                 if json_output:
-                    return _json.dumps({"synced": ok, "failed": fail, "results": results, "total": total},
-                                       indent=2, ensure_ascii=False)
+                    return _json.dumps(
+                        {
+                            "synced": ok,
+                            "failed": fail,
+                            "results": results,
+                            "total": total,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
                 return f"同步完成: {ok} 更新, {fail} 失败, 共 {total} 个外部任务"
             # 单个同步
             task = get_task(uri)
@@ -2459,9 +3008,17 @@ class GatewayCLI:
             if isinstance(result, str):
                 return f"错误: {result}"
             if json_output:
-                return _json.dumps({"status": "success", "data": result}, indent=2, ensure_ascii=False)
+                return _json.dumps(
+                    {"status": "success", "data": result}, indent=2, ensure_ascii=False
+                )
             _buf = _io.StringIO()
-            _yaml.dump({"status": "success", "data": result}, _buf, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            _yaml.dump(
+                {"status": "success", "data": result},
+                _buf,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
             return _buf.getvalue()
 
         diy.command(task_app)
@@ -2470,6 +3027,7 @@ class GatewayCLI:
         agent_app = CycloptsApp(name="agent", help="子 agent 管理 — 文本协议")
 
         import socket as _sock
+
         _AGENT_SOCKET = str(diy_home() / "agentd.sock")
 
         def _agent_send_text(cmd_line: str, retries: int = 10) -> str:
@@ -2492,12 +3050,14 @@ class GatewayCLI:
                 except FileNotFoundError:
                     if attempt < retries - 1:
                         import time as _time
+
                         _time.sleep(0.5)
                         continue
                     raise
                 except OSError:
                     if attempt < retries - 1:
                         import time as _time
+
                         _time.sleep(0.5)
                         continue
                     raise
@@ -2592,9 +3152,11 @@ class GatewayCLI:
             """<消息...> 弹通知 — 窗口右上角弹出"""
             text = " ".join(message)
             QMetaObject.invokeMethod(
-                self._window, "show_notification",
+                self._window,
+                "show_notification",
                 QtCore.ConnectionType.QueuedConnection,
-                Q_ARG(str, text))
+                Q_ARG(str, text),
+            )
             return "OK"
 
         @ui_app.command(name="title")
@@ -2604,17 +3166,26 @@ class GatewayCLI:
             if not title_text:
                 return "错误: 缺少参数，用法: dai ui title <文本...>"
             QMetaObject.invokeMethod(
-                self._window, "setWindowTitle",
+                self._window,
+                "setWindowTitle",
                 QtCore.ConnectionType.QueuedConnection,
-                Q_ARG(str, title_text))
+                Q_ARG(str, title_text),
+            )
             return f"标题已改为: {title_text}"
 
         @ui_app.command(name="metrics")
         def ui_metrics():
             """返回当前指标快照（YAML）。"""
             import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
-            raw = yaml.dump(self._window._metrics.snapshot(), default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+            raw = yaml.dump(
+                self._window._metrics.snapshot(),
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
             import re  # noqa: PLC0415
+
             return re.sub(r"\x1b\[\d+(;\d+)*m", "", raw)
 
         @ui_app.command(name="shutdown")
@@ -2628,6 +3199,7 @@ class GatewayCLI:
             下次 I/O 时自动退出，无需逐个清理。
             """
             import logging as _lg
+
             for h in _lg.getLogger("diy.app").handlers:
                 h.flush()
             os._exit(0)
@@ -2643,6 +3215,7 @@ class GatewayCLI:
         """流式输出 — 直接写 out，不缓冲。"""
         import io
         import shlex
+
         from rich.console import Console
 
         tokens = shlex.split(line) if line else ["--help"]
@@ -2682,6 +3255,7 @@ class GatewayCLI:
 def _subjects_from_state() -> dict:
     """从 state.yaml 读取 subject 列表。"""
     from diydev._state import load_state
+
     return load_state().get("subjects", {})
 
 
@@ -2689,11 +3263,16 @@ def _subjects_from_state() -> dict:
 # 创建任务对话框
 # ═══════════════════════════════════════════════════════
 
+
 class _CreateTaskDialog(QDialog):
     """创建任务弹窗 — 用 FormMixin 模式处理错误。"""
 
-    def __init__(self, parent=None, parent_uri: str | None = None,
-                 initial_subject: str | None = None):
+    def __init__(
+        self,
+        parent=None,
+        parent_uri: str | None = None,
+        initial_subject: str | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("✨ 新建任务")
         self.resize(480, 400)
@@ -2732,6 +3311,7 @@ class _CreateTaskDialog(QDialog):
         # 父任务（只读显示）
         if parent_uri:
             from diydev._state import get_task
+
             pt = get_task(parent_uri)
             pt_label = pt.get("title", parent_uri) if pt else parent_uri
             info = QLabel(f"父任务: {parent_uri} — {pt_label}")
@@ -2813,6 +3393,7 @@ class _CreateTaskDialog(QDialog):
     def _on_create(self) -> None:
         from diydev.core.task import create_task
         from diydev.core.validator import ValidationError
+
         self._clear_errors()
         try:
             uri = create_task(
@@ -2835,7 +3416,7 @@ class Gateway(QObject):
     命令前缀 diy = 协议 v1。
     """
 
-    def __init__(self, window: "MainWindow", socket_path: str | None = None):
+    def __init__(self, window: MainWindow, socket_path: str | None = None):
         super().__init__(window)
         self._window = window
         if socket_path:
@@ -2893,9 +3474,7 @@ class Gateway(QObject):
                 probe.settimeout(0.5)
                 probe.connect(self._path)
                 probe.close()
-                raise ConnectionError(
-                    f"已有运行中的管控台实例 (socket: {self._path})"
-                )
+                raise ConnectionError(f"已有运行中的管控台实例 (socket: {self._path})")
             except OSError as e:
                 probe.close()
                 # 关键：只有 ECONNREFUSED/ENOENT 才判定为僵尸，其他错误（权限等）不删文件
@@ -2956,13 +3535,17 @@ def _make_handler(gateway: Gateway):
                 return
             cmd = data.decode("utf-8").strip()
             # wfile 是 binary，包成 text mode 给 rich
-            text_out = _io.TextIOWrapper(self.wfile, encoding="utf-8", write_through=True)
+            text_out = _io.TextIOWrapper(
+                self.wfile, encoding="utf-8", write_through=True
+            )
             try:
                 gateway._cli.dispatch(cmd, text_out)
             except Exception:
                 import traceback
+
                 text_out.write(f"\n内部错误: {traceback.format_exc()}")
                 text_out.flush()
+
     return Handler
 
 
@@ -2974,10 +3557,11 @@ def _make_handler(gateway: Gateway):
 # 任务树过滤器
 # ═══════════════════════════════════════════════════════
 
+
 class TaskFilterProxy(QSortFilterProxyModel):
     """按文本 + 状态过滤任务树。"""
 
-    def __init__(self, window: "MainWindow"):
+    def __init__(self, window: MainWindow):
         super().__init__(window)
         self._window = window
         self.setRecursiveFilteringEnabled(True)
@@ -3016,6 +3600,7 @@ class AgentInfo:
         if not isinstance(other, AgentInfo):
             return False
         return self.agent_id == other.agent_id and self.state == other.state
+
 
 # ═══════════════════════════════════════════════════
 # 入口
@@ -3066,9 +3651,11 @@ def main():
                 return
             # 其他 async Task 异常 — 记录不崩溃
             if exc:
-                logger.error("[async] 未处理的 Task 异常: %s\n%s", exc, "".join(
-                    __import__("traceback").format_tb(exc.__traceback__)
-                ))
+                logger.error(
+                    "[async] 未处理的 Task 异常: %s\n%s",
+                    exc,
+                    "".join(__import__("traceback").format_tb(exc.__traceback__)),
+                )
                 return
             # 非 exception 上下文（如 cancelled）— 交给默认处理器
             _orig = loop.get_exception_handler()
@@ -3091,12 +3678,20 @@ def main():
             logger.debug("[qt-lifecycle] sys.excepthook (无害): %s", val)
             return
         # 统一日志：所有未捕获异常同时走 logging 和 stderr
-        logger.error("[qt-lifecycle] 未捕获异常: %s: %s\n%s",
-                     typ.__name__, val,
-                     "".join(__import__("traceback").format_tb(tb)).rstrip())
+        logger.error(
+            "[qt-lifecycle] 未捕获异常: %s: %s\n%s",
+            typ.__name__,
+            val,
+            "".join(__import__("traceback").format_tb(tb)).rstrip(),
+        )
         _orig_excepthook(typ, val, tb)
 
     sys.excepthook = _safe_excepthook
+
+    # ── 线程异常安全网（Python 3.14 不走 sys.excepthook）──
+    import threading as _threading
+
+    _threading.excepthook = _safe_excepthook
 
     # ── 连接 agentd（已有则复用，没有则启动） ──
     hermes_python = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/python3")

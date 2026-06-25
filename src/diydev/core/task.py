@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from diydev._state import _norm, load_state, get_task, star_task
+from diydev._state import _norm, get_task, load_state, star_task
 from diydev._state import create_task as _state_create
+
 from .validator import FieldError, ValidationError
 
 
@@ -42,16 +43,22 @@ def create_task(
         errors.append(FieldError("title", "too_long", "标题不超过 200 字符"))
 
     if subject_n not in state.get("subjects", {}):
-        errors.append(FieldError(
-            "subject", "not_found",
-            f"subject {subject_n!r} 未注册",
-        ))
+        errors.append(
+            FieldError(
+                "subject",
+                "not_found",
+                f"subject {subject_n!r} 未注册",
+            )
+        )
 
     if parent is not None and get_task(parent) is None:
-        errors.append(FieldError(
-            "parent", "not_found",
-            f"parent {parent!r} 不存在",
-        ))
+        errors.append(
+            FieldError(
+                "parent",
+                "not_found",
+                f"parent {parent!r} 不存在",
+            )
+        )
 
     # body_file 读取
     body = ""
@@ -59,10 +66,13 @@ def create_task(
         try:
             body = Path(body_file).read_text(encoding="utf-8")
         except OSError as exc:
-            errors.append(FieldError(
-                "body_file", "read_error",
-                f"无法读取 {body_file!r}: {exc}",
-            ))
+            errors.append(
+                FieldError(
+                    "body_file",
+                    "read_error",
+                    f"无法读取 {body_file!r}: {exc}",
+                )
+            )
 
     if errors:
         raise ValidationError(errors)
@@ -71,9 +81,12 @@ def create_task(
     # 2. 业务执行
     # ════════════════════════════════════════
     uri = _state_create(
-        title=title, subject=subject_n,
-        parent=parent, detail=detail,
-        source_type=source_type, source_uri=source_uri,
+        title=title,
+        subject=subject_n,
+        parent=parent,
+        detail=detail,
+        source_type=source_type,
+        source_uri=source_uri,
         body=body,
     )
 

@@ -9,14 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ════════════════════════════════════════════════════════════════
 # TaskAgentConfig — 每个 agent 可独立覆盖的参数
 # ════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class TaskAgentConfig:
     """Per-task agent configuration. None = 继承 daemon 默认值。"""
+
     model: str | None = None
     provider: str | None = None
     enabled_toolsets: list[str] | None = None
@@ -51,10 +52,11 @@ class TaskAgentConfig:
 # AgentStatus — daemon ↔ CLI 的序列化状态
 # ════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class AgentStatus:
     task_uri: str
-    state: str = "idle"        # idle | running | done | failed | hung | killed
+    state: str = "idle"  # idle | running | done | failed | hung | killed
     model: str = ""
     provider: str = ""
     started_at: str = ""
@@ -86,5 +88,3 @@ class AgentStatus:
             output_tail=d.get("output_tail", []),
             error=d.get("error", ""),
         )
-
-

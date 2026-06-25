@@ -33,6 +33,7 @@ from typing import Any
 
 class IntentAssertionError(AssertionError):
     """自定义异常，防止 pytest 展开周边源码。"""
+
     pass
 
 
@@ -109,8 +110,7 @@ def _json_contains(expected: Any, actual: Any) -> bool:
         if not isinstance(actual, dict):
             return False
         return all(
-            k in actual and _json_contains(expected[k], actual[k])
-            for k in expected
+            k in actual and _json_contains(expected[k], actual[k]) for k in expected
         )
     if isinstance(expected, list):
         if not isinstance(actual, list):
@@ -178,7 +178,9 @@ def _run_blocks(
 
             actual = "\n".join(out).strip()
             if exit_code != 0:
-                stderr = proc.stderr.read() if proc.poll() is not None else "(进程仍存活)"
+                stderr = (
+                    proc.stderr.read() if proc.poll() is not None else "(进程仍存活)"
+                )
                 raise IntentAssertionError(
                     f"! {cmd}\n退出码 {exit_code}\nstderr: {stderr}"
                 )
@@ -232,7 +234,9 @@ def _run_blocks(
                     continue
                 found = False
                 cursor = ai
-                first_candidate = actual_lines[ai] if ai < len(actual_lines) else "(无更多行)"
+                first_candidate = (
+                    actual_lines[ai] if ai < len(actual_lines) else "(无更多行)"
+                )
                 while cursor < len(actual_lines):
                     if _line_matches(el, actual_lines[cursor]):
                         found = True
@@ -241,9 +245,7 @@ def _run_blocks(
                     cursor += 1
                 if not found:
                     raise IntentAssertionError(
-                        f"! {cmd}\n"
-                        f"期望: {el}\n"
-                        f"实际: {first_candidate!r}"
+                        f"! {cmd}\n期望: {el}\n实际: {first_candidate!r}"
                     )
     finally:
         proc.stdin.close()

@@ -45,7 +45,7 @@ clean() {
 check() {
   run uv run ruff check src/ tests/
   run uv run ruff format --check src/ tests/
-  run uv run pyright src/ tests/
+  run uv run basedpyright src/ tests/
 }
 
 fix() {

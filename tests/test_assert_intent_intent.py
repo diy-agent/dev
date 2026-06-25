@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import os
 from _assert_intent import IntentAssertionError, assert_intent
 
 

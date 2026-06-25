@@ -44,11 +44,8 @@ state.yaml 等共享资源。标准做法是 fcntl.flock 做文件锁。
 from __future__ import annotations
 
 import fcntl
-import os
 import threading
-import time
 from pathlib import Path
-
 
 # ═══════════════════════════════════════════════════════
 # 每个锁文件路径对应一个 threading.Lock

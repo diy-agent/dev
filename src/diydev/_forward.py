@@ -7,10 +7,9 @@ import shlex
 import socket as _sock
 import subprocess
 import sys
-import time as _time
 
 from diydev._lock import locked_file
-from diydev._log import info, error
+from diydev._log import error, info
 from diydev._state import diy_home
 
 
@@ -39,7 +38,7 @@ def _send_to_socket(socket_path: str, payload: str) -> str | None:
                     chunk = data.decode("utf-8")
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
-            except _sock.timeout:
+            except TimeoutError:
                 continue
         s.close()
         return b"".join(buf).decode("utf-8") if not is_stream else ""

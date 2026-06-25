@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass
@@ -14,6 +13,7 @@ class FieldError:
     code:  错误码（not_found, too_long, required, read_error 等）
     msg:   人类可读消息
     """
+
     field: str
     code: str
     msg: str
@@ -28,10 +28,16 @@ class ValidationError(Exception):
 
     def to_json(self) -> str:
         import json
-        return json.dumps({"status": "error", "errors": [
-            {"field": e.field, "code": e.code, "msg": e.msg}
-            for e in self.errors
-        ]})
+
+        return json.dumps(
+            {
+                "status": "error",
+                "errors": [
+                    {"field": e.field, "code": e.code, "msg": e.msg}
+                    for e in self.errors
+                ],
+            }
+        )
 
     def to_text(self) -> str:
         """多行文本，CLI 直接打印。"""

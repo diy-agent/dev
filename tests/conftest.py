@@ -18,7 +18,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from _shelltest import ShellTest
 
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,6 +71,7 @@ def fake_home(monkeypatch):
     # gh token: 必须设 HOME 之前拿（Keychain 依赖真实 HOME）
     try:
         import subprocess as _sp
+
         r = _sp.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5)
         if r.returncode == 0:
             monkeypatch.setenv("GH_TOKEN", r.stdout.strip())

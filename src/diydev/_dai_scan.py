@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 
 def find_workspace_root(start_dir: str, home: str | None = None) -> str | None:

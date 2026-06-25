@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
+import io as _io
 import json
 import sys
-import io as _io
 
 import yaml
 
@@ -28,13 +28,20 @@ def cli_call(fn, *args, json_output: bool = False, **kwargs) -> None:
             json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
             sys.stdout.write("\n")
         else:
-            yaml.dump(out, sys.stdout, allow_unicode=True,
-                      default_flow_style=False, sort_keys=False)
+            yaml.dump(
+                out,
+                sys.stdout,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
     except ValidationError as e:
-        out = {"status": "error", "errors": [
-            {"field": e.field, "code": e.code, "msg": e.msg}
-            for e in e.errors
-        ]}
+        out = {
+            "status": "error",
+            "errors": [
+                {"field": e.field, "code": e.code, "msg": e.msg} for e in e.errors
+            ],
+        }
         if json_output:
             json.dump(out, sys.stderr, indent=2, ensure_ascii=False)
             sys.stderr.write("\n")
@@ -55,8 +62,13 @@ def gateway_call(fn, *args, **kwargs) -> str:
     try:
         result = fn(*args, **kwargs)
         buf = _io.StringIO()
-        yaml.dump({"status": "ok", "data": result}, buf,
-                  allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            {"status": "ok", "data": result},
+            buf,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
         return buf.getvalue()
     except ValidationError as e:
         return e.to_json()

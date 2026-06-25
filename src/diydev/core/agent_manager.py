@@ -54,6 +54,7 @@ class AgentManager:
 
         # 从 task frontmatter 读取已保存的 session_id
         from diydev._state import get_task, update_task_field
+
         task_info = get_task(task_uri)
         saved_session_id = None
         if task_info:
@@ -71,6 +72,7 @@ class AgentManager:
 
         if backend == "pi":
             from .pi_agent import PiRpcAgent
+
             agent: AgentBackend = PiRpcAgent(
                 task_uri,
                 callbacks=callbacks,
@@ -79,6 +81,7 @@ class AgentManager:
             )
         else:
             from .acp_agent import AcpAgent
+
             agent = AcpAgent(task_uri, callbacks=callbacks, session_id=saved_session_id)
 
         self._agents[task_uri] = agent
@@ -87,7 +90,7 @@ class AgentManager:
 
         try:
             await asyncio.wait_for(agent.ready.wait(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("[%s] %s 启动超时", task_uri, backend)
 
         # 持久化 agent 信息到 task frontmatter（仅 ACP 后端写入真实 session_id）
@@ -116,11 +119,7 @@ class AgentManager:
         return None
 
     def list(self) -> list[AgentState]:
-        return [
-            a.state_snapshot()
-            for a in self._agents.values()
-            if a.is_alive
-        ]
+        return [a.state_snapshot() for a in self._agents.values() if a.is_alive]
 
     def get_state(self, task_uri: str) -> AgentState | None:
         agent = self.get(task_uri)

@@ -19,15 +19,15 @@ class SignalBridge(QObject):
     """ACP 实时事件 → Qt Signal。"""
 
     # ── 流式事件信号 ──
-    delta_received = Signal(str)          # 文本 delta
-    reasoning_received = Signal(str)      # 推理过程
+    delta_received = Signal(str)  # 文本 delta
+    reasoning_received = Signal(str)  # 推理过程
     tool_started = Signal(str, str, dict)  # (name, id, args)
-    finished = Signal(str)                # stop_reason
-    error_occurred = Signal(str)          # 错误消息
+    finished = Signal(str)  # stop_reason
+    error_occurred = Signal(str)  # 错误消息
 
     # ── 生命周期信号 ──
-    session_ready = Signal(str)           # session_id
-    state_changed = Signal(str)           # idle | running | error | stopped
+    session_ready = Signal(str)  # session_id
+    state_changed = Signal(str)  # idle | running | error | stopped
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -58,6 +58,7 @@ class SignalBridge(QObject):
         except RuntimeError as e:
             if "already deleted" in str(e):
                 import logging as _lg
+
                 _lg.getLogger("diy.app").debug(
                     "[qt-lifecycle] SignalBridge 已销毁，丢弃信号 %s", sig.signalName()
                 )

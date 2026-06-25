@@ -58,7 +58,7 @@ def _norm(path: str) -> str:
     home = os.path.expanduser("~")
     expanded = os.path.abspath(os.path.expanduser(path))
     if expanded.startswith(home + "/"):
-        return "~" + expanded[len(home):]
+        return "~" + expanded[len(home) :]
     if expanded == home:
         return "~"
     return expanded
@@ -67,7 +67,9 @@ def _norm(path: str) -> str:
 def _subject_is_git(path: str) -> bool:
     """实时检测 subject 目录是否为 git 仓库。"""
     full = os.path.expanduser(path)
-    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(os.path.join(full, ".git"))
+    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(
+        os.path.join(full, ".git")
+    )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -97,7 +99,9 @@ def save_state(data: dict[str, Any]) -> None:
     # 先写临时文件再替换，保证原子性
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
-        yaml.dump(data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
+        )
     tmp.replace(path)
 
 
@@ -137,6 +141,7 @@ def _path_to_uri(path: Path) -> str | None:
 # ════════════════════════════════════════════════════════════════
 # Star 视图 — ~/.diy/star/
 # ════════════════════════════════════════════════════════════════
+
 
 def _star_root() -> Path:
     """~/.diy/star/（可通过 DIY_HOME 覆盖）"""
@@ -299,13 +304,24 @@ def _read_body(path: Path) -> str:
             break
     if end is None:
         return ""
-    return "\n".join(lines[end + 1:]).strip()
+    return "\n".join(lines[end + 1 :]).strip()
 
 
 def _meta_to_task_dict(uri: str, meta: dict[str, Any]) -> dict[str, Any]:
     """将 frontmatter meta 转为与 get_task 返回一致的 dict"""
     result: dict[str, Any] = {"uri": uri}
-    for key in ("title", "state", "subject", "detail", "parent", "created", "updated", "source", "agent", "session_id"):
+    for key in (
+        "title",
+        "state",
+        "subject",
+        "detail",
+        "parent",
+        "created",
+        "updated",
+        "source",
+        "agent",
+        "session_id",
+    ):
         if key in meta:
             result[key] = meta[key]
     # 确保默认字段存在

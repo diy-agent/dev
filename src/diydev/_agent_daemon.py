@@ -19,7 +19,7 @@
 
 启动:
   /path/to/hermes/python -m diydev._agent_daemon
-  
+
 注意: 这是一个 standalone 模块，不依赖 diydev 包的 __init__.py。
 直接通过 PYTHONPATH 确保 src/ 在 sys.path 上即可。
 """
@@ -44,6 +44,7 @@ _pool_dir = str(Path(__file__).resolve().parent)
 if _pool_dir not in sys.path:
     sys.path.insert(0, _pool_dir)
 import _agent_pool  # noqa: E402
+
 AgentStatus = _agent_pool.AgentStatus
 TaskAgentConfig = _agent_pool.TaskAgentConfig
 
@@ -55,11 +56,13 @@ from agent_bridge import steer_reply  # noqa: E402
 
 logger = logging.getLogger("agentd")
 
+
 def _diy_home() -> Path:
     """获取 DIY 数据根目录。独立实现，避免循环导入。"""
     if home := os.environ.get("DIY_HOME"):
         return Path(home)
     return Path(os.path.expanduser("~/.diy"))
+
 
 _SOCKET_PATH = _diy_home() / "agentd.sock"
 
@@ -68,10 +71,12 @@ _SOCKET_PATH = _diy_home() / "agentd.sock"
 # Hermes 导入（只在 daemon 进程中执行）
 # ════════════════════════════════════════════════════════════════
 
+
 def _import_hermes():
     """Import Hermes AIAgent."""
     try:
         from run_agent import AIAgent
+
         return AIAgent
     except ImportError:
         # 尝试添加 Hermes 项目根到 sys.path
@@ -79,6 +84,7 @@ def _import_hermes():
         if hermes_home.exists():
             sys.path.insert(0, str(hermes_home))
         from run_agent import AIAgent  # noqa: F811
+
         return AIAgent
 
 
@@ -100,11 +106,11 @@ DEFAULT_CONFIG = TaskAgentConfig(
 # SessionPool — 管理所有 TaskAgent
 # ════════════════════════════════════════════════════════════════
 
+
 class _ManagedAgent:
     """单个 task agent — 包装 AIAgent + 执行线程。"""
 
     def __init__(self, task_uri: str, config: TaskAgentConfig, agent_class):
-        import threading as _t
 
         self.task_uri = task_uri
         self.config = config
@@ -126,6 +132,7 @@ class _ManagedAgent:
     def _write_bridge_status(self):
         """写 status.json / progress.log，让 GUI agent_bridge 能读到。"""
         import json
+
         try:
             self._bridge_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,6 +217,7 @@ class _ManagedAgent:
           reasoning.available — args: ("_thinking", text, None)
         """
         import json as _json
+
         try:
             self._bridge_dir.mkdir(parents=True, exist_ok=True)
             entry = {"event": event, "ts": datetime.now().strftime("%H:%M:%S")}
@@ -349,7 +357,9 @@ class SessionPool:
         self._lock = threading.Lock()
         self._AIAgent = _import_hermes()
 
-    def spawn(self, task_uri: str, prompt: str, config: dict | None = None) -> AgentStatus:
+    def spawn(
+        self, task_uri: str, prompt: str, config: dict | None = None
+    ) -> AgentStatus:
         agent_config = TaskAgentConfig.from_dict(config or {})
         with self._lock:
             agent = self._agents.get(task_uri)
@@ -402,6 +412,7 @@ class SessionPool:
 # ════════════════════════════════════════════════════════════════
 # 文本协议解析器
 # ════════════════════════════════════════════════════════════════
+
 
 def _parse_bool(val: str) -> bool:
     return val.lower() in ("true", "1", "yes")
@@ -501,7 +512,7 @@ def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
                 out.flush()
                 return
             status = pool.kill(task_uri)
-            out.write(f"OK killed\n")
+            out.write("OK killed\n")
             out.flush()
 
         elif action == "show":
@@ -534,7 +545,9 @@ def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
             out.flush()
 
         elif action == "config":
-            out.write(json.dumps({"default": DEFAULT_CONFIG.to_dict()}, indent=2) + "\n")
+            out.write(
+                json.dumps({"default": DEFAULT_CONFIG.to_dict()}, indent=2) + "\n"
+            )
             out.flush()
 
         elif action == "shutdown":
@@ -542,6 +555,7 @@ def _dispatch_text(cmd_line: str, out: io.TextIOBase) -> None:
             out.flush()
             # 在后台线程执行 shutdown，避免 socket write 被截断
             import _thread
+
             _thread.interrupt_main()
 
         else:
@@ -572,9 +586,7 @@ class AgentDaemonHandler(socketserver.StreamRequestHandler):
         cmd_line = data.decode("utf-8").strip()
 
         # 文本输出到 wfile（二进制流 → TextIOWrapper）
-        text_out = io.TextIOWrapper(
-            self.wfile, encoding="utf-8", write_through=True
-        )
+        text_out = io.TextIOWrapper(self.wfile, encoding="utf-8", write_through=True)
         _dispatch_text(cmd_line, text_out)
 
 
@@ -595,6 +607,7 @@ def run_daemon():
 
     # ── Socket 锁检查：连接成功说明有活实例 ──
     import socket as _sock
+
     try:
         s = _sock.socket(_sock.AF_UNIX, _sock.SOCK_STREAM)
         s.settimeout(0.5)
@@ -603,7 +616,7 @@ def run_daemon():
         print(f"错误: 已有运行中的 agentd (socket: {_SOCKET_PATH})", file=sys.stderr)
         logger.info("[exit] agentd 单实例检测失败")
         sys.exit(1)
-    except (OSError, _sock.timeout):
+    except (TimeoutError, OSError):
         pass  # 连不上 → 残留或不存在
 
     # ── 清理残留 socket ──

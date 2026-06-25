@@ -6,7 +6,6 @@ requires-python = ">=3.12"
 dependencies = [
     "cyclopts>=3.0",
     "pandas>=3.0.3",
-    "pyright>=1.1.409",
     "pytest-qt>=4.2",
     "pyside6>=6.8,<6.9",
     "pyyaml>=6.0.3",
@@ -15,11 +14,22 @@ dependencies = [
     "mistune>=3.2.1",
     "agent-client-protocol>=0.10.1",
     "aiosqlite>=0.22.1",
+    "nodejs-wheel-shim>=0.1.0",
 ]
 
 [project.scripts]
 dai = "diydev._dai_cli:main"
 dev = "diydev.dev_tui:main"
+
+# [[tool.uv.index]]
+# url = "https://mirrors.aliyun.com/pypi/simple/"
+
+[tool.uv]
+# basedpyright 依赖 nodejs-wheel-binaries（自带 Node.js），但我们已有 mise 管理的 Node.js，跳过编译
+override-dependencies = ["nodejs-wheel-binaries; python_version == '9.9.9'"]
+
+[tool.uv.sources]
+nodejs-wheel-shim = { path = "_shims/nodejs_wheel_shim" }
 
 [build-system]
 requires = ["hatchling"]
@@ -31,10 +41,19 @@ packages = ["src/diydev"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "basedpyright>=1.39.8",
 ]
 
 [tool.pyright]
 typeCheckingMode = "standard"
+include = ["src/diydev"]
+exclude = [
+    "**/__pycache__",
+    "**/.venv",
+    "archive",
+    "tests",
+    "_research",
+]
 
 [tool.ruff]
 # 严格模式

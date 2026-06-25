@@ -37,7 +37,9 @@ class PiRpcAgent(AgentBackend):
         self._proc: asyncio.subprocess.Process | None = None
         self._session_id: str = ""
         self._history: list[Message] = []
-        self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = asyncio.Queue()
+        self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = (
+            asyncio.Queue()
+        )
         self._stop_ev = asyncio.Event()
         self._ready_ev = asyncio.Event()
         self._state: str = "starting"
@@ -88,7 +90,15 @@ class PiRpcAgent(AgentBackend):
         pi_bin = self._find_pi()
         session_path = self._session_path(self._task_uri)
         session_path.parent.mkdir(parents=True, exist_ok=True)
-        args = [pi_bin, "--mode", "rpc", "--thinking", "off", "--session", str(session_path)]
+        args = [
+            pi_bin,
+            "--mode",
+            "rpc",
+            "--thinking",
+            "off",
+            "--session",
+            str(session_path),
+        ]
         if self._provider:
             args += ["--provider", self._provider]
         if self._model:
@@ -107,7 +117,9 @@ class PiRpcAgent(AgentBackend):
                 cwd=cwd,
             )
 
-            reader = asyncio.create_task(self._read_loop(), name=f"pi-rd-{self._task_uri}")
+            reader = asyncio.create_task(
+                self._read_loop(), name=f"pi-rd-{self._task_uri}"
+            )
 
             self._session_id = f"pi-{self._task_uri}"
             self._state = "idle"
@@ -143,7 +155,7 @@ class PiRpcAgent(AgentBackend):
                         loop.run_in_executor(None, self._proc.stdout.readline),
                         timeout=1.0,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # 超时只是为了给 CancelledError 传播机会，不处理
                     continue
                 if not line:
@@ -188,17 +200,21 @@ class PiRpcAgent(AgentBackend):
                 tc = d.get("toolCall", {}) or {}
                 if self._callbacks.on_tool_start:
                     self._callbacks.on_tool_start(
-                        tc.get("name", "?"), tc.get("id", ""), tc.get("arguments", {}),
+                        tc.get("name", "?"),
+                        tc.get("id", ""),
+                        tc.get("arguments", {}),
                     )
 
         elif t == "agent_end":
             if self._current_text.strip():
-                self._history.append(Message(
-                    role="assistant",
-                    content=self._current_text.strip(),
-                    reasoning=self._current_thinking.strip(),
-                    timestamp=datetime.now().strftime("%H:%M:%S"),
-                ))
+                self._history.append(
+                    Message(
+                        role="assistant",
+                        content=self._current_text.strip(),
+                        reasoning=self._current_thinking.strip(),
+                        timestamp=datetime.now().strftime("%H:%M:%S"),
+                    )
+                )
             self._current_text = ""
             self._current_thinking = ""
             self._prompt_done.set()
@@ -209,11 +225,19 @@ class PiRpcAgent(AgentBackend):
                 break
 
             try:
-                text, future = await asyncio.wait_for(self._msg_queue.get(), timeout=0.3)
-            except asyncio.TimeoutError:
+                text, future = await asyncio.wait_for(
+                    self._msg_queue.get(), timeout=0.3
+                )
+            except TimeoutError:
                 continue
 
-            self._history.append(Message(role="user", content=text, timestamp=datetime.now().strftime("%H:%M:%S")))
+            self._history.append(
+                Message(
+                    role="user",
+                    content=text,
+                    timestamp=datetime.now().strftime("%H:%M:%S"),
+                )
+            )
             self._state = "running"
             self._current_text = ""
             self._current_thinking = ""
@@ -230,20 +254,22 @@ class PiRpcAgent(AgentBackend):
                 while True:
                     remaining = deadline - __import__("time").time()
                     if remaining <= 0:
-                        raise asyncio.TimeoutError("总超时")
+                        raise TimeoutError("总超时")
                     idle_wait = min(IDLE, remaining)
                     try:
-                        await asyncio.wait_for(self._prompt_done.wait(), timeout=idle_wait)
+                        await asyncio.wait_for(
+                            self._prompt_done.wait(), timeout=idle_wait
+                        )
                         break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # idle 超时：检查最后一次事件
                         if __import__("time").time() - self._last_event_ts >= IDLE:
-                            raise asyncio.TimeoutError("静默超时")
+                            raise TimeoutError("静默超时")
 
                 future.set_result("end_turn")
                 if self._callbacks.on_finished:
                     self._callbacks.on_finished("end_turn")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 future.set_result("timeout")
                 if self._callbacks.on_error:
                     self._callbacks.on_error("prompt 超时")
@@ -288,8 +314,10 @@ class PiRpcAgent(AgentBackend):
             self._proc.terminate()
             try:
                 loop = asyncio.get_running_loop()
-                await asyncio.wait_for(loop.run_in_executor(None, self._proc.wait), timeout=3)
-            except asyncio.TimeoutError:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self._proc.wait), timeout=3
+                )
+            except TimeoutError:
                 self._proc.kill()
         for _ in range(50):
             if self._done:

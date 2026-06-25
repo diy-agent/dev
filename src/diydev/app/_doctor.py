@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+
 from diydev._state import diy_home
 
 
@@ -62,7 +63,9 @@ def set_locked(v: bool) -> None:
 _SOCKET_PATH = str(diy_home() / "app.sock")
 
 
-def run_check(sock_dev: int | None = None, sock_ino: int | None = None) -> list[HealthIssue]:
+def run_check(
+    sock_dev: int | None = None, sock_ino: int | None = None
+) -> list[HealthIssue]:
     """
     全项自检。
     从 app 内调用：传 (sock_dev, sock_ino)
@@ -110,11 +113,13 @@ def _check_app_status(sock_dev=None, sock_ino=None) -> list[HealthIssue]:
     """判断 app 是否在运行。有 server fd 则用 inode 对比，否则做客户端探针。"""
     # 有 server 上下文 → app 肯定活着
     if sock_dev is not None and sock_ino is not None:
-        return [HealthIssue(
-            severity="info",
-            code="app_running",
-            message=f"管控台运行中（pid={os.getpid()}）",
-        )]
+        return [
+            HealthIssue(
+                severity="info",
+                code="app_running",
+                message=f"管控台运行中（pid={os.getpid()}）",
+            )
+        ]
 
     # 客户端探针
     try:
@@ -122,24 +127,32 @@ def _check_app_status(sock_dev=None, sock_ino=None) -> list[HealthIssue]:
         s.settimeout(0.5)
         s.connect(_SOCKET_PATH)
         s.close()
-        return [HealthIssue(severity="info", code="app_running", message="管控台运行中")]
+        return [
+            HealthIssue(severity="info", code="app_running", message="管控台运行中")
+        ]
     except FileNotFoundError:
         pass
     except ConnectionRefusedError:
-        return [HealthIssue(
-            severity="warning",
-            code="app_stale",
-            message="Socket 文件残留（无进程监听），建议清理后重启",
-            detail=f"文件 {_SOCKET_PATH} 存在但无进程响应。可能是进程崩溃后未清理。可用 rm {_SOCKET_PATH} 清除。",
-        )]
+        return [
+            HealthIssue(
+                severity="warning",
+                code="app_stale",
+                message="Socket 文件残留（无进程监听），建议清理后重启",
+                detail=f"文件 {_SOCKET_PATH} 存在但无进程响应。可能是进程崩溃后未清理。可用 rm {_SOCKET_PATH} 清除。",
+            )
+        ]
     except OSError as exc:
-        return [HealthIssue(
-            severity="warning",
-            code="app_stale",
-            message=f"Socket 检查异常: {exc}",
-        )]
+        return [
+            HealthIssue(
+                severity="warning",
+                code="app_stale",
+                message=f"Socket 检查异常: {exc}",
+            )
+        ]
 
-    return [HealthIssue(severity="info", code="app_not_running", message="管控台未运行")]
+    return [
+        HealthIssue(severity="info", code="app_not_running", message="管控台未运行")
+    ]
 
 
 # ═══════════════════════════════════════════════════════
@@ -156,24 +169,28 @@ def _check_runtime(sock_dev: int | None, sock_ino: int | None) -> list[HealthIss
         try:
             st = os.stat(_SOCKET_PATH)
         except FileNotFoundError:
-            results.append(HealthIssue(
-                severity="critical",
-                code="socket_missing",
-                message="Socket 文件已被删除，进程已成孤岛",
-                detail="进程仍在运行但无法接收外部请求。建议重启。",
-            ))
+            results.append(
+                HealthIssue(
+                    severity="critical",
+                    code="socket_missing",
+                    message="Socket 文件已被删除，进程已成孤岛",
+                    detail="进程仍在运行但无法接收外部请求。建议重启。",
+                )
+            )
             return results
 
         if st.st_dev != sock_dev or st.st_ino != sock_ino:
-            results.append(HealthIssue(
-                severity="warning",  # 降级：macOS AF_UNIX inode 比较不可靠
-                code="socket_hijacked",
-                message="Socket 文件已被其他进程替换",
-                detail=(
-                    f"我启动时 socket (dev={sock_dev}, ino={sock_ino})，"
-                    f"当前文件系统 (dev={st.st_dev}, ino={st.st_ino})。"
-                ),
-            ))
+            results.append(
+                HealthIssue(
+                    severity="warning",  # 降级：macOS AF_UNIX inode 比较不可靠
+                    code="socket_hijacked",
+                    message="Socket 文件已被其他进程替换",
+                    detail=(
+                        f"我启动时 socket (dev={sock_dev}, ino={sock_ino})，"
+                        f"当前文件系统 (dev={st.st_dev}, ino={st.st_ino})。"
+                    ),
+                )
+            )
 
     # 多实例
     results += _check_multiple_instances()
@@ -190,7 +207,9 @@ def _find_other_instances() -> list[dict]:
     try:
         proc = subprocess.run(
             ["ps", "-eo", "pid=,comm=", "-o", "args="],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in proc.stdout.strip().split("\n"):
             parts = line.strip().split(None, 2)
@@ -223,15 +242,17 @@ def _check_multiple_instances() -> list[HealthIssue]:
 
     my_pid = os.getpid()
     others_str = "\n".join(f"  pid={o['pid']} {o['cmdline']}" for o in others)
-    results.append(HealthIssue(
-        severity="warning",
-        code="multiple_instances",
-        message=f"发现 {len(others)} 个其他管控台进程",
-        detail=(
-            f"当前 pid={my_pid}。其他实例:\n{others_str}\n\n"
-            f"建议检查各窗口，保留一个，kill 其他进程。"
-        ),
-    ))
+    results.append(
+        HealthIssue(
+            severity="warning",
+            code="multiple_instances",
+            message=f"发现 {len(others)} 个其他管控台进程",
+            detail=(
+                f"当前 pid={my_pid}。其他实例:\n{others_str}\n\n"
+                f"建议检查各窗口，保留一个，kill 其他进程。"
+            ),
+        )
+    )
     return results
 
 
@@ -245,31 +266,38 @@ def _check_state_file() -> list[HealthIssue]:
     state_path = str(diy_home() / "state.yaml")
 
     if not os.path.exists(state_path):
-        results.append(HealthIssue(
-            severity="info" if not _in_lockdown else "critical",
-            code="state_missing",
-            message="state.yaml 不存在",
-            detail=f"预期路径: {state_path}。应用可能未初始化。",
-        ))
+        results.append(
+            HealthIssue(
+                severity="info" if not _in_lockdown else "critical",
+                code="state_missing",
+                message="state.yaml 不存在",
+                detail=f"预期路径: {state_path}。应用可能未初始化。",
+            )
+        )
         return results
 
     try:
         import yaml
+
         with open(state_path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         if data is None:
-            results.append(HealthIssue(
-                severity="warning",
-                code="state_empty",
-                message="state.yaml 为空",
-            ))
+            results.append(
+                HealthIssue(
+                    severity="warning",
+                    code="state_empty",
+                    message="state.yaml 为空",
+                )
+            )
     except Exception as exc:
-        results.append(HealthIssue(
-            severity="warning",
-            code="state_parse_error",
-            message="state.yaml 解析失败",
-            detail=f"错误: {exc}",
-        ))
+        results.append(
+            HealthIssue(
+                severity="warning",
+                code="state_parse_error",
+                message="state.yaml 解析失败",
+                detail=f"错误: {exc}",
+            )
+        )
 
     return results
 
@@ -291,8 +319,8 @@ def _check_flock_integrity() -> list[HealthIssue]:
     """
     import fcntl
     import os
-    import threading
     import tempfile
+    import threading
 
     tmpdir = tempfile.mkdtemp(prefix="diy_flock_test_")
     lock_file = os.path.join(tmpdir, "test.lock")
@@ -312,6 +340,7 @@ def _check_flock_integrity() -> list[HealthIssue]:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 a_ready.set()
                 import time
+
                 time.sleep(0.02)  # 持锁，给 B 竞争窗口
                 f.close()
 
@@ -336,22 +365,25 @@ def _check_flock_integrity() -> list[HealthIssue]:
                 fail_count += 1
 
         if fail_count > 0:
-            return [HealthIssue(
-                severity="info",
-                code="flock_not_mutex",
-                message=(
-                    f"flock(LOCK_EX) 在多线程间不互斥（{fail_count}/{rounds} 轮失败）"
-                ),
-                detail=(
-                    "已通过 threading.Lock 补偿保护，当前安全。"
-                    "仅当删除 _state.py 中的 _THREAD_LOCK 时才有风险。"
-                ),
-            )]
+            return [
+                HealthIssue(
+                    severity="info",
+                    code="flock_not_mutex",
+                    message=(
+                        f"flock(LOCK_EX) 在多线程间不互斥（{fail_count}/{rounds} 轮失败）"
+                    ),
+                    detail=(
+                        "已通过 threading.Lock 补偿保护，当前安全。"
+                        "仅当删除 _state.py 中的 _THREAD_LOCK 时才有风险。"
+                    ),
+                )
+            ]
 
         return []
 
     finally:
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -363,6 +395,7 @@ def _check_flock_integrity() -> list[HealthIssue]:
 def _format_system_header() -> str:
     """系统信息标头行。"""
     import platform
+
     py_ver = platform.python_version()
     os_str = platform.platform(aliased=True)
     return f"  🖥  {os_str}  /  Python {py_ver}"
@@ -374,14 +407,26 @@ def format_report(issues: list[HealthIssue]) -> str:
     lines: list[str] = [_format_system_header(), ""]
 
     # 分组
-    l1 = [i for i in issues if i.code in ("app_running", "app_stale", "app_not_running")]
-    l2 = [i for i in issues if i.code in ("socket_missing", "socket_hijacked", "multiple_instances")]
-    l3 = [i for i in issues if i.code in ("state_missing", "state_empty", "state_parse_error")]
+    l1 = [
+        i for i in issues if i.code in ("app_running", "app_stale", "app_not_running")
+    ]
+    l2 = [
+        i
+        for i in issues
+        if i.code in ("socket_missing", "socket_hijacked", "multiple_instances")
+    ]
+    l3 = [
+        i
+        for i in issues
+        if i.code in ("state_missing", "state_empty", "state_parse_error")
+    ]
 
     # L1: App 状态
     app_issue = l1[0] if l1 else None
     if app_issue:
-        emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(app_issue.severity, "?")
+        emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(
+            app_issue.severity, "?"
+        )
         lines.append(f"  {emoji} App 状态 — {app_issue.message}")
         if app_issue.detail:
             for dl in app_issue.detail.strip().split("\n"):
@@ -392,7 +437,9 @@ def format_report(issues: list[HealthIssue]) -> str:
     # L2: 运行时（缩进一层）
     if l2:
         for issue in l2:
-            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(
+                issue.severity, "?"
+            )
             lines.append(f"    {emoji} {issue.message}")
             if issue.detail:
                 for dl in issue.detail.strip().split("\n"):
@@ -406,7 +453,9 @@ def format_report(issues: list[HealthIssue]) -> str:
     # L3: 环境
     if l3:
         for issue in l3:
-            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(
+                issue.severity, "?"
+            )
             lines.append(f"  {emoji} state.yaml — {issue.message}")
             if issue.detail:
                 for dl in issue.detail.strip().split("\n"):
@@ -418,7 +467,9 @@ def format_report(issues: list[HealthIssue]) -> str:
     l4 = [i for i in issues if i.code == "flock_not_mutex"]
     if l4:
         for issue in l4:
-            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(
+                issue.severity, "?"
+            )
             lines.append(f"  {emoji} {issue.message}")
             if issue.detail:
                 for dl in issue.detail.strip().split("\n"):
@@ -430,7 +481,9 @@ def format_report(issues: list[HealthIssue]) -> str:
     l6 = [i for i in issues if i.code.startswith("crash_")]
     if l6:
         for issue in l6:
-            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(issue.severity, "?")
+            emoji = {"info": "ℹ️", "warning": "!", "critical": "✗"}.get(
+                issue.severity, "?"
+            )
             lines.append(f"  {emoji} {issue.message}")
             if issue.detail:
                 for dl in issue.detail.strip().split("\n"):
@@ -466,18 +519,22 @@ def _check_webengine_gpu() -> list[HealthIssue]:
     flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     # --single-process 在 PySide6 6.8 + macOS 上触发 V8 proxy resolver SIGSEGV
     # 改用 --disable-gpu 阻止 GPU 子进程，避免 MachPort 冲突，同时保持 multi-process 模式
-    has_gpu = all(x not in flags for x in ("--single-process", "--disable-gpu", "--enable-gpu"))
+    has_gpu = all(
+        x not in flags for x in ("--single-process", "--disable-gpu", "--enable-gpu")
+    )
     if has_gpu and sys.platform == "darwin":
-        results.append(HealthIssue(
-            severity="warning",
-            code="webengine_gpu",
-            message="QWebEngine 未配置跨进程保护（建议设置 --disable-gpu）",
-            detail=(
-                "QTWEBENGINE_CHROMIUM_FLAGS 未设置 --disable-gpu 或 --single-process。"
-                "app 启动时会自动添加 --disable-gpu，但若通过环境变量覆盖了则不会。"
-                "确认：echo $QTWEBENGINE_CHROMIUM_FLAGS"
-            ),
-        ))
+        results.append(
+            HealthIssue(
+                severity="warning",
+                code="webengine_gpu",
+                message="QWebEngine 未配置跨进程保护（建议设置 --disable-gpu）",
+                detail=(
+                    "QTWEBENGINE_CHROMIUM_FLAGS 未设置 --disable-gpu 或 --single-process。"
+                    "app 启动时会自动添加 --disable-gpu，但若通过环境变量覆盖了则不会。"
+                    "确认：echo $QTWEBENGINE_CHROMIUM_FLAGS"
+                ),
+            )
+        )
     return results
 
 
@@ -513,7 +570,7 @@ def _check_crash_reports() -> list[HealthIssue]:
                 meta = json.loads(f.readline())
                 rest = f.read()
 
-            d = json.loads(rest[rest.index("{"):]) if "{" in rest else {}
+            d = json.loads(rest[rest.index("{") :]) if "{" in rest else {}
             threads = d.get("threads", [])
             ft = d.get("faultingThread", 0)
             if ft >= len(threads):
@@ -525,17 +582,19 @@ def _check_crash_reports() -> list[HealthIssue]:
 
             if "QMetaObject::cast" in top_str and "notifyActiveWindowChange" in top_str:
                 crash_time = meta.get("timestamp", "?")
-                results.append(HealthIssue(
-                    severity="critical",
-                    code="crash_qt_focus",
-                    message=f"管控台 SIGSEGV — Qt/Cocoa 焦点事件 use-after-free（{crash_time}）",
-                    detail=(
-                        "PySide6 6.8 + macOS 12 的已知 Qt/Cocoa 桥 bug："
-                        "窗口获得焦点时 QWebEngine 内部的 QObject 已被释放，"
-                        "触发 QMetaObject::cast → SIGSEGV。\n"
-                        "可行方案：① 升级 PySide6（>=6.9） ② 改用 QTextBrowser 替代 QWebEngineView 渲染 Markdown"
-                    ),
-                ))
+                results.append(
+                    HealthIssue(
+                        severity="critical",
+                        code="crash_qt_focus",
+                        message=f"管控台 SIGSEGV — Qt/Cocoa 焦点事件 use-after-free（{crash_time}）",
+                        detail=(
+                            "PySide6 6.8 + macOS 12 的已知 Qt/Cocoa 桥 bug："
+                            "窗口获得焦点时 QWebEngine 内部的 QObject 已被释放，"
+                            "触发 QMetaObject::cast → SIGSEGV。\n"
+                            "可行方案：① 升级 PySide6（>=6.9） ② 改用 QTextBrowser 替代 QWebEngineView 渲染 Markdown"
+                        ),
+                    )
+                )
                 break  # 一个足够
         except (OSError, json.JSONDecodeError, ValueError, IndexError):
             continue

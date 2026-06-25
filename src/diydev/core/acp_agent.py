@@ -14,7 +14,6 @@ from typing import Any
 
 from acp import (
     PROTOCOL_VERSION,
-    Client,
     RequestError,
     spawn_agent_process,
     text_block,
@@ -24,21 +23,11 @@ from acp.schema import (
     AgentMessageChunk,
     AgentThoughtChunk,
     ClientCapabilities,
-    CreateTerminalResponse,
     Implementation,
-    KillTerminalResponse,
-    PermissionOption,
-    ReadTextFileResponse,
-    ReleaseTerminalResponse,
-    RequestPermissionResponse,
-    TerminalOutputResponse,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
-    ToolCallUpdate,
     UsageUpdate,
-    WaitForTerminalExitResponse,
-    WriteTextFileResponse,
 )
 
 from .backend import AgentBackend, AgentCallbacks, AgentState, Message
@@ -78,7 +67,11 @@ class _AcpClient:
     ) -> None:
         if isinstance(update, AgentMessageChunk):
             content = update.content
-            text = content.text if isinstance(content, TextContentBlock) else (str(content) if isinstance(content, str) else "")
+            text = (
+                content.text
+                if isinstance(content, TextContentBlock)
+                else (str(content) if isinstance(content, str) else "")
+            )
             if text:
                 self.content_buf.append(text)
                 if self._cb.on_delta:
@@ -93,7 +86,11 @@ class _AcpClient:
         elif isinstance(update, ToolCallStart) or isinstance(update, ToolCallProgress):
             tc = update.tool_call if hasattr(update, "tool_call") else None
             if tc:
-                info = {"name": tc.name or "?", "id": tc.id or "", "args": tc.arguments if isinstance(tc.arguments, dict) else {}}
+                info = {
+                    "name": tc.name or "?",
+                    "id": tc.id or "",
+                    "args": tc.arguments if isinstance(tc.arguments, dict) else {},
+                }
                 self.tool_buf.append(info)
                 if self._cb.on_tool_start:
                     self._cb.on_tool_start(info["name"], info["id"], info["args"])
@@ -168,7 +165,9 @@ class AcpAgent(AgentBackend):
         self._session_id: str = session_id or ""
         self._restore_session_id: str | None = session_id  # 要恢复的旧 session
         self._history: list[Message] = []
-        self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = asyncio.Queue()
+        self._msg_queue: asyncio.Queue[tuple[str, asyncio.Future[str]]] = (
+            asyncio.Queue()
+        )
         self._stop_ev = asyncio.Event()
         self._ready_ev = asyncio.Event()
         self._state: str = "starting"
@@ -207,7 +206,10 @@ class AcpAgent(AgentBackend):
         logger.info("[%s] 启动 ACP: %s acp", self._task_uri, hermes_bin)
 
         try:
-            async with spawn_agent_process(self._client, hermes_bin, "acp") as (conn, proc):
+            async with spawn_agent_process(self._client, hermes_bin, "acp") as (
+                conn,
+                proc,
+            ):
                 self._conn = conn
 
                 result = await conn.initialize(
@@ -215,11 +217,20 @@ class AcpAgent(AgentBackend):
                     client_capabilities=ClientCapabilities(),
                     client_info=Implementation(name="diy-acp-agent", version="0.1.0"),
                 )
-                logger.info("[%s] ACP handshake: %s v%s", self._task_uri, result.agent_info.name, result.agent_info.version)
+                logger.info(
+                    "[%s] ACP handshake: %s v%s",
+                    self._task_uri,
+                    result.agent_info.name,
+                    result.agent_info.version,
+                )
 
                 if self._restore_session_id:
                     # 恢复已有 session
-                    logger.info("[%s] 恢复 session: %s", self._task_uri, self._restore_session_id)
+                    logger.info(
+                        "[%s] 恢复 session: %s",
+                        self._task_uri,
+                        self._restore_session_id,
+                    )
                     session = await conn.load_session(
                         session_id=self._restore_session_id,
                         cwd=cwd or os.getcwd(),
@@ -248,27 +259,39 @@ class AcpAgent(AgentBackend):
     async def _service_loop(self, proc: asyncio.subprocess.Process) -> None:
         while not self._stop_ev.is_set():
             if proc.returncode is not None:
-                logger.warning("[%s] hermes acp 已退出 code=%d", self._task_uri, proc.returncode)
+                logger.warning(
+                    "[%s] hermes acp 已退出 code=%d", self._task_uri, proc.returncode
+                )
                 break
 
             try:
-                text, future = await asyncio.wait_for(self._msg_queue.get(), timeout=0.3)
-            except asyncio.TimeoutError:
+                text, future = await asyncio.wait_for(
+                    self._msg_queue.get(), timeout=0.3
+                )
+            except TimeoutError:
                 continue
 
-            self._history.append(Message(role="user", content=text, timestamp=datetime.now().strftime("%H:%M:%S")))
+            self._history.append(
+                Message(
+                    role="user",
+                    content=text,
+                    timestamp=datetime.now().strftime("%H:%M:%S"),
+                )
+            )
             self._state = "running"
 
             try:
                 result = await asyncio.wait_for(
-                    self._conn.prompt(session_id=self._session_id, prompt=[text_block(text)]),
+                    self._conn.prompt(
+                        session_id=self._session_id, prompt=[text_block(text)]
+                    ),
                     timeout=120,
                 )
                 msg = self._client.finalize_message()
                 if msg.content or msg.reasoning:
                     self._history.append(msg)
                 future.set_result(result.stop_reason)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 future.set_result("timeout")
                 if self._callbacks.on_error:
                     self._callbacks.on_error("prompt 总超时")

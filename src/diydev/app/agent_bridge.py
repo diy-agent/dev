@@ -23,10 +23,11 @@ _AGENTS_DIR = Path.home() / ".diy" / "agents"
 # 读写
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class AgentStatus:
     agent_id: str
-    task_id: str = ""       # 任务 URI（向后兼容，旧 agent 可能还是 int）
+    task_id: str = ""  # 任务 URI（向后兼容，旧 agent 可能还是 int）
     state: str = "running"  # running | done | blocked | error
     pid: int | None = None
     model: str = ""
@@ -117,6 +118,7 @@ def clear_status(task_id: str) -> None:
 # Steer 通信
 # ═══════════════════════════════════════════════════════
 
+
 def steer_send(task_uri: str, message: str) -> None:
     """GUI 发送 /steer 消息给 agent。"""
     d = _AGENTS_DIR / task_uri
@@ -149,6 +151,7 @@ def steer_reply(task_uri: str, message: str) -> None:
 # ═══════════════════════════════════════════════════════
 # Agent 启动辅助
 # ═══════════════════════════════════════════════════════
+
 
 def make_agent_id(task_uri: str) -> str:
     """生成 agent ID。"""

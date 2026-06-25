@@ -4,19 +4,18 @@
 不启动子进程（不测试 _run_blocks / assert_intent 集成流程）。
 """
 
-import re
 from _assert_intent import (
-    _sentinel_to_regex,
-    _line_matches,
     _json_contains,
+    _line_matches,
+    _sentinel_to_regex,
     _try_parse_json,
     _try_parse_yaml,
 )
 
-
 # ════════════════════════════════════════════════════════════════
 # _sentinel_to_regex
 # ════════════════════════════════════════════════════════════════
+
 
 def test_sentinel_to_regex_any():
     """{{*}} → .*?"""
@@ -39,6 +38,7 @@ def test_sentinel_to_regex_none():
 # ════════════════════════════════════════════════════════════════
 # _line_matches
 # ════════════════════════════════════════════════════════════════
+
 
 def test_line_matches_exact():
     """精确匹配 — 无 sentinel"""
@@ -68,17 +68,14 @@ def test_line_matches_regex():
 
 def test_line_matches_mixed():
     """混合 {{*}} 和 {{regex:...}}"""
-    assert _line_matches(
-        "{{*}} 和 {{regex:\\w+}}", "任意 和 Hello"
-    )
-    assert not _line_matches(
-        "{{*}} 和 {{regex:\\d+}}", "任意 和 Hello"
-    )
+    assert _line_matches("{{*}} 和 {{regex:\\w+}}", "任意 和 Hello")
+    assert not _line_matches("{{*}} 和 {{regex:\\d+}}", "任意 和 Hello")
 
 
 # ════════════════════════════════════════════════════════════════
 # _json_contains
 # ════════════════════════════════════════════════════════════════
+
 
 def test_json_contains_exact():
     """精确匹配"""
@@ -125,6 +122,7 @@ def test_json_contains_type_mismatch():
 # ════════════════════════════════════════════════════════════════
 # _try_parse_json / _try_parse_yaml
 # ════════════════════════════════════════════════════════════════
+
 
 def test_try_parse_json():
     """JSON 解析"""

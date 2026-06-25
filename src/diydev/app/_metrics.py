@@ -13,13 +13,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-
 # ── OTel-compatible instrument 接口 ──
+
 
 class _Counter:
     """单调递增计数器，匹配 OTel Counter.add()。"""
 
-    def __init__(self, store: "MetricsStore", name: str):
+    def __init__(self, store: MetricsStore, name: str):
         self._store = store
         self._name = name
 
@@ -36,7 +36,7 @@ class _Histogram:
     我们简化成 gauge + 时间序列（tradeoff：不保存分布，只存最近值）。
     """
 
-    def __init__(self, store: "MetricsStore", name: str):
+    def __init__(self, store: MetricsStore, name: str):
         self._store = store
         self._name = name
 
@@ -53,10 +53,11 @@ class _Histogram:
 
 # ── Meter ──
 
+
 class Meter:
     """匹配 OTel Meter.create_counter() / create_histogram()。"""
 
-    def __init__(self, store: "MetricsStore") -> None:
+    def __init__(self, store: MetricsStore) -> None:
         self._store = store
 
     def create_counter(
@@ -71,6 +72,7 @@ class Meter:
 
 
 # ── MetricsStore ──
+
 
 class MetricsStore:
     """进程内指标存储。

@@ -93,12 +93,13 @@
 from __future__ import annotations
 
 import time as _time
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 # ═══════════════════════════════════════════════════════════
 # 同步 Backoff — CLI / 后台线程
 # ═══════════════════════════════════════════════════════════
+
 
 class Backoff:
     """同步指数退避定时器（time.sleep 阻塞当前线程）。
@@ -203,7 +204,9 @@ class Backoff:
                 raise TimeoutError
         """
         last: Any = None
-        for _ in Backoff(timeout=timeout, initial=initial, max_delay=max_delay, multiplier=multiplier):
+        for _ in Backoff(
+            timeout=timeout, initial=initial, max_delay=max_delay, multiplier=multiplier
+        ):
             try:
                 last = condition()
                 if last:
@@ -223,6 +226,7 @@ class Backoff:
 # ═══════════════════════════════════════════════════════════
 # 异步 Backoff — asyncio 上下文
 # ═══════════════════════════════════════════════════════════
+
 
 class AsyncBackoff:
     """异步指数退避定时器（await asyncio.sleep 不阻塞事件循环）。
@@ -299,6 +303,7 @@ class AsyncBackoff:
 # ═══════════════════════════════════════════════════════════
 # Qt Backoff — Qt UI 线程（事件驱动，不阻塞）
 # ═══════════════════════════════════════════════════════════
+
 
 class QtBackoff:
     """Qt UI 线程安全的指数退避定时器（QTimer singleShot 事件驱动）。

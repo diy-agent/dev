@@ -10,12 +10,10 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QTextCursor, QTextTableFormat, QTextLength
+from PySide6.QtGui import QFont, QTextCursor, QTextLength, QTextTableFormat
 from PySide6.QtWidgets import (
     QApplication,
-    QLabel,
     QMainWindow,
-    QSplitter,
     QTabWidget,
     QTextBrowser,
     QTextEdit,
@@ -25,7 +23,9 @@ from PySide6.QtWidgets import (
 
 # ── 测试数据 ──
 
-SRC = (Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md").read_text(encoding="utf-8")
+SRC = (Path.home() / ".diy" / "task" / "local" / "task" / "1" / "AGENTS.md").read_text(
+    encoding="utf-8"
+)
 BODY = re.sub(r"^---\n.*?^---\n", "", SRC, count=1, flags=re.DOTALL | re.MULTILINE)
 
 
@@ -33,9 +33,11 @@ BODY = re.sub(r"^---\n.*?^---\n", "", SRC, count=1, flags=re.DOTALL | re.MULTILI
 # 方案 A: Rich → QTextEdit(monospace)
 # ═══════════════════════════════════════════════════════════
 
+
 def render_a(md_text: str) -> str:
     from rich.console import Console
     from rich.markdown import Markdown
+
     console = Console(record=True, force_terminal=False, width=100)
     console.print(Markdown(md_text))
     return console.export_text()
@@ -45,8 +47,10 @@ def render_a(md_text: str) -> str:
 # 方案 B: markdown-it-py → QWebEngineView (完整 HTML)
 # ═══════════════════════════════════════════════════════════
 
+
 def render_b(md_text: str) -> str:
     from markdown_it import MarkdownIt
+
     md = MarkdownIt("gfm-like", {"breaks": True, "html": True})
     body_html = md.render(md_text)
     return f"""<!DOCTYPE html>
@@ -73,6 +77,7 @@ def render_b(md_text: str) -> str:
 # 方案 C: mistune → QTextDocument + QTextTable (原生 Qt 表格)
 # ═══════════════════════════════════════════════════════════
 
+
 def render_c(md_text: str) -> str:
     """使用 mistune 解析 MD → 分段构建 QTextDocument 并 export 为 HTML。"""
     import mistune
@@ -80,7 +85,11 @@ def render_c(md_text: str) -> str:
     markdown = mistune.create_markdown(renderer="ast", plugins=["table"])
     tokens = markdown(md_text)  # AST
 
-    from PySide6.QtGui import QTextDocument, QTextCharFormat, QTextBlockFormat, QTextListFormat
+    from PySide6.QtGui import (
+        QTextBlockFormat,
+        QTextCharFormat,
+        QTextDocument,
+    )
 
     doc = QTextDocument()
     cursor = QTextCursor(doc)
@@ -151,14 +160,18 @@ def render_c(md_text: str) -> str:
                 f = cf.font()
                 f.setBold(True)
                 cf.setFont(f)
-                cursor.insertText("".join(c.get("raw", "") for c in tok.get("children", [])), cf)
+                cursor.insertText(
+                    "".join(c.get("raw", "") for c in tok.get("children", [])), cf
+                )
 
             elif t == "emphasis":
                 cf = QTextCharFormat(body_cf)
                 f = cf.font()
                 f.setItalic(True)
                 cf.setFont(f)
-                cursor.insertText("".join(c.get("raw", "") for c in tok.get("children", [])), cf)
+                cursor.insertText(
+                    "".join(c.get("raw", "") for c in tok.get("children", [])), cf
+                )
 
             elif t == "paragraph":
                 for c in tok.get("children", []):
@@ -213,7 +226,9 @@ def render_c(md_text: str) -> str:
                 for child in tok.get("children", []):
                     ct = child.get("type", "")
                     if ct == "table_head":
-                        header_cells = [_cell_text(c) for c in child.get("children", [])]
+                        header_cells = [
+                            _cell_text(c) for c in child.get("children", [])
+                        ]
                         n_cols = max(n_cols, len(header_cells))
                     elif ct == "table_body":
                         for row in child.get("children", []):
@@ -247,7 +262,9 @@ def render_c(md_text: str) -> str:
                 for ci in range(n_cols):
                     c = table.cellAt(0, ci)
                     bc = c.firstCursorPosition()
-                    bc.insertText(header_cells[ci] if ci < len(header_cells) else "", hdr_cf)
+                    bc.insertText(
+                        header_cells[ci] if ci < len(header_cells) else "", hdr_cf
+                    )
 
                 # Body rows
                 for ri, row_cells in enumerate(body_rows_raw):
@@ -304,17 +321,21 @@ class CompareWindow(QMainWindow):
 
         # B: HTML (QWebEngineView)
         from PySide6.QtWebEngineWidgets import QWebEngineView
+
         wv = QWebEngineView()
         wv.setHtml(render_b(BODY))
-        tabs.addTab(_make_tab("B: QWebEngineView (HTML, 需 WebEngine)", wv), "WebEngine")
+        tabs.addTab(
+            _make_tab("B: QWebEngineView (HTML, 需 WebEngine)", wv), "WebEngine"
+        )
 
         # C: QTextDocument + QTextTable (原生)
-        from PySide6.QtWidgets import QTextBrowser
         tb = QTextBrowser()
         tb.setOpenExternalLinks(True)
         html = render_c(BODY)
         tb.setHtml(html)
-        tabs.addTab(_make_tab("C: QTextDocument+QTextTable (原生)", tb), "原生QTextTable")
+        tabs.addTab(
+            _make_tab("C: QTextDocument+QTextTable (原生)", tb), "原生QTextTable"
+        )
 
         self.setCentralWidget(tabs)
 

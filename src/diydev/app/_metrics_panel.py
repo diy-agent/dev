@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer  # type: ignore[import-untyped]
 from PySide6.QtGui import QFont  # type: ignore[import-untyped]
-from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget  # type: ignore[import-untyped]
+from PySide6.QtWidgets import (  # type: ignore[import-untyped]
+    QPlainTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from diydev.app._metrics import MetricsStore
 

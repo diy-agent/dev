@@ -8,11 +8,9 @@
 from __future__ import annotations
 
 import logging
-
 import re
 from collections import Counter
 
-from PySide6.QtCore import Qt  # type: ignore[import-untyped]
 from PySide6.QtGui import QFont, QTextCursor  # type: ignore[import-untyped]
 from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QCheckBox,
@@ -152,8 +150,9 @@ class LogPanel(QWidget):
     def _apply_filter(self) -> None:
         min_level = self._level_filter.currentData()
         filter_source = self._source_filter.currentData()
-        logger.debug("[panel] 过滤切换: level=%s source=%s",
-                     min_level or "ALL", filter_source)
+        logger.debug(
+            "[panel] 过滤切换: level=%s source=%s", min_level or "ALL", filter_source
+        )
 
         # 重绘 — 重新从缓存加载所有匹配的记录
         qt_handler = get_qt_handler()

@@ -37,16 +37,19 @@ import logging.handlers
 import os
 import re
 import subprocess
+import sys
 from collections import deque
 from pathlib import Path
-from diydev._state import diy_home
 
 from PySide6.QtCore import QObject, Signal  # type: ignore[import-untyped]
 
+from diydev._state import diy_home
+
 if __name__ != "__main__":
     from typing import TYPE_CHECKING
+
     if TYPE_CHECKING:
-        from diydev.app._metrics import MetricsStore
+        pass
 
 __all__ = ["setup_app_logger", "logger", "QtLogHandler", "get_logger"]
 
@@ -84,7 +87,9 @@ def _compute_root_pid() -> int:
         try:
             r = subprocess.run(
                 ["ps", "-o", "ppid=", "-p", str(pid)],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             ppid = r.stdout.strip()
             if not ppid:
@@ -152,7 +157,7 @@ class JsonlFormatter(logging.Formatter):
         m = _RE_CATEGORY.match(msg)
         if m:
             cat = m.group(1)
-            body = msg[m.end():].strip()
+            body = msg[m.end() :].strip()
         return json.dumps(
             {
                 "t": _fmt_tz_ms(record),
@@ -226,6 +231,58 @@ class QtLogHandler(logging.Handler):
 # 保存引用以便 LogPanel 连接
 _qt_handler: QtLogHandler | None = None
 
+# ── fd 2 重定向（捕获 Chromium 等子进程 stderr）──
+_STDERR_LINES: deque[str] = deque(maxlen=500)
+_orig_stderr_fd: int | None = None
+
+
+def _capture_fd2() -> None:
+    """OS 层重定向 fd 2（stderr）到管道，捕获所有子进程输出。
+
+    Chromium/agentd/任何子进程都写 fd 2，绕过 Python sys.stderr。
+    此函数在 setup_app_logger 开头调用，用管道替换 fd 2，
+    读线程逐行读出并写入 logging + 原始终端。
+    """
+    global _STDERR_LINES
+    # 1. 保存原始终端 stderr 的副本
+    _orig_stderr_fd = os.dup(2)
+    orig_stderr = os.fdopen(_orig_stderr_fd, "w", 1)  # line-buffered
+
+    # 2. 创建管道，替换 fd 2
+    r_fd, w_fd = os.pipe()
+    os.dup2(w_fd, 2)  # fd 2 → 管道写端
+    os.close(w_fd)  # 关闭写端副本，只剩 fd 2
+
+    # 3. Python sys.stderr 改回原始终端（否则 logging 写 sys.stderr 会进管道 → 循环）
+    sys.stderr = orig_stderr
+
+    # 4. 读线程：从管道读 → 原始终端 + 缓存队列（等 Qt ready 后冲入 logging）
+    def _reader():
+        with os.fdopen(r_fd, "r") as f:
+            for line in f:
+                line = line.rstrip()
+                if not line:
+                    continue
+                _STDERR_LINES.append(line)
+                # 写回原始终端（保持终端可见）
+                try:
+                    orig_stderr.write(f"[子进程] {line}\n")
+                    orig_stderr.flush()
+                except OSError:
+                    pass
+
+    import threading as _t
+
+    t = _t.Thread(target=_reader, daemon=True)
+    t.start()
+
+
+def flush_stderr_lines(logger: logging.Logger) -> None:
+    """将缓存的子进程 stderr 冲入 logging（MainWindow 初始化后调用）。"""
+    global _STDERR_LINES
+    while _STDERR_LINES:
+        logger.info("[stderr] %s", _STDERR_LINES.popleft())
+
 
 def _install_qt_msg_handler() -> None:
     """拦截 Qt 原生 C++ 消息，路由到 Python logger。
@@ -296,13 +353,17 @@ def setup_app_logger(
     """
     global _qt_handler, _metrics_handler
 
-    log_path = Path(file_path or (
-        diy_home() / "app.log"
-    ))
+    log_path = Path(file_path or (diy_home() / "app.log"))
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger("diy.app")
     root.setLevel(level)
+
+    # 捕获 Python warnings → logging（PySide6 断开警告等）
+    logging.captureWarnings(True)
+
+    # OS 层重定向 fd 2 → 管道，捕获 Chromium 等子进程 stderr
+    _capture_fd2()
 
     # 避免重复添加 handler（多次调用 setup 时）
     root.handlers.clear()

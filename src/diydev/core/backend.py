@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
-
 
 # ════════════════════════════════════════════════════════════════
 # 数据模型
@@ -20,7 +19,8 @@ from typing import Callable
 @dataclass
 class Message:
     """单条对话消息。"""
-    role: str = "assistant"           # "user" | "assistant" | "tool"
+
+    role: str = "assistant"  # "user" | "assistant" | "tool"
     content: str = ""
     reasoning: str = ""
     tool_calls: list[dict] = field(default_factory=list)
@@ -30,9 +30,10 @@ class Message:
 @dataclass
 class AgentState:
     """agent 运行时快照。"""
+
     task_uri: str
     session_id: str = ""
-    state: str = "idle"          # "starting" | "idle" | "running" | "error" | "stopped"
+    state: str = "idle"  # "starting" | "idle" | "running" | "error" | "stopped"
     message_count: int = 0
 
 
@@ -50,6 +51,7 @@ FinishCallback = Callable[[str], None]  # stop_reason
 @dataclass
 class AgentCallbacks:
     """agent 事件回调集合。"""
+
     on_delta: DeltaCallback | None = None
     on_reasoning: ReasoningCallback | None = None
     on_tool_start: ToolStartCallback | None = None

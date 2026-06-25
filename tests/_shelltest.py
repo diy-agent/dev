@@ -30,7 +30,6 @@ import subprocess
 import time
 from collections.abc import Callable
 
-
 # ── Session: the actual bash process ──
 
 
@@ -55,7 +54,8 @@ class Session:
         shell: str = "bash",
         cwd: str | None = None,
         ps1_prefix: str = "",
-        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]] | None = None,
+        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]]
+        | None = None,
     ):
         self._marker = f"__ST_{os.urandom(4).hex()}__"
         # 不锚定行首——ps1_prefix 可能出现 marker 前面
@@ -157,13 +157,15 @@ class Session:
     # ── 命令执行 ──
 
     # Shell syntax that disqualifies fast-path execution
-    _SHELL_SYNTAX = re.compile(r'[;&|<>]|\$[a-zA-Z_({]|`')
+    _SHELL_SYNTAX = re.compile(r"[;&|<>]|\$[a-zA-Z_({]|`")
 
-    def run(self, cmd: str, timeout: float = 12.0, quiet: float = 0.3) -> tuple[int, str, str]:
+    def run(
+        self, cmd: str, timeout: float = 12.0, quiet: float = 0.3
+    ) -> tuple[int, str, str]:
         # Try registered fast commands before spawning a process
         for prefix, handler in self._fast_commands.items():
             if cmd == prefix or cmd.startswith(prefix + " "):
-                args_str = cmd[len(prefix):].strip()
+                args_str = cmd[len(prefix) :].strip()
                 if not self._SHELL_SYNTAX.search(args_str):
                     result = handler(args_str)
                     if result is not None:
@@ -292,11 +294,12 @@ class Session:
                 continue
             if not any(self._line_matches(exp, act) for act in actual_lines):
                 raise AssertionError(
-                    f"[{label}] 未找到匹配行: {exp!r}\n"
-                    f"  实际输出: {actual!r}"
+                    f"[{label}] 未找到匹配行: {exp!r}\n  实际输出: {actual!r}"
                 )
 
-    def _parse_session(self, session: str) -> list[tuple[str, list[str], list[str], bool]]:
+    def _parse_session(
+        self, session: str
+    ) -> list[tuple[str, list[str], list[str], bool]]:
         blocks: list[tuple[str, list[str], list[str], bool]] = []
         lines = session.split("\n")
 
@@ -409,7 +412,8 @@ class ShellTest:
         cwd: str | None = None,
         init_commands: list[str] | None = None,
         ps1_prefix: str = "",
-        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]] | None = None,
+        fast_commands: dict[str, Callable[[str], tuple[int, str, str] | None]]
+        | None = None,
     ):
         self._shell = shell
         self._cwd = cwd
@@ -437,14 +441,21 @@ class ShellTest:
         return ShellTest(
             shell=shell if shell is not None else self._shell,
             cwd=cwd if cwd is not None else self._cwd,
-            init_commands=init_commands if init_commands is not None else self._init_commands.copy()
+            init_commands=init_commands
+            if init_commands is not None
+            else self._init_commands.copy()
             if self._init_commands
             else None,
             ps1_prefix=ps1_prefix if ps1_prefix is not None else self._ps1_prefix,
         )
 
     def session(self) -> Session:
-        s = Session(shell=self._shell, cwd=self._cwd, ps1_prefix=self._ps1_prefix, fast_commands=self._fast_commands)
+        s = Session(
+            shell=self._shell,
+            cwd=self._cwd,
+            ps1_prefix=self._ps1_prefix,
+            fast_commands=self._fast_commands,
+        )
         for cmd in self._init_commands:
             s.run(cmd)
         return s

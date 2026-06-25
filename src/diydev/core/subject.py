@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from diydev._state import _norm, _subject_is_git, load_state, save_state
+
 from .validator import FieldError, ValidationError
 
 
@@ -20,9 +21,11 @@ def add_subject(path: str, desc: str | None = None) -> dict:
     subjects = state.setdefault("subjects", {})
 
     if path_n in subjects:
-        raise ValidationError([
-            FieldError("path", "already_exists", f"subject {path_n!r} 已存在"),
-        ])
+        raise ValidationError(
+            [
+                FieldError("path", "already_exists", f"subject {path_n!r} 已存在"),
+            ]
+        )
 
     entry: dict[str, str] = {}
     if desc:
@@ -44,12 +47,15 @@ def remove_subject(path: str) -> dict:
     subjects = state.get("subjects", {})
 
     if path_n not in subjects:
-        raise ValidationError([
-            FieldError("path", "not_found", f"subject {path_n!r} 不存在"),
-        ])
+        raise ValidationError(
+            [
+                FieldError("path", "not_found", f"subject {path_n!r} 不存在"),
+            ]
+        )
 
     # 检查是否有 task 引用此 subject
     from diydev._state import list_tasks
+
     for uri, task in list_tasks().items():
         if task.get("subject") == path_n:
             raise ValueError(f"subject {path_n!r} 有任务引用 ({uri})")
@@ -77,9 +83,11 @@ def show_subject(path: str) -> dict:
     subjects = state.get("subjects", {})
 
     if path_n not in subjects:
-        raise ValidationError([
-            FieldError("path", "not_found", f"subject {path_n!r} 不存在"),
-        ])
+        raise ValidationError(
+            [
+                FieldError("path", "not_found", f"subject {path_n!r} 不存在"),
+            ]
+        )
 
     entry = dict(subjects[path_n])
     entry["is_git"] = _subject_is_git(path_n)
