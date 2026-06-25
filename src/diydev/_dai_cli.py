@@ -1548,7 +1548,7 @@ def _app_restart():
 
     # 4) 启动 app — 直接用当前 Python 解释器，不依赖 sha.sh
     info("正在启动管控台...")
-    proc = subprocess.Popen(
+    subprocess.Popen(
         [sys.executable, "-m", "diydev.app.main"],
         stdout=subprocess.DEVNULL,
         env={**os.environ},

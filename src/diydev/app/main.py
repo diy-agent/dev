@@ -12,6 +12,8 @@ import sys
 import time
 import traceback
 from pathlib import Path
+import io as _io
+from typing import Any
 
 # ── QWebEngine Chromium flags 必须在 import QtWebEngineWidgets 之前设置 ──
 #
@@ -1604,7 +1606,7 @@ class MainWindow(QMainWindow):
             import json
             from collections import deque
 
-            VALID_LEVELS = {"ERROR", "WARNING", "INFO", "DEBUG"}
+
 
             buf = deque()
             with open(log_path, encoding="utf-8") as f:
@@ -3460,11 +3462,11 @@ class Gateway(QObject):
         except BlockingIOError:
             os.close(self._lock_fd)
             self._lock_fd = None
-            raise ConnectionError("已有管控台进程在启动中")
+            raise ConnectionError("已有管控台进程在启动中") from None
         except OSError:
             os.close(self._lock_fd)
             self._lock_fd = None
-            raise ConnectionError("无法获取 app.lock")
+            raise ConnectionError("无法获取 app.lock") from None
 
         try:
             # 3) probe 探活：区分活跃实例 vs 僵尸文件（仍在锁内）
@@ -3644,7 +3646,7 @@ def main():
         """QtAsyncio call_exception_handler 只传 context (非标准 asyncio 的 (loop, context))。"""
         try:
             exc = context.get("exception")
-            msg = context.get("message", "")
+            _msg = context.get("message", "")
             # Qt C++ 对象已销毁 — 非致命，日志即可
             if isinstance(exc, RuntimeError) and "already deleted" in str(exc):
                 logger.warning("[qt-lifecycle] 访问已删除 QObject: %s", exc)

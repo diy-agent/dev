@@ -335,23 +335,23 @@ def _check_flock_integrity() -> list[HealthIssue]:
             a_ready = threading.Event()
             results: list[str] = []
 
-            def _lock_a() -> None:
+            def _lock_a(_ar=a_ready) -> None:
                 f = open(lock_file, "r+")
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                a_ready.set()
+                _ar.set()
                 import time
 
                 time.sleep(0.02)  # 持锁，给 B 竞争窗口
                 f.close()
 
-            def _lock_b() -> None:
-                a_ready.wait()
+            def _lock_b(_ar=a_ready, _res=results) -> None:
+                _ar.wait()
                 f = open(lock_file, "r+")
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    results.append("ok")  # B 拿到锁 → 不互斥
+                    _res.append("ok")  # B 拿到锁 → 不互斥
                 except BlockingIOError:
-                    results.append("blocked")  # B 被挡 → 互斥
+                    _res.append("blocked")  # B 被挡 → 互斥
                 f.close()
 
             t_a = threading.Thread(target=_lock_a)

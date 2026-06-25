@@ -30,6 +30,8 @@ QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
 
 from __future__ import annotations
 
+from typing import Any
+
 import datetime
 import json
 import logging

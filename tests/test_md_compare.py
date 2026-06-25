@@ -102,7 +102,6 @@ def render_c(md_text: str) -> str:
     h1_cf.setFontPointSize(20)
     h1_cf.setForeground(Qt.GlobalColor.white)
 
-    h2_fmt = QTextBlockFormat()
 
     h2_cf = QTextCharFormat()
     h2_cf.setFontPointSize(17)

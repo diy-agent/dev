@@ -371,7 +371,7 @@ class SessionPool:
             else:
                 # Fix: re-spawn 时更新 config（替换旧的，不保留已存在的 agent.config）
                 agent.config = agent_config
-        msg = agent.spawn(prompt)
+        agent.spawn(prompt)
         return agent.status
 
     def send(self, task_uri: str, message: str) -> AgentStatus:

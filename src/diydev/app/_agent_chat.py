@@ -394,7 +394,6 @@ class CollapsibleBlock(QFrame):
         self._expanded = checked
         self._content.setVisible(checked)
         # 更新图标样式
-        chevron = "▾" if checked else "▸"
         current = self._header.text()
         # 保持前缀不变，只更新末尾箭头
         self._header.setText(

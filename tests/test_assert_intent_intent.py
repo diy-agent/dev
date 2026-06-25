@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from _assert_intent import IntentAssertionError, assert_intent
 
 
@@ -60,7 +62,7 @@ def test_intent_exit_code_nonzero():
         assert_intent("""
 ! false
 """)
-        assert False, "应抛异常"
+        pytest.fail("应抛异常")
     except (AssertionError, IntentAssertionError):
         pass
 

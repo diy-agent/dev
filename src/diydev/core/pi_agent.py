@@ -147,7 +147,7 @@ class PiRpcAgent(AgentBackend):
         if not self._proc or not self._proc.stdout:
             return
         loop = asyncio.get_running_loop()
-        buf = ""
+
         try:
             while True:
                 try:
@@ -264,7 +264,7 @@ class PiRpcAgent(AgentBackend):
                     except TimeoutError:
                         # idle 超时：检查最后一次事件
                         if __import__("time").time() - self._last_event_ts >= IDLE:
-                            raise TimeoutError("静默超时")
+                            raise TimeoutError("静默超时") from None
 
                 future.set_result("end_turn")
                 if self._callbacks.on_finished:

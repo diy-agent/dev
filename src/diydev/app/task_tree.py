@@ -130,7 +130,7 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
         task_nodes[uri] = tn
 
     # 第二遍：按 parent 建立层级
-    for uri, tn in task_nodes.items():
+    for _uri, tn in task_nodes.items():
         parent_uri = tn.parent_uri
         if parent_uri and parent_uri in task_nodes:
             task_nodes[parent_uri].children.append(tn)
