@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [tool.uv]
-package = true
+package = false
 override-dependencies = ["nodejs-wheel-binaries; python_version == '9.9.9'"]
 
 [tool.uv.sources]
@@ -21,12 +21,8 @@ diy-cli = { path = "../diy/pkgs/diy-cli" }
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.3",
-    "pytest-qt>=4.2",
     "basedpyright>=1.39.8",
     "ruff>=0.15.15",
-    "pandas>=3.0.3",
-    "mistune>=3.2.1",
     "agent-client-protocol>=0.10.1",
     "aiosqlite>=0.22.1",
     "nodejs-wheel-shim>=0.1.0",
@@ -34,7 +30,7 @@ dev = [
 
 [tool.pyright]
 typeCheckingMode = "standard"
-include = ["tests"]
+include = []
 exclude = [
     "**/__pycache__",
     "**/.venv",
