@@ -91,9 +91,8 @@ def test_intent_subject_remove(sh: ShellTest, fake_home: Path):
           description: git
           is_git: true
 
-        $ dai subject show ~/git/sub 2>&1; echo $?
+        $! dai subject show ~/git/sub
         *
-        1
     """)
 
 
@@ -108,9 +107,8 @@ def test_intent_subject_duplicate(sh: ShellTest, fake_home: Path):
           path: ~/x
           description: x
 
-        $ dai subject add ~/x 2>&1; echo $?
+        $! dai subject add ~/x
         *
-        1
     """)
 
 

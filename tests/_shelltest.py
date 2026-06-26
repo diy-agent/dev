@@ -30,6 +30,8 @@ import subprocess
 import time
 from collections.abc import Callable
 
+_log = __import__("logging").getLogger("shelltest")
+
 # ── Session: the actual bash process ──
 
 
@@ -101,7 +103,7 @@ class Session:
         try:
             os.write(self._master_fd, (cmd + "\n").encode())
         except (OSError, ValueError):
-            pass
+            _log.debug("_write 异常（子进程已退出）", exc_info=True)
 
     def _read(self, timeout: float = 12.0, quiet: float = 0.3) -> tuple[str, str]:
         out_buf = b""
@@ -285,8 +287,8 @@ class Session:
         return False
 
     def _match_block(self, expected: list[str], actual: str, label: str) -> None:
-        actual_lines = [l.strip() for l in actual.split("\n")] if actual else []
-        expected_clean = [l for l in expected if l.strip()]
+        actual_lines = [l.strip() for l in actual.split("\n")] if actual else []  # noqa: E741  # l 作循环变量，非数字 1
+        expected_clean = [l for l in expected if l.strip()]  # noqa: E741  # 同上
 
         for exp in expected_clean:
             # * 通配符：匹配任意输出（含空输出）
@@ -366,13 +368,13 @@ class Session:
             try:
                 os.close(self._master_fd)
             except OSError:
-                pass
+                _log.debug("close master fd 异常（清理阶段）")
             self._master_fd = -1
             if self._err_fd is not None:
                 try:
                     os.close(self._err_fd)
                 except OSError:
-                    pass
+                    _log.debug("close err fd 异常（清理阶段）")
                 self._err_fd = -1
             try:
                 self._proc.wait(timeout=3)
@@ -393,7 +395,7 @@ class Session:
         try:
             self.close()
         except Exception:
-            pass
+            _log.debug("__del__ cleanup 异常", exc_info=True)
 
 
 # ── ShellTest: factory / builder ──

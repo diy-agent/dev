@@ -98,10 +98,7 @@ def run_check(
 
 def _is_live(statuses: list[HealthIssue]) -> bool:
     """根据 L1 结果判断 app 是否活着。"""
-    for i in statuses:
-        if i.code == "app_running":
-            return True
-    return False
+    return any(i.code == "app_running" for i in statuses)
 
 
 # ═══════════════════════════════════════════════════════
@@ -336,7 +333,7 @@ def _check_flock_integrity() -> list[HealthIssue]:
             results: list[str] = []
 
             def _lock_a(_ar=a_ready) -> None:
-                f = open(lock_file, "r+")
+                f = open(lock_file, "r+")  # noqa: SIM115  # with 会释放 fcntl.flock
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 _ar.set()
                 import time
@@ -346,7 +343,7 @@ def _check_flock_integrity() -> list[HealthIssue]:
 
             def _lock_b(_ar=a_ready, _res=results) -> None:
                 _ar.wait()
-                f = open(lock_file, "r+")
+                f = open(lock_file, "r+")  # noqa: SIM115  # with 会释放 fcntl.flock
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     _res.append("ok")  # B 拿到锁 → 不互斥

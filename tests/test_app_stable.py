@@ -6,7 +6,6 @@ import os
 import sys
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ["DIY_HOME"] = "/tmp/diy-test-stable"
 
 import pytest
 from PySide6.QtCore import QTimer

@@ -599,7 +599,7 @@ def task_link(
 
     # 从 source_uri 格式推测 type
     if "github.com" in source_uri:
-        if "/pull/" in source_uri:
+        if "/pull/" in source_uri:  # noqa: SIM108  # 双层嵌套 if/else，三元反而不清
             source_type = "github_pr"
         else:
             source_type = "github_issue"
@@ -843,7 +843,7 @@ def task_list(
       $ dai task list
       $ dai task list --all
     """
-    if all:
+    if all:  # noqa: SIM108  # if/else 比三元表达式更清晰
         tasks = list_tasks()
     else:
         tasks = list_starred()
@@ -1499,7 +1499,7 @@ def _app_restart():
     import subprocess
     import time as _time
 
-    from diydev._log import error, info, warn
+    from diydev._log import debug, error, info, warn
 
     socket_path = str(diy_home() / "app.sock")
     lock_path = str(diy_home() / "app.lock")
@@ -1544,7 +1544,7 @@ def _app_restart():
     try:
         os.unlink(socket_path)
     except FileNotFoundError:
-        pass
+        debug("socket 文件已不存在（清理阶段）")
 
     # 4) 启动 app — 直接用当前 Python 解释器，不依赖 sha.sh
     info("正在启动管控台...")
@@ -1604,6 +1604,7 @@ def main():
     ⚠️ 加命令必须同步在 app/main.py GatewayCLI 注册。
     移动命令时搜 grep -rn '"diy <旧>"' src/ 更新所有硬编码字符串。
     """
+    from diydev._log import debug  # noqa: I001  # 函数内 import 避模块级循环导入
     from ._forward import forward_to_app
 
     tokens = sys.argv[1:] if len(sys.argv) > 1 else []
@@ -1611,7 +1612,7 @@ def main():
         try:
             app(["--help"])
         except SystemExit:
-            pass
+            debug("cyclopts --help 完成")
         return
 
     cmd = tokens[0]
@@ -1621,7 +1622,7 @@ def main():
         try:
             app(tokens)
         except SystemExit:
-            pass
+            debug("生命周期命令完成: %s", cmd)
         return
     if cmd == "doctor" and len(tokens) > 1 and tokens[1] == "metrics":
         dai_doctor_metrics()
@@ -1632,7 +1633,7 @@ def main():
         try:
             agent_app(tokens[1:])
         except SystemExit:
-            pass
+            debug("agent 命令完成")
         return
 
     # UI 子命令：dai ui 无参数 → 启动桌面 app；dai ui <subcmd> → 走 socket

@@ -83,7 +83,7 @@ class _AcpClient:
                 if self._cb.on_reasoning:
                     self._cb.on_reasoning(update.thought.content)
 
-        elif isinstance(update, ToolCallStart) or isinstance(update, ToolCallProgress):
+        elif isinstance(update, (ToolCallStart, ToolCallProgress)):
             tc = update.tool_call if hasattr(update, "tool_call") else None
             if tc:
                 info = {
@@ -298,7 +298,7 @@ class AcpAgent(AgentBackend):
                 try:
                     await self._conn.cancel(session_id=self._session_id)
                 except Exception:
-                    pass
+                    logger.debug("[acp] cancel 异常（连接已关闭）", exc_info=True)
             except Exception as exc:
                 future.set_exception(exc)
                 if self._callbacks.on_error:

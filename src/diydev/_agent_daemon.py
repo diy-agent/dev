@@ -321,14 +321,14 @@ class _ManagedAgent:
             try:
                 self.agent.interrupt("用户终止")
             except Exception:
-                pass
+                logger.debug("[agent] interrupt 异常（清理阶段）", exc_info=True)
         self.status.state = "killed"
         self.status.error = ""  # Fix: 重置 error
         self._write_bridge_status()
 
     @property
     def output_tail(self) -> list[str]:
-        lines = [l for l in self._output_buf if l]
+        lines = [l for l in self._output_buf if l]  # noqa: E741  # l 作循环变量，非数字 1/O
         return lines[-20:]
 
     def _format_status_block(self) -> str:

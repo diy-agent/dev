@@ -3,7 +3,7 @@
 启动 PySide6 窗口，渲染任务树 + agent 监控。
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001  # __future__ 必须在文件最顶
 
 import asyncio
 import errno
@@ -35,7 +35,7 @@ if (
         _qtwebengine_flags + " --disable-gpu"
     ).strip()
 
-from PySide6.QtCore import (  # type: ignore[import-untyped]
+from PySide6.QtCore import (  # type: ignore[import-untyped]  # noqa: E402, I001  # Qt chromium flags 设后才能 import PySide6
     QEvent,
     QFileSystemWatcher,
     QItemSelectionModel,
@@ -45,7 +45,7 @@ from PySide6.QtCore import (  # type: ignore[import-untyped]
     Signal,
     Slot,
 )
-from PySide6.QtGui import (  # type: ignore[import-untyped]
+from PySide6.QtGui import (  # type: ignore[import-untyped]  # noqa: E402, I001  # 同上：chromium flags 后 import
     QAction,
     QStandardItem,
     QStandardItemModel,
@@ -58,7 +58,7 @@ from PySide6.QtGui import (  # type: ignore[import-untyped]
 # 通过 _safe_create_webengine_view() 创建，该函数在 app 未 active 时抛出清晰异常。
 #
 # 类型标注仍需 import，故保留模块级 import 供 type checker 用，但实例化必须走守卫。
-from PySide6.QtWebEngineWidgets import QWebEngineView  # type: ignore[import-untyped]
+from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: E402, I001  # type: ignore[import-untyped]  # chromium flags 设后才能 import WebEngine
 
 _webengine_ready: bool = False  # set True 后安全创建 WebEngineView
 
@@ -82,7 +82,7 @@ def _mark_webengine_ready() -> None:
     _webengine_ready = True
 
 
-from PySide6.QtWidgets import (  # type: ignore[import-untyped]
+from PySide6.QtWidgets import (  # type: ignore[import-untyped]  # noqa: E402  # chromium flags 设后才能 import QtWidgets
     QAbstractItemView,
     QApplication,
     QComboBox,
@@ -104,18 +104,20 @@ from PySide6.QtWidgets import (  # type: ignore[import-untyped]
     QWidget,
 )
 
-from diydev._state import diy_home
-from diydev.app._agent_chat import AgentChatPanel
-from diydev.app._app_log import logger, setup_app_logger
-from diydev.app._doctor import HealthIssue, run_check
-from diydev.app._log_panel import LogPanel
-from diydev.app._metrics import MetricsStore
-from diydev.app._overlay_panel import OverlayPanel
-from diydev.app._status_bar import StatusBar
-from diydev.app._title_bar import TitleBar
-from diydev.app.screen import Area, Panel, Screen
-from diydev.app.task_tree import TaskNode, load_task_tree
-from diydev.core.agent_manager import get_manager
+from diydev._state import (  # noqa: E402  # 因 Qt chromium flags 先行设置，以下 import 均无法在文件顶
+    diy_home,
+)
+from diydev.app._agent_chat import AgentChatPanel  # noqa: E402  # 同上
+from diydev.app._app_log import logger, setup_app_logger  # noqa: E402  # 同上
+from diydev.app._doctor import HealthIssue, run_check  # noqa: E402  # 同上
+from diydev.app._log_panel import LogPanel  # noqa: E402  # 同上
+from diydev.app._metrics import MetricsStore  # noqa: E402  # 同上
+from diydev.app._overlay_panel import OverlayPanel  # noqa: E402  # 同上
+from diydev.app._status_bar import StatusBar  # noqa: E402  # 同上
+from diydev.app._title_bar import TitleBar  # noqa: E402  # 同上
+from diydev.app.screen import Area, Panel, Screen  # noqa: E402  # 同上
+from diydev.app.task_tree import TaskNode, load_task_tree  # noqa: E402  # 同上
+from diydev.core.agent_manager import get_manager  # noqa: E402  # 同上
 
 # ═══════════════════════════════════════════════════════
 # 自定义 data roles
@@ -131,8 +133,8 @@ ROLE_SUBJECT = Qt.ItemDataRole.UserRole + 4
 # Material3 暗色主题 — 语义化颜色系统
 # ═══════════════════════════════════════════════════════
 
-import os as _os
-import pwd as _pwd
+import os as _os  # noqa: E402  # 放在 Qt 主题定义前，因 chromium flags 已打乱 import 顺序
+import pwd as _pwd  # noqa: E402  # 同上
 
 
 def _detect_sandbox() -> tuple[bool, str]:
@@ -856,7 +858,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(300, self._tree.setFocus)
         logger.debug("[init] __init__ 全部完成")
 
-    def changeEvent(self, event: QEvent | None) -> None:
+    def changeEvent(self, event: QEvent | None) -> None:  # noqa: N802  # 重写 Qt QMainWindow 方法，必须保持原大小写
         """监听窗口激活事件。
 
         首次收到 ActivationChange 且窗口 active 时，标记 WebEngine 可安全创建。
@@ -1604,9 +1606,7 @@ class MainWindow(QMainWindow):
             return "[日志文件不存在]"
         try:
             import json
-            from collections import deque
-
-
+            from collections import deque  # noqa: E402  # 函数内 import，避免模块级导入
 
             buf = deque()
             with open(log_path, encoding="utf-8") as f:
@@ -1643,7 +1643,7 @@ class MainWindow(QMainWindow):
                 # 统计
                 counts: dict[str, int] = {}
                 for e in buf:
-                    l = e.get("l", "")
+                    l = e.get("l", "")  # noqa: E741  # l 是 log level 缩写，非数字 1
                     counts[l] = counts.get(l, 0) + 1
                 summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
                 return f"--- 最近 {len(buf)} 条 ({summary}) ---\n{result}"
@@ -1738,7 +1738,7 @@ class MainWindow(QMainWindow):
             return "\n".join(lines)
         return "(无 agent)"
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # noqa: N802  # 重写 Qt 事件方法，保持原大小写
         self._gateway.stop()
         super().closeEvent(event)
 
@@ -1747,21 +1747,21 @@ class MainWindow(QMainWindow):
 # Gateway — Unix socket 入口
 # ═══════════════════════════════════════════════════════
 
-import fcntl
-import socket
-import socketserver
-import threading
-from collections.abc import Callable
-from typing import TypeVar
+import fcntl  # noqa: E402  # Gateway 节内 import（类引用在末尾）
+import socket  # noqa: E402  # 同上
+import socketserver  # noqa: E402  # 同上
+import threading  # noqa: E402  # 同上
+from collections.abc import Callable  # noqa: E402  # Gateway 节内 import
+from typing import TypeVar  # noqa: E402  # 同上
 
-from cyclopts import App as CycloptsApp
-from cyclopts.exceptions import UnknownCommandError
-from PySide6.QtCore import (  # type: ignore[import-untyped]
+from cyclopts import App as CycloptsApp  # noqa: E402  # 同上
+from cyclopts.exceptions import UnknownCommandError  # noqa: E402  # 同上
+from PySide6.QtCore import (  # type: ignore[import-untyped]  # noqa: E402  # Gateway 节内 import
     Q_ARG,
     QMetaObject,
     QObject,  # type: ignore[import-untyped]
 )
-from PySide6.QtCore import Qt as QtCore
+from PySide6.QtCore import Qt as QtCore  # noqa: E402  # 同上
 
 T = TypeVar("T")
 
@@ -3486,7 +3486,7 @@ class Gateway(QObject):
                 try:
                     os.unlink(self._path)
                 except FileNotFoundError:
-                    pass
+                    logger.debug("[gateway] socket 已不存在（僵尸清理）")
 
             # 4) 绑定 + 监听
             self._server = socketserver.UnixStreamServer(
@@ -3521,7 +3521,7 @@ class Gateway(QObject):
         try:
             os.unlink(self._path)
         except OSError:
-            pass
+            logger.debug("[gateway] socket 清理异常", exc_info=True)
         # 注意：不释放 flock！锁由进程退出时内核自动清理。
         # 如果在这里释放，_app_restart 可能趁旧进程还在退出时抢到锁。
         # 只有进程死透，锁才释放。这是单实例的最后一道防线。
@@ -3568,7 +3568,7 @@ class TaskFilterProxy(QSortFilterProxyModel):
         self._window = window
         self.setRecursiveFilteringEnabled(True)
 
-    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:  # noqa: N802  # 重写 QSortFilterProxyModel 方法
         model = self.sourceModel()
         if model is None:
             return True
