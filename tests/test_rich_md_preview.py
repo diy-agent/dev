@@ -34,7 +34,7 @@ TEST_MD = (
 ).read_text(encoding="utf-8")
 
 # 去掉 frontmatter（---...--- 之间的 YAML 头）
-import re
+import re  # noqa: E402  # frontmatter 截断后 import，非标准文件顶
 
 TEST_MD = re.sub(
     r"^---\n.*?^---\n", "", TEST_MD, count=1, flags=re.DOTALL | re.MULTILINE

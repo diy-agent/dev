@@ -102,7 +102,6 @@ def render_c(md_text: str) -> str:
     h1_cf.setFontPointSize(20)
     h1_cf.setForeground(Qt.GlobalColor.white)
 
-
     h2_cf = QTextCharFormat()
     h2_cf.setFontPointSize(17)
     h2_cf.setForeground(Qt.GlobalColor.white)
@@ -292,7 +291,9 @@ def render_c(md_text: str) -> str:
 # GUI
 # ═══════════════════════════════════════════════════════════
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import (  # noqa: E402  # GUI 常量定义后 import，非标准文件顶顺序
+    QColor,
+)
 
 
 def _make_tab(label: str, widget: QWidget) -> QWidget:

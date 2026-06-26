@@ -7,7 +7,7 @@
   - 多命令会话
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001  # __future__ 必须在文件最顶
 
 import pytest
 

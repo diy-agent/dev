@@ -56,7 +56,7 @@ _locks: dict[Path, threading.Lock] = {}
 _locks_init_lock = threading.Lock()
 
 
-class locked_file:
+class locked_file:  # noqa: N801  # 上下文管理器惯例 snake_case
     """跨进程 + 跨线程安全的文件锁上下文管理器。
 
     两层锁策略：
@@ -93,7 +93,7 @@ class locked_file:
         """获取线程锁 → 打开文件 → 获取文件锁。"""
         self._thread_lock.acquire()
         try:
-            self._fd = open(self._path, "w")
+            self._fd = open(self._path, "w")  # noqa: SIM115  # with 会释放 fcntl.flock，需保持 fd 打开
             fcntl.flock(self._fd.fileno(), fcntl.LOCK_EX)
         except BaseException:
             self._thread_lock.release()
@@ -124,7 +124,7 @@ class locked_file:
         self = cls(path)
         self._thread_lock.acquire()
         try:
-            self._fd = open(self._path, "w")
+            self._fd = open(self._path, "w")  # noqa: SIM115  # 同上：fcntl.flock 需要手动 fd 生命周期
         except BaseException:
             self._thread_lock.release()
             raise

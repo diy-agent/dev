@@ -29,25 +29,25 @@ print("=== 模块 import 检查 ===")
 
 # ── 核心模块 import ──
 print("  ✅ import diydev.app.main")
-import diydev.app.main  # noqa: F811, F401
+import diydev.app.main  # noqa: F811, F401, E402  # 手动 import 验证各模块可加载
 
 print("  ✅ import diydev.app._agent_chat")
-import diydev.app._agent_chat  # noqa: F811, F401
+import diydev.app._agent_chat  # noqa: F811, F401, E402  # 同上
 
 print("  ✅ import diydev.app._app_log")
-import diydev.app._app_log  # noqa: F811, F401
+import diydev.app._app_log  # noqa: F811, F401, E402  # 同上
 
 print("  ✅ import diydev.app._overlay_panel")
-import diydev.app._overlay_panel  # noqa: F811, F401
+import diydev.app._overlay_panel  # noqa: F811, F401, E402  # 同上
 
 print("  ✅ import diydev.app._title_bar")
-import diydev.app._title_bar  # noqa: F811, F401
+import diydev.app._title_bar  # noqa: F811, F401, E402  # 同上
 
 print("  ✅ import diydev.app._status_bar")
-import diydev.app._status_bar  # noqa: F811, F401
+import diydev.app._status_bar  # noqa: F811, F401, E402  # 同上
 
 print("  ✅ import diydev.app.screen")
-import diydev.app.screen  # noqa: F811, F401
+import diydev.app.screen  # noqa: F811, F401, E402  # 同上
 
 print()
 print("=== PySide6 API 契约检查 ===")

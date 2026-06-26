@@ -28,7 +28,7 @@ QtLogHandler 自动缓存前 200 条记录，LogPanel 连接时回放。
   grep '"c":"watcher"' ~/.diy/app.log
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001  # __future__ 必须在文件最顶
 
 from typing import Any
 
@@ -119,7 +119,7 @@ _APP_FMT = "%(asctime)s [%(levelname)-5s] [pid=%(pid)d ppid=%(ppid)d rpid=%(root
 class AppFormatter(logging.Formatter):
     """终端/stderr/LogPanel 格式器 — ISO 时间 + PID 树 + 级别 + logger + 消息。"""
 
-    def formatTime(self, record, datefmt=None):
+    def formatTime(self, record, datefmt=None):  # noqa: N802  # 重写 logging.Formatter 方法，必须保持原方法名
         return _fmt_tz_ms(record)
 
     def format(self, record):
@@ -149,7 +149,7 @@ class JsonlFormatter(logging.Formatter):
       m — 消息正文（不含前缀）
     """
 
-    def formatTime(self, record, datefmt=None):
+    def formatTime(self, record, datefmt=None):  # noqa: N802  # 同上：重写 logging.Formatter 方法
         return _fmt_tz_ms(record)
 
     def format(self, record: logging.LogRecord) -> str:

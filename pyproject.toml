@@ -61,6 +61,7 @@ lint.select = ["E", "F", "W", "I", "UP", "B", "SIM", "N"]
 lint.ignore = [
     "E501",  # 行长度由 formatter 管理
     "N806",  # 函数内大写常量有可读性价值
+    "N813",  # CamelCase import 别名（如 MarkdownIt as _md）不影响正确性
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -83,6 +83,6 @@ def test_intent_ps1_prefix_readable():
         assert out == "hello"
 
         _, _, err = s.run("true")
-        last_line_lines = [l for l in err.strip().split("\n") if l.strip()]
+        last_line_lines = [l for l in err.strip().split("\n") if l.strip()]  # noqa: E741  # l 作循环变量，非数字 1
         if last_line_lines:
             assert "__ST_" in last_line_lines[-1]
