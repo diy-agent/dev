@@ -1,9 +1,12 @@
-"""测试：去掉 QWebEngineView，看 app 是否稳定。"""
+"""测试：去掉 QWebEngineView，看 app 是否稳定。
+
+用 fake_home 隔离环境，避免与已运行的管控台冲突。"""
 
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -12,26 +15,15 @@ from PySide6.QtCore import QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-_app = None
-
 
 @pytest.fixture(scope="module")
 def app():
-    global _app
-    if _app is None:
-        _app = QApplication(sys.argv)
+    _app = QApplication(sys.argv)
     return _app
 
 
-def test_app_stays_alive(app):
-    """验证 app 启动后 30 秒不崩溃。"""
-    import diydev._state as _st
-    import diydev.app.task_tree as _tt
-
-    _st.list_tasks = _tt.list_tasks = lambda: {}
-    _st.list_starred = _tt.list_starred = lambda: {}
-    _st.load_state = _tt.load_state = lambda: {"subjects": {}}
-
+def test_app_stays_alive(app, fake_home: Path):
+    """验证 app 启动后 30 秒不崩溃（fake_home 隔离）。"""
     from diydev.app.main import MainWindow
 
     win = MainWindow()
