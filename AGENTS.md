@@ -1,31 +1,37 @@
-# _diy — 开发元项目
+# _diy — 开发测试项目
 
-diy 生态的开发工具项目。包含 `dai` CLI、`dev` TUI、PySide6 桌面 app 和 Unix socket 协议实现。
+diy 生态的开发测试项目。通过 path 依赖消费主 monorepo 的包（diy-core、diy-app、diy-cli）。
 
 ## 目录结构
 
 | 路径 | 说明 |
 |------|------|
-| `src/diydev/` | Python 包源码 |
-| `src/diydev/app/` | PySide6 桌面 app（main.py, task_tree, agent_bridge, log_panel 等） |
-| `src/diydev/_dai_cli.py` | `dai` CLI 入口 |
-| `src/diydev/dev_tui.py` | `dev` 人类 TUI 入口 |
+| `src/diydev/` | 旧 Python 包源码（待清理，代码已移至 `diy/pkgs/`） |
 | `docs/` | 架构文档（architecture.md, process-architecture.md） |
-| `tests/` | 意图测试 + 单元测试 |
+| `tests/` | 意图测试 + ShellTest 框架 |
 | `skills/` | 项目级 skills |
 | `sha.sh` | 开发入口脚本，`./sha.sh --help` 查看子命令 |
 
 ## CLI
 
-**`dai`** — Python 包 `diydev` 提供。入口 `dai = "diydev._dai_cli:main"`。
-运行 `dai --help` 查看命令。主要分类：
-- `dai task ...` — 任务 CRUD（create/list/show/edit/delete/link/unlink/star/unstar/sync）
-- `dai subject ...` — subject 树管理（add/list/tree/show/remove/scan）
-- `dai profile ...` — profile 预设管理
-- `dai ui ...` — UI 交互（chat state/sessions/read/send）
-- `dai doctor` — 健康自检
+通过 path 依赖的 `diy-cli` 包提供统一 CLI：
+```
+uv run diy --help
+```
+命令与主 monorepo 一致，详见 `diy/AGENTS.md`。
 
-**`dev`** — 同上包，人类 TUI 接口。`dev --help` 查看命令。
+## 与主 monorepo 的关系
+
+```
+_diy/pyproject.toml                       diy/pyproject.toml (workspace)
+  ├── diy-core = { path = ../diy/... }      ├── pkgs/diy-core/
+  ├── diy-app  = { path = ../diy/... }      ├── pkgs/diy-app/
+  └── diy-cli  = { path = ../diy/... }      └── pkgs/diy-cli/
+```
+
+- 代码逻辑都在 `diy/pkgs/` 中
+- `_diy/` 仅保留意图测试、架构文档、项目级 skills
+- 不影响主 monorepo 的独立开发环境
 
 ## 架构要点
 
