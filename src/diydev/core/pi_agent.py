@@ -288,7 +288,7 @@ class PiRpcAgent(AgentBackend):
         try:
             await reader
         except asyncio.CancelledError:
-            pass
+            logger.debug("[pi] reader 已取消")
 
     def _write(self, data: dict[str, Any]) -> None:
         if self._proc and self._proc.stdin:

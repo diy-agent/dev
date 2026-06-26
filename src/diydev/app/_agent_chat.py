@@ -786,7 +786,7 @@ class AgentChatPanel(QWidget):
             try:
                 asyncio.ensure_future(self._agent.stop())
             except RuntimeError:
-                pass
+                _logger.debug("[agent] stop 异常（event loop 已关闭）", exc_info=True)
         self._agent_running = False
         self._switch_to_send_btn()
 
