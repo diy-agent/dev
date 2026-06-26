@@ -45,7 +45,7 @@ clean() {
 check() {
   run uv run ruff check src/ tests/
   run uv run ruff format --check src/ tests/
-  run uv run basedpyright src/ tests/
+  run uv run pyright src/ tests/
 }
 
 fix() {
@@ -98,17 +98,9 @@ test-all() { test; test-headless;}
 # 子项目自己的命令
 ####################################################################################
 
-panel() {  run uv run panel serve --dev --show examples/*.pn.py; }
-
 # PySide6 管控台
 app() {
-  DIY_HOME="${DIY_HOME:-.diy-dev}" uv run python -m diydev.app.main
-}
-
-dai() {
-  local diy_home="${DIY_HOME:-.diy-dev}"
-  DIY_HOME="$diy_home" uv run dai "$@"
-  unset DIY_HOME  # 防止变量泄漏到 sha 框架的父 shell
+  DIY_HOME="${DIY_HOME:-.diy-dev}" uv run python -m diy.app.main
 }
 
 

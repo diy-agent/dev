@@ -95,7 +95,7 @@ def _dai_runner(args_str: str) -> tuple[int, str, str]:
     不缓存模块级 `_HOME`。`_dai_cli.py` 的模块级 `_HOME` 已移除。
     以下刷新仅作兼容保留，后续可删除。
     """
-    from diydev._dai_cli import app as _dai_app
+    from diy.cli._dai_cli import app as _dai_app
 
     # 兼容保留：之前在 _dai_cli.py 的模块级 _HOME 刷新
     # _norm() 迁到 _state.py 后不再需要，但保留几行无害

@@ -11,6 +11,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from diydev._state import list_starred, list_tasks, load_state
 
@@ -28,15 +29,13 @@ class TaskNode:
     label: str = ""
     kind: str = "subject"
     depth: int = 0
-    uri: str = ""  # 任务 URI，如 local/task/23
+    uri: str = ""                    # 任务 URI，如 local/task/23
     title: str = ""
     state: str = "pending"
     detail: str = ""
-    body: str = ""  # markdown body（设计文档等）
-    parent_uri: str | None = None  # 父任务 URI
+    body: str = ""                   # markdown body（设计文档等）
+    parent_uri: str | None = None    # 父任务 URI
     subject_path: str = ""
-    created: str = ""  # 创建时间 ISO 8601
-    updated: str = ""  # 最后更新时间 ISO 8601
     source: dict = field(default_factory=dict)
     agents: list[AgentInfo] = field(default_factory=list)
     children: list[TaskNode] = field(default_factory=list)
@@ -48,15 +47,9 @@ class TaskNode:
     @property
     def state_icon(self) -> str:
         icons = {
-            "pending": "⏳",
-            "active": "🔄",
-            "open": "🔄",
-            "done": "✅",
-            "closed": "✅",
-            "cancelled": "❌",
-            "blocked": "🚫",
-            "shelved": "⏸",
-            "new": "🆕",
+            "pending": "⏳", "active": "🔄", "open": "🔄",
+            "done": "✅", "closed": "✅", "cancelled": "❌",
+            "blocked": "🚫", "shelved": "⏸", "new": "🆕",
         }
         return icons.get(self.state, "⏳")
 
@@ -65,10 +58,7 @@ class TaskNode:
 # 公共入口
 # ═══════════════════════════════════════════════════════
 
-
-def load_task_tree(
-    agents_path: str | None = None, all_tasks: bool = False
-) -> list[TaskNode]:
+def load_task_tree(agents_path: str | None = None, all_tasks: bool = False) -> list[TaskNode]:
     """加载任务树 — star/ symlink 目录 + state.yaml subjects 驱动。
 
     默认只加载 starred 任务。all_tasks=True 加载全部任务。
@@ -84,7 +74,6 @@ def load_task_tree(
 # state.yaml + tasks → nodes
 # ═══════════════════════════════════════════════════════
 
-
 def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[TaskNode]:
     subjects = state_data.get("subjects", {})
 
@@ -92,8 +81,7 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
     subject_nodes: dict[str, TaskNode] = {}
     for spath, info in sorted(subjects.items()):
         node = TaskNode(
-            key=spath,
-            kind="subject",
+            key=spath, kind="subject",
             title=info.get("description", ""),
         )
         subject_nodes[spath] = node
@@ -114,23 +102,19 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
     task_nodes: dict[str, TaskNode] = {}
     for uri, info in sorted(tasks.items()):
         tn = TaskNode(
-            key=uri,
-            kind="task",
-            uri=uri,
+            key=uri, kind="task", uri=uri,
             title=info.get("title", ""),
             detail=info.get("detail", ""),
             body=info.get("body", ""),
             state=info.get("state", "pending"),
             subject_path=info.get("subject", ""),
             parent_uri=info.get("parent"),
-            created=info.get("created", ""),
-            updated=info.get("updated", ""),
             source=info.get("source", {}),
         )
         task_nodes[uri] = tn
 
     # 第二遍：按 parent 建立层级
-    for _uri, tn in task_nodes.items():
+    for uri, tn in task_nodes.items():
         parent_uri = tn.parent_uri
         if parent_uri and parent_uri in task_nodes:
             task_nodes[parent_uri].children.append(tn)
@@ -147,9 +131,7 @@ def _build_nodes_from_state(state_data: dict, tasks: dict[str, dict]) -> list[Ta
     return roots
 
 
-def _find_parent_subject(
-    spath: str, subject_nodes: dict[str, TaskNode]
-) -> TaskNode | None:
+def _find_parent_subject(spath: str, subject_nodes: dict[str, TaskNode]) -> TaskNode | None:
     """找最邻近的父 subject。例如 ~/git/diy/_diy → ~/git。"""
     parent_path = os.path.dirname(spath)
     while parent_path and parent_path != "/" and parent_path != spath:
@@ -162,7 +144,6 @@ def _find_parent_subject(
 # ═══════════════════════════════════════════════════════
 # 旧解析器（仅测试用 — 不用于主加载路径）
 # ═══════════════════════════════════════════════════════
-
 
 def _find_agents_md() -> str | None:
     local = os.path.join(os.getcwd(), "AGENTS.md")
@@ -187,8 +168,7 @@ def parse_agents_md_tree(agents_path: str | None = None) -> list[TaskNode]:
 def _parse_json_block(content: str) -> list[TaskNode] | None:
     m = re.search(
         r"<!-- diy:tree:begin -->\s*```json\s*\n(.*?)\n```\s*<!-- diy:tree:end -->",
-        content,
-        re.DOTALL,
+        content, re.DOTALL,
     )
     if not m:
         return None
@@ -200,25 +180,18 @@ def _parse_json_block(content: str) -> list[TaskNode] | None:
     for t in data.get("tasks", []):
         uri = t.get("uri", "")
         state = t.get("state", "pending")
-        nodes.append(
-            TaskNode(
-                key=uri,
-                kind="task",
-                uri=uri,
-                title=t.get("title", ""),
-                state=state,
-                parent_uri=t.get("parent"),
-                source=t.get("source", {}),
-            )
-        )
+        nodes.append(TaskNode(
+            key=uri, kind="task", uri=uri,
+            title=t.get("title", ""), state=state,
+            parent_uri=t.get("parent"),
+            source=t.get("source", {}),
+        ))
     return _build_hierarchy(nodes)
 
 
 def _parse_md_tree(content: str) -> list[TaskNode]:
     nodes: list[TaskNode] = []
-    task_re = re.compile(
-        r"^(?P<prefix>[\s├└│─]*(?:├── |└── )?)\[#(?P<num>\d+)\]\s+(?P<rest>.*)"
-    )
+    task_re = re.compile(r"^(?P<prefix>[\s├└│─]*(?:├── |└── )?)\[#(?P<num>\d+)\]\s+(?P<rest>.*)")
     for line in content.split("\n"):
         m = task_re.match(line)
         if not m:
@@ -229,45 +202,31 @@ def _parse_md_tree(content: str) -> list[TaskNode]:
         depth = len(prefix) // 4
         state, title = _extract_state(rest)
         uri = f"local/task/{num}"
-        nodes.append(
-            TaskNode(
-                key=uri,
-                kind="task",
-                depth=depth,
-                uri=uri,
-                title=title,
-                state=state,
-            )
-        )
+        nodes.append(TaskNode(
+            key=uri, kind="task", depth=depth,
+            uri=uri, title=title, state=state,
+        ))
     return _build_hierarchy(nodes)
 
 
 def _extract_state(raw: str) -> tuple[str, str]:
     state_map = {
-        "DONE": "done",
-        "CLOSED": "done",
-        "OPEN": "active",
-        "ACTIVE": "active",
-        "CANCELLED": "cancelled",
-        "BLOCKED": "blocked",
-        "SHELVED": "shelved",
-        "NEW": "new",
+        "DONE": "done", "CLOSED": "done",
+        "OPEN": "active", "ACTIVE": "active",
+        "CANCELLED": "cancelled", "BLOCKED": "blocked",
+        "SHELVED": "shelved", "NEW": "new",
     }
     m = re.search(r"\s*\((?P<kw>[A-Z]+)\)\s*$", raw)
     if m:
         kw = m.group("kw")
-        title = raw[: m.start()].strip()
+        title = raw[:m.start()].strip()
         title = re.sub(r"[\s✅❌🔄⏳🚫⏸🆕]+$", "", title).strip()
         return state_map.get(kw, "pending"), title
-    m2 = re.search(
-        r"\s+(?P<kw>done|active|open|closed|cancelled|blocked|shelved|pending|new)\s*$",
-        raw,
-        re.I,
-    )
+    m2 = re.search(r"\s+(?P<kw>done|active|open|closed|cancelled|blocked|shelved|pending|new)\s*$", raw, re.I)
     if m2:
         kw = m2.group("kw").lower()
         state = {"open": "active", "closed": "done"}.get(kw, kw)
-        title = raw[: m2.start()].strip()
+        title = raw[:m2.start()].strip()
         title = re.sub(r"[\s✅❌🔄⏳🚫⏸🆕]+$", "", title).strip()
         return state, title
     return "pending", raw.strip()
@@ -297,22 +256,18 @@ def _build_hierarchy(nodes: list[TaskNode]) -> list[TaskNode]:
     return roots
 
 
-def merge_state_data(
-    nodes: list[TaskNode], state_data: dict | None = None
-) -> list[TaskNode]:
+def merge_state_data(nodes: list[TaskNode], state_data: dict | None = None) -> list[TaskNode]:
     if state_data is None:
         state_data = load_state()
     # 优先使用传入的 tasks，没有就实时扫描
     tasks = state_data.get("tasks") or list_tasks()
 
     task_map: dict[str, TaskNode] = {}
-
     def _collect(ns):
         for n in ns:
             if n.uri:
                 task_map[n.uri] = n
             _collect(n.children)
-
     _collect(nodes)
 
     for uri, info in tasks.items():
@@ -325,18 +280,14 @@ def merge_state_data(
             node.subject_path = info.get("subject", "")
             node.parent_uri = info.get("parent")
         else:
-            nodes.append(
-                TaskNode(
-                    key=uri,
-                    kind="task",
-                    uri=uri,
-                    title=info.get("title", ""),
-                    state=info.get("state", "pending"),
-                    detail=info.get("detail", ""),
-                    body=info.get("body", ""),
-                    subject_path=info.get("subject", ""),
-                    parent_uri=info.get("parent"),
-                    source=info.get("source", {}),
-                )
-            )
+            nodes.append(TaskNode(
+                key=uri, kind="task", uri=uri,
+                title=info.get("title", ""),
+                state=info.get("state", "pending"),
+                detail=info.get("detail", ""),
+                body=info.get("body", ""),
+                subject_path=info.get("subject", ""),
+                parent_uri=info.get("parent"),
+                source=info.get("source", {}),
+            ))
     return nodes

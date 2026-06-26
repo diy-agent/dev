@@ -28,26 +28,26 @@ errors: list[str] = []
 print("=== 模块 import 检查 ===")
 
 # ── 核心模块 import ──
-print("  ✅ import diydev.app.main")
-import diydev.app.main  # noqa: F811, F401, E402  # 手动 import 验证各模块可加载
+print("  ✅ import diy.app.main")
+import diy.app.main  # noqa: F811, F401, E402  # 手动 import 验证各模块可加载
 
-print("  ✅ import diydev.app._agent_chat")
-import diydev.app._agent_chat  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app._agent_chat")
+import diy.app._agent_chat  # noqa: F811, F401, E402  # 同上
 
-print("  ✅ import diydev.app._app_log")
-import diydev.app._app_log  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app._app_log")
+import diy.app._app_log  # noqa: F811, F401, E402  # 同上
 
-print("  ✅ import diydev.app._overlay_panel")
-import diydev.app._overlay_panel  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app._overlay_panel")
+import diy.app._overlay_panel  # noqa: F811, F401, E402  # 同上
 
-print("  ✅ import diydev.app._title_bar")
-import diydev.app._title_bar  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app._title_bar")
+import diy.app._title_bar  # noqa: F811, F401, E402  # 同上
 
-print("  ✅ import diydev.app._status_bar")
-import diydev.app._status_bar  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app._status_bar")
+import diy.app._status_bar  # noqa: F811, F401, E402  # 同上
 
-print("  ✅ import diydev.app.screen")
-import diydev.app.screen  # noqa: F811, F401, E402  # 同上
+print("  ✅ import diy.app.screen")
+import diy.app.screen  # noqa: F811, F401, E402  # 同上
 
 print()
 print("=== PySide6 API 契约检查 ===")
@@ -80,7 +80,7 @@ assert hasattr(QFrame, "Shape"), "QFrame.Shape enum 应该存在"
 print()
 print("=== 关键模块 __init__ 构造检查（需要 QApp） ===")
 
-from diydev.app.screen import Area, Panel, Screen  # noqa: E402
+from diy.app.screen import Area, Panel, Screen  # noqa: E402
 
 s = Screen("test")
 s.add_area(Area("right", [Panel("a", "", None)]))
@@ -91,7 +91,7 @@ assert s.is_visible("right")
 print("  ✅ Screen/Area/Panel 构造 + show_area")
 
 # TitleBar 构造检查
-from diydev.app._title_bar import TitleBar  # noqa: E402
+from diy.app._title_bar import TitleBar  # noqa: E402
 
 tb = TitleBar()
 assert tb.filter_text is not None
@@ -100,7 +100,7 @@ tb.deleteLater()
 print("  ✅ TitleBar 构造 + 属性")
 
 # StatusBar 构造检查
-from diydev.app._status_bar import StatusBar  # noqa: E402
+from diy.app._status_bar import StatusBar  # noqa: E402
 
 sb = StatusBar()
 assert hasattr(sb, "toggle_area")

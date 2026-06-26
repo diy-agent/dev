@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
 from diydev.app.task_tree import (
     TaskNode,
@@ -14,10 +15,10 @@ from diydev.app.task_tree import (
     parse_agents_md_tree,
 )
 
+
 # ═══════════════════════════════════════════════════════
 # parse_agents_md_tree
 # ═══════════════════════════════════════════════════════
-
 
 def test_parse_md_tree_empty():
     nodes = _parse_md_tree("")
@@ -111,24 +112,13 @@ def test_parse_json_block():
 # merge_state_data
 # ═══════════════════════════════════════════════════════
 
-
 def test_merge_state_data():
     nodes = [
-        TaskNode(
-            key="local/task/58",
-            uri="local/task/58",
-            kind="task",
-            state="pending",
-            title="",
-        ),
+        TaskNode(key="local/task/58", uri="local/task/58", kind="task", state="pending", title=""),
     ]
     state = {
         "tasks": {
-            "local/task/58": {
-                "title": "Epic: dev",
-                "state": "active",
-                "subject": "~/git/diy/_diy",
-            },
+            "local/task/58": {"title": "Epic: dev", "state": "active", "subject": "~/git/diy/_diy"},
         }
     }
     merged = merge_state_data(nodes, state)
@@ -153,7 +143,6 @@ def test_merge_adds_new_tasks():
 # build_hierarchy
 # ═══════════════════════════════════════════════════════
 
-
 def test_build_hierarchy_by_depth():
     nodes = [
         TaskNode(key="local/task/1", uri="local/task/1", depth=0),
@@ -171,9 +160,6 @@ def test_build_hierarchy_by_depth():
 
 
 def test_load_task_tree():
-    """集成测试: 加载真实 ~/.diy/task/ + state.yaml（不崩溃即算通过）。"""
+    """集成测试: 加载真实 ~/.diy/task/ + state.yaml。"""
     nodes = load_task_tree()
-    assert isinstance(nodes, list)
-    # 如果有数据，至少返回正常节点；空数据也不崩溃
-    if nodes:
-        assert all(isinstance(n, TaskNode) for n in nodes)
+    assert len(nodes) > 0

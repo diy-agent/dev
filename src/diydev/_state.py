@@ -1,17 +1,20 @@
 """state.yaml 全局状态系统
 
 ~/.diy/state.yaml 是 diy 生态全局状态真相源。
+
 结构:
   手改区: profiles（人直接编辑）
-  机器区: tasks（dai 维护）
+  机器区: spaces（dai 维护，人只读）
 
 任务数据存储在 ~/.diy/task/<uri-path>/AGENTS.md（YAML frontmatter + markdown body）。
 每个任务对应一个 URI，URI 也是文件系统路径和身份标识。
+
 star/unstar 替代了归档：取消关注后 symlink 删除，数据保留在原位。
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
 from datetime import datetime
@@ -19,8 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-from diydev._lock import locked_file
 
 # ════════════════════════════════════════════════════════════════
 # 默认值
@@ -34,6 +35,8 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
 
 DEFAULT_STATE: dict[str, Any] = {
     "profiles": dict(DEFAULT_PROFILES),
+    "tasks": {},
+    "spaces": {},
 }
 
 
@@ -49,31 +52,8 @@ def _state_path() -> Path:
     return diy_home() / "state.yaml"
 
 
-def _norm(path: str) -> str:
-    """把路径统一为 ~/... 格式存储。
-
-    运行时调用 os.path.expanduser("~")（不缓存模块级 _HOME），
-    原因见 core/task.py _norm 的 docstring 详细说明。
-    """
-    home = os.path.expanduser("~")
-    expanded = os.path.abspath(os.path.expanduser(path))
-    if expanded.startswith(home + "/"):
-        return "~" + expanded[len(home) :]
-    if expanded == home:
-        return "~"
-    return expanded
-
-
-def _subject_is_git(path: str) -> bool:
-    """实时检测 subject 目录是否为 git 仓库。"""
-    full = os.path.expanduser(path)
-    return os.path.isdir(os.path.join(full, ".git")) or os.path.isfile(
-        os.path.join(full, ".git")
-    )
-
-
 # ════════════════════════════════════════════════════════════════
-# 加载 / 保存（state.yaml — profiles + tasks）
+# 加载 / 保存（state.yaml — 仅 profiles + spaces）
 # ════════════════════════════════════════════════════════════════
 
 
@@ -99,10 +79,56 @@ def save_state(data: dict[str, Any]) -> None:
     # 先写临时文件再替换，保证原子性
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
-        yaml.dump(
-            data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
-        )
+        yaml.dump(data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
     tmp.replace(path)
+
+
+# ════════════════════════════════════════════════════════════════
+# 锁操作（空间锁 — state.yaml）
+# ════════════════════════════════════════════════════════════════
+
+
+def get_lock(space_path: str) -> dict[str, Any] | None:
+    """获取 space 当前锁状态。无锁返回 None。"""
+    state = load_state()
+    space = state["spaces"].get(space_path)
+    if space and space.get("lock"):
+        return space["lock"]
+    return None
+
+
+def acquire_lock(
+    space_path: str,
+    task_uri: str,
+    area: str = "branch",
+) -> dict[str, Any]:
+    """申请锁。如已锁则抛出 RuntimeError。"""
+    state = load_state()
+    space = state["spaces"].setdefault(space_path, {"lock": None})
+
+    existing = space.get("lock")
+    if existing:
+        raise RuntimeError(
+            f"Space {space_path} 已被 {existing['by']} 锁定 "
+            f"(area={existing.get('area', '?')}, since={existing.get('since', '?')})"
+        )
+
+    lock = {
+        "by": task_uri,
+        "area": area,
+        "since": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    space["lock"] = lock
+    save_state(state)
+    return lock
+
+
+def release_lock(space_path: str) -> None:
+    """释放锁。无锁时静默成功。"""
+    state = load_state()
+    if space_path in state["spaces"]:
+        state["spaces"][space_path]["lock"] = None
+        save_state(state)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -113,17 +139,76 @@ _FRONT_MATTER_SEP = "---"
 
 
 def _data_root() -> Path:
-    """~/.diy/task/（可通过 DIY_HOME 覆盖）。"""
-    root = diy_home() / "task"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    """~/.diy/task/（可通过 DIY_HOME 覆盖），自动从 ~/.diy/d/ 迁移。"""
+    task_root = diy_home() / "task"
+    d_root = diy_home() / "d"
+
+    # 自动迁移：d/ 存在且包含任务数据 → 合并到 task/
+    if d_root.exists():
+        _merge_d_to_task(d_root, task_root)
+
+    task_root.mkdir(parents=True, exist_ok=True)
+    return task_root
+
+
+def _merge_d_to_task(src: Path, dst: Path) -> None:
+    """将 d/ 中的任务数据合并到 task/，同时更新 star/ symlink。
+
+    只移动 AGENTS.md 目录（任务数据），跳过 .DS_Store 等文件。
+    如果 task/ 已有同名任务则不覆盖。
+    """
+    import logging
+    logger = logging.getLogger("diy.app.state")
+
+    # 检查 d/ 下是否有实际任务数据（AGENTS.md）
+    has_data = any(src.rglob("AGENTS.md"))
+    if not has_data:
+        return  # d/ 是空的或只有非任务文件，跳过
+
+    # 检查是否需要合并（task/ 缺少 d/ 中的任务）
+    needs_merge = False
+    for md in src.rglob("AGENTS.md"):
+        rel = md.relative_to(src)
+        if not (dst / rel).exists():
+            needs_merge = True
+            break
+    if not needs_merge:
+        return  # 已经合并过
+
+    logger.warning("合并 ~/.diy/d/ → ~/.diy/task/")
+
+    for md in sorted(src.rglob("AGENTS.md")):
+        rel = md.relative_to(src)
+        task_dir = dst / rel.parent
+        dst_md = task_dir / "AGENTS.md"
+        if dst_md.exists():
+            continue  # task/ 已有，不覆盖
+        task_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(md), str(dst_md))
+
+    # 更新 star/ symlink：指向 d/ 的改为指向 task/
+    star_root = _star_root()
+    if star_root.exists():
+        src_str = str(src)
+        for sym in sorted(star_root.rglob("*")):
+            if not sym.is_symlink():
+                continue
+            try:
+                target = os.readlink(str(sym))
+                if target.startswith(src_str):
+                    new_target = target.replace(src_str, str(dst), 1)
+                    os.unlink(str(sym))
+                    sym.symlink_to(new_target)
+                    logger.debug("  更新 symlink: %s → %s", sym, new_target)
+            except OSError:
+                pass
 
 
 def _uri_to_path(uri: str) -> Path:
     """将任务 URI 映射为 AGENTS.md 路径。
 
-    local/task/23 → ~/.diy/task/local/task/23/AGENTS.md
-    github.com/diy-agent/diy/issues/58 → ~/.diy/task/github.com/diy-agent/diy/issues/58/AGENTS.md
+    local/task/23 → ~/.diy/d/local/task/23/AGENTS.md
+    github.com/diy-agent/diy/issues/58 → ~/.diy/d/github.com/diy-agent/diy/issues/58/AGENTS.md
     """
     return _data_root() / uri / "AGENTS.md"
 
@@ -142,20 +227,14 @@ def _path_to_uri(path: Path) -> str | None:
 # Star 视图 — ~/.diy/star/
 # ════════════════════════════════════════════════════════════════
 
-
 def _star_root() -> Path:
     """~/.diy/star/（可通过 DIY_HOME 覆盖）"""
     return diy_home() / "star"
 
 
 def star_task(uri: str) -> None:
-    """star 任务：创建 symlink 到 ~/.diy/star/<uri>。
-
-    ⚠️ 创建任务有 4 个入口，全部必须调用此函数：
-    CLI task_create / CLI task_link / GatewayCLI socket handler / GUI CreateTaskDialog。
-    新增 task 副作用时 grep create_task 定位全部调用点。
-    """
-    src = _uri_to_path(uri).parent  # ~/.diy/task/<uri>
+    """star 任务：创建 symlink 到 ~/.diy/star/<uri>。"""
+    src = _uri_to_path(uri).parent  # ~/.diy/d/<uri>
     if not src.exists():
         raise FileNotFoundError(f"任务 {uri} 不存在")
 
@@ -203,13 +282,7 @@ def list_starred() -> dict[str, dict[str, Any]]:
 
 
 # ════════════════════════════════════════════════════════════════
-# 本地任务 ID 自增（用 locked_file 做线程+进程安全）
-# ════════════════════════════════════════════════════════════════
-#
-# locked_file 内部实现双层锁：
-#   threading.Lock — 同进程线程互斥（所有 OS）
-#   fcntl.flock    — 跨进程互斥（POSIX）
-# 详见 diydev/_lock.py。
+# 本地任务 ID 自增
 # ════════════════════════════════════════════════════════════════
 
 _LOCAL_COUNTER_DIR = "local/task"
@@ -228,15 +301,24 @@ def _local_lock_file() -> Path:
 
 
 def _next_local_task_num() -> int:
-    """locked_file 保护的本地任务编号自增。"""
+    """fcntl 保护的本地任务编号自增。"""
     d = _local_counter_dir()
     d.mkdir(parents=True, exist_ok=True)
+
+    lock_path = _local_lock_file()
     counter_path = _local_counter_file()
 
-    with locked_file(_local_lock_file()):
-        current = int(counter_path.read_text().strip()) if counter_path.exists() else 1
-        counter_path.write_text(str(current + 1))
-        return current
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        try:
+            if counter_path.exists():
+                current = int(counter_path.read_text().strip())
+            else:
+                current = 1
+            counter_path.write_text(str(current + 1))
+            return current
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -304,24 +386,13 @@ def _read_body(path: Path) -> str:
             break
     if end is None:
         return ""
-    return "\n".join(lines[end + 1 :]).strip()
+    return "\n".join(lines[end + 1:]).strip()
 
 
 def _meta_to_task_dict(uri: str, meta: dict[str, Any]) -> dict[str, Any]:
     """将 frontmatter meta 转为与 get_task 返回一致的 dict"""
     result: dict[str, Any] = {"uri": uri}
-    for key in (
-        "title",
-        "state",
-        "subject",
-        "detail",
-        "parent",
-        "created",
-        "updated",
-        "source",
-        "agent",
-        "session_id",
-    ):
+    for key in ("title", "state", "subject", "detail", "parent", "created", "updated", "source"):
         if key in meta:
             result[key] = meta[key]
     # 确保默认字段存在
@@ -390,7 +461,7 @@ def create_task(
         "updated": now,
     }
     if detail is not None:
-        body = (detail + "\n\n" + body).strip() if body else detail
+        meta["detail"] = detail
     if parent is not None:
         meta["parent"] = parent
 
@@ -418,10 +489,6 @@ def update_task_field(uri: str, **fields: Any) -> dict[str, Any]:
     if body is None:
         body = _read_body(md)
 
-    detail_text = fields.pop("detail", None)
-    if detail_text is not None:
-        body = (detail_text + "\n\n" + body).strip() if body else detail_text
-
     meta.update(fields)
     meta["updated"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -436,8 +503,50 @@ def delete_task(uri: str) -> None:
         shutil.rmtree(d)
 
 
+def _archive_root() -> Path:
+    """~/.diy/archive/data/（已废弃，archive 被 unstar 替代）。"""
+    return diy_home() / "archive" / "data"
+
+
+def archive_task(uri: str) -> Path:
+    """归档任务（已废弃 — 请用 unstar 替代）。
+
+    此函数保留以支持已有数据迁移。
+    归档后自动取消关注（unstar），数据移入 archive/。
+    返回归档后的路径。
+    """
+    import logging
+    logger = logging.getLogger("diy.app.state")
+    logger.warning("archive_task 已废弃，请用 unstar 替代")
+
+    src = _uri_to_path(uri).parent
+    if not src.exists():
+        raise FileNotFoundError(f"任务 {uri} 不存在")
+
+    dst_base = _archive_root() / uri
+    now = datetime.now()
+
+    # 尝试 base.20260618-074801，同秒碰撞则递增
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    counter = 0
+    while True:
+        suffix = f".{stamp}" if counter == 0 else f".{stamp}.{counter}"
+        dst = dst_base.with_name(f"{dst_base.name}{suffix}")
+        if not dst.exists():
+            break
+        counter += 1
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+
+    # 归档后自动取消关注
+    unstar_task(uri)
+
+    return dst
+
+
 def list_tasks() -> dict[str, dict[str, Any]]:
-    """列出所有任务。递归扫描 ~/.diy/task/ 下所有目录。"""
+    """列出所有任务。递归扫描 ~/.diy/d/ 下所有目录。"""
     root = _data_root()
     if not root.exists():
         return {}
@@ -458,3 +567,11 @@ def list_tasks() -> dict[str, dict[str, Any]]:
         task_dict["body"] = _read_body(md)
         result[uri] = task_dict
     return result
+
+
+def get_task_spaces(task_uri: str) -> list[str]:
+    """获取任务声明的 spaces。"""
+    task = get_task(task_uri)
+    if not task:
+        return []
+    return task.get("spaces", [])

@@ -24,7 +24,7 @@ def app():
 
 def test_app_stays_alive(app, fake_home: Path):
     """验证 app 启动后 30 秒不崩溃（fake_home 隔离）。"""
-    from diydev.app.main import MainWindow
+    from diy.app.main import MainWindow
 
     win = MainWindow()
     win.show()

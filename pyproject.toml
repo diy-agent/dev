@@ -1,57 +1,44 @@
 [project]
-name = "diydev"
+name = "diy-dev"
 version = "0.1.15" # x-release-please-version
-description = "diy 开发流程 CLI - issue 与 worktree 统一管理"
+description = "diy 开发环境 — 测试、构建、lint"
 requires-python = ">=3.12"
 dependencies = [
-    "cyclopts>=3.0",
-    "pandas>=3.0.3",
+    "diy-core",
+    "diy-app",
+    "diy-cli",
+]
+
+[tool.uv]
+package = true
+override-dependencies = ["nodejs-wheel-binaries; python_version == '9.9.9'"]
+
+[tool.uv.sources]
+nodejs-wheel-shim = { path = "_shims/nodejs_wheel_shim" }
+diy-core = { path = "../diy/pkgs/diy-core" }
+diy-app = { path = "../diy/pkgs/diy-app" }
+diy-cli = { path = "../diy/pkgs/diy-cli" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
     "pytest-qt>=4.2",
-    "pyside6>=6.8,<6.9",
-    "pyyaml>=6.0.3",
-    "rich>=13.0",
+    "basedpyright>=1.39.8",
     "ruff>=0.15.15",
+    "pandas>=3.0.3",
     "mistune>=3.2.1",
     "agent-client-protocol>=0.10.1",
     "aiosqlite>=0.22.1",
     "nodejs-wheel-shim>=0.1.0",
 ]
 
-[project.scripts]
-dai = "diydev._dai_cli:main"
-dev = "diydev.dev_tui:main"
-
-# [[tool.uv.index]]
-# url = "https://mirrors.aliyun.com/pypi/simple/"
-
-[tool.uv]
-# basedpyright 依赖 nodejs-wheel-binaries（自带 Node.js），但我们已有 mise 管理的 Node.js，跳过编译
-override-dependencies = ["nodejs-wheel-binaries; python_version == '9.9.9'"]
-
-[tool.uv.sources]
-nodejs-wheel-shim = { path = "_shims/nodejs_wheel_shim" }
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/diydev"]
-
-[dependency-groups]
-dev = [
-    "pytest>=9.0.3",
-    "basedpyright>=1.39.8",
-]
-
 [tool.pyright]
 typeCheckingMode = "standard"
-include = ["src/diydev"]
+include = ["tests"]
 exclude = [
     "**/__pycache__",
     "**/.venv",
     "archive",
-    "tests",
     "_research",
 ]
 
@@ -63,8 +50,3 @@ lint.ignore = [
     "N806",  # 函数内大写常量有可读性价值
     "N813",  # CamelCase import 别名（如 MarkdownIt as _md）不影响正确性
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"src/diydev/_doctor_cmd.py" = ["B007"]
-"src/diydev/_git_ops.py" = ["B904"]
-"src/diydev/_sandbox_cmd.py" = ["B006", "SIM108", "SIM105"]
