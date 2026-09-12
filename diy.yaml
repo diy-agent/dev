@@ -1,4 +1,5 @@
-sources:
-- https://github.com/github/gh-aw@main
-- https://github.com/github/docs@main
-- https://github.com/agentclientprotocol/python-sdk
+ref:
+  source:
+  - https://github.com/github/gh-aw@main
+  - https://github.com/github/docs@main
+  - https://github.com/agentclientprotocol/python-sdk
