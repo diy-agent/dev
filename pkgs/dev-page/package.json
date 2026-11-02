@@ -1,0 +1,40 @@
+{
+  "name": "@diy-agent/dev-page",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dev 启动器的页面插件：主进程方法表 + 裸 DOM 界面（树列表 / 启停 / 过滤）",
+  "files": [
+    "src/"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./page": {
+      "types": "./src/page.ts",
+      "default": "./lib/page.js"
+    },
+    "./renderer": {
+      "types": "./src/renderer.ts",
+      "default": "./lib/renderer.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@diy-agent/dev-core": "*",
+    "@diy-agent/workbench": "file:../../../diy/pkgs.ts/workbench",
+    "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui-workbench"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
+    "typescript": "^7.0.2"
+  }
+}

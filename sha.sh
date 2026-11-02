@@ -25,9 +25,19 @@ source "./sha.common.sh"
 # 必备子命令
 ####################################################################################
 
+# 每个 workspace（pkgs/* + apps/*）都是一个独立单元：自己带 sha.sh 与 tsconfig
+_workspaces() {
+  local d
+  for d in pkgs/* apps/*; do
+    [ -f "$d/package.json" ] || continue
+    echo "$d"
+  done
+}
+
 clean() {
   run rm -rf ./build ./dist
-  run rm -rf ./pkgs/dev/build ./pkgs/dev/dist
+  local d
+  while read -r d; do ( cd "$d" && ./sha.sh clean ); done < <(_workspaces)
 }
 
 sync() {
@@ -35,21 +45,37 @@ sync() {
   run git submodule update --init --recursive
 }
 
+# 在每个 workspace 里跑一条命令（如 `./sha.sh exec npx tsc -p tsconfig.json`）
+# 注意：这里覆盖了 bash 内建 `exec` 的名字；本脚本与其 vendor 均不调用内建 exec。
+exec() {
+  local d
+  while read -r d; do
+    echo "${info}▸ $d${reset}"
+    ( cd "$d" && "$@" ) || return 1
+  done < <(_workspaces)
+}
+
 check() {
-  run npx tsc --noEmit
-  run npx oxlint pkgs/
+  local d
+  while read -r d; do
+    echo "${info}▸ $d${reset}"
+    ( cd "$d" && ./sha.sh check ) || return 1
+  done < <(_workspaces)
 }
 
 fix() {
-  run npx oxfmt --write pkgs/
-  run npx oxlint --fix pkgs/
+  local d
+  while read -r d; do ( cd "$d" && ./sha.sh fix ); done < <(_workspaces)
 }
 
 test() {
   run npx vitest run "$@"
 }
 
+# dev-core / dev-page 先编 lib（apps/dev 的装配器按包名解析它们）
 build() {
+  ( cd pkgs/dev-core && ./sha.sh build )
+  ( cd pkgs/dev-page && ./sha.sh build )
   ( cd pkgs/dev && run npx vite build --config vite.cli.config.ts )
 }
 

@@ -10,3 +10,4 @@ node_modules/
 .hermes/
 
 .diy-dev/
+lib/

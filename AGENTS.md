@@ -7,13 +7,16 @@
 
 - 独立 git 仓（与 `../diy` 是两个仓，提交互不影响）
 - 通过 **path 依赖**消费主仓的包，不发布、不 vendor
-- 当前内容：`dev/` —— ref（本地源码镜像）CLI，为后续 dev 启动器铺路
+- 当前内容：`pkgs/dev`（ref CLI）+ `pkgs/dev-core` / `pkgs/dev-page` / `apps/dev`（dev 启动器，##508 从主仓搬来）
 
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `dev/` | `@diy-agent/dev`：ref 命令（add / sync / list / remove），入口 `bin/dev` |
+| `pkgs/dev/` | `@diy-agent/dev`：ref 命令（add / sync / list / remove），入口 `bin/dev` |
+| `pkgs/dev-core/` | `@diy-agent/dev-core`：dev 启动器业务层（静态发现 / 运行时对账 / 启停动作），无 UI 无 Electron |
+| `pkgs/dev-page/` | `@diy-agent/dev-page`：dev 启动器页面插件（主进程方法表 + 裸 DOM renderer） |
+| `apps/dev/` | `@diy-agent/app-dev`：装配器（插件清单 + 窗口入口 + renderer 打包入口），≤100 行 |
 | `docs/` | 历史架构文档（Python 时代，只读参考） |
 | `skills/` | 项目级 skills（git-cleanup / win-file-unlock） |
 | `archive/` | Python 时代 CLI 归档，只读 |
@@ -24,11 +27,18 @@
 
 ## 依赖主仓（path 依赖）
 
-`dev/package.json` 里：
+`pkgs/dev/package.json` 里：
 
 ```json
 "@diy-agent/rpc":  "file:../../../diy/pkgs.ts/diy-rpc",
 "@diy-agent/time": "file:../../../diy/pkgs.ts/diy-time"
+```
+
+`apps/dev/package.json` / `pkgs/dev-page/package.json` 里：
+
+```json
+"@diy-agent/workbench":    "file:../../../diy/pkgs.ts/workbench",
+"@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui-workbench"
 ```
 
 - 主仓源码改了、或改了主仓包的构建产物，先回主仓重建：
@@ -45,14 +55,19 @@
 ## 命令
 
 ```bash
-./sha.sh sync     # npm install + submodule 初始化
-./sha.sh check    # tsc --noEmit + oxlint
-./sha.sh test     # vitest
-./sha.sh build    # 构建 dev CLI 到 dev/build/prod/cli
-./sha.sh dev ...  # tsx 跑源码（cwd 即作用域）
+./sha.sh sync       # npm install + submodule 初始化
+./sha.sh check      # 逐个 workspace（pkgs/* + apps/*）跑各自的 check
+./sha.sh test       # vitest
+./sha.sh build      # dev-core / dev-page 编 lib + dev CLI 打包
+./sha.sh exec <cmd> # 在每个 workspace 里跑一条命令（如 ./sha.sh exec npx tsc -p tsconfig.json）
+./sha.sh dev ...    # tsx 跑源码（cwd 即作用域）
 ```
 
-单包命令也可直接进 `dev/` 用 `./sha.sh check|test|build`。
+单包命令也可直接进目录用 `./sha.sh check|test|build`；dev 启动器：
+
+```bash
+cd apps/dev && ./sha.sh lab    # 构建（含依赖包 lib）后起 Electron；lab 变体 CDP 9223
+```
 
 ## 硬约束
 

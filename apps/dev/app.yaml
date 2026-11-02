@@ -1,0 +1,15 @@
+# apps/dev 的启动清单（##508 从主仓 apps/dev 搬来；主仓那份当时没有 app.yaml）
+#
+# 三层：app → launch（一条启动命令）→ entries（它产生的入口，静态声明）。
+# 数据根缺省 `build/lab/home`（相对 worktree 根），与本目录 sha.sh 的 lab 同一口径。
+
+name: dev
+title: dev 启动器
+
+launches:
+  - id: lab
+    title: 开发（lab）
+    command: ./sha.sh lab
+    entries:
+      - kind: app
+        title: Electron 窗口

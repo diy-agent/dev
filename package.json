@@ -4,7 +4,8 @@
   "type": "module",
   "description": "diy 生态开发辅助仓：dev 工具链（不发布、不是产品）",
   "workspaces": [
-    "pkgs/*"
+    "pkgs/*",
+    "apps/*"
   ],
   "devDependencies": {
     "@types/node": "^26.1.1",
