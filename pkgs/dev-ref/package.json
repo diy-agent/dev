@@ -1,5 +1,5 @@
 {
-  "name": "@diy-agent/dev",
+  "name": "@diy-agent/dev-ref",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -38,6 +38,6 @@
       "node_modules/"
     ]
   },
-  "description": "diy-dev — dev 相关 CLI 工具（v1: 源码镜像 ref 简化版）",
+  "description": "diy-dev-ref — ref（源码镜像 / 仓库引用）CLI（v1: 源码镜像 ref 简化版）",
   "author": "ccc <ccc@users.noreply.github.com>"
 }

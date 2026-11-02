@@ -76,12 +76,12 @@ test() {
 build() {
   ( cd pkgs/dev-core && ./sha.sh build )
   ( cd pkgs/dev-page && ./sha.sh build )
-  ( cd pkgs/dev && run npx vite build --config vite.cli.config.ts )
+  ( cd pkgs/dev-ref && ./sha.sh build )
 }
 
 # 源码方式跑 dev CLI（cwd 即作用域：请在想操作的目录下调用）
 dev() {
-  run npx tsx "$SCRIPT_DIR/pkgs/dev/src/cli/index.ts" "$@"
+  run npx tsx "$SCRIPT_DIR/pkgs/dev-ref/src/cli/index.ts" "$@"
 }
 
 sha "$@"

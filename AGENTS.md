@@ -7,13 +7,13 @@
 
 - 独立 git 仓（与 `../diy` 是两个仓，提交互不影响）
 - 通过 **path 依赖**消费主仓的包，不发布、不 vendor
-- 当前内容：`pkgs/dev`（ref CLI）+ `pkgs/dev-core` / `pkgs/dev-page` / `apps/dev`（dev 启动器，##508 从主仓搬来）
+- 当前内容：`pkgs/dev-ref`（ref CLI）+ `pkgs/dev-core` / `pkgs/dev-page` / `apps/dev`（dev 启动器，##508 从主仓搬来）
 
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `pkgs/dev/` | `@diy-agent/dev`：ref 命令（add / sync / list / remove），入口 `bin/dev` |
+| `pkgs/dev-ref/` | `@diy-agent/dev-ref`：ref 命令（add / sync / list / remove），入口 `bin/dev`（**命令名仍是 `dev`**：改 bin 名会波及外部脚本，故只改包名/目录） |
 | `pkgs/dev-core/` | `@diy-agent/dev-core`：dev 启动器业务层（静态发现 / 运行时对账 / 启停动作），无 UI 无 Electron |
 | `pkgs/dev-page/` | `@diy-agent/dev-page`：dev 启动器页面插件（主进程方法表 + 裸 DOM renderer） |
 | `apps/dev/` | `@diy-agent/app-dev`：装配器（插件清单 + 窗口入口 + renderer 打包入口），≤100 行 |
@@ -27,7 +27,7 @@
 
 ## 依赖主仓（path 依赖）
 
-`pkgs/dev/package.json` 里：
+`pkgs/dev-ref/package.json` 里：
 
 ```json
 "@diy-agent/rpc":  "file:../../../diy/pkgs.ts/diy-rpc",
