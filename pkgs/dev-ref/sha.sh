@@ -30,7 +30,7 @@ source "../../sha.common.sh"
 ####################################################################################
 
 clean() {
-  run rm -rf ./build ./dist
+  run rm -rf ./build ./dist ./lib
 }
 
 # 本包检查：类型 + lint
@@ -46,7 +46,11 @@ fix() {
 
 sync() { :; }
 
-build() { run npx vite build --config vite.cli.config.ts; }
+# 产物 lib/index.js：dev app 的主进程按包名（exports）import 本包（##510 删 bin/dev 后唯一构建产物）
+build() { run npx vite build --config vite.lib.config.ts; }
+
+# 旧 CLI 产物（build/prod/cli/index.js）：入口已删，只在需要单跑 CLI 产物时用
+build-cli() { run npx vite build --config vite.cli.config.ts; }
 
 # 本包全是快速单测，无慢测试：test ≡ test-unit
 test() { run npx vitest run "$@"; }

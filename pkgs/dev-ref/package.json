@@ -3,16 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "dev": "bin/dev"
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
   },
   "files": [
-    "bin/",
-    "out/"
+    "src/",
+    "lib/"
   ],
   "dependencies": {
-    "@diy-agent/rpc": "file:../../../diy/pkgs.ts/diy-rpc",
-    "@diy-agent/time": "file:../../../diy/pkgs.ts/diy-time",
+    "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
+    "@diy-agent/time": "file:../../../diy/pkgs.ts/core/time",
     "js-yaml": "^5.5.0",
     "zod": "file:../../../diy/node_modules/zod"
   },
@@ -38,6 +43,9 @@
       "node_modules/"
     ]
   },
-  "description": "diy-dev-ref — ref（源码镜像 / 仓库引用）CLI（v1: 源码镜像 ref 简化版）",
+  "description": "diy-dev-ref — ref（源码镜像 / 仓库引用）能力库（v1 简化版）：diy.yaml 注册 + clone/pull/lock",
+  "scripts": {
+    "build": "vite build --config vite.lib.config.ts"
+  },
   "author": "ccc <ccc@users.noreply.github.com>"
 }

@@ -7,15 +7,15 @@
 
 - 独立 git 仓（与 `../diy` 是两个仓，提交互不影响）
 - 通过 **path 依赖**消费主仓的包，不发布、不 vendor
-- 当前内容：`pkgs/dev-ref`（ref CLI）+ `pkgs/dev-core` / `pkgs/dev-page` / `apps/dev`（dev 启动器，##508 从主仓搬来）
+- 当前内容：`pkgs/dev-ref`（ref 能力库）+ `pkgs/dev-core` / `pkgs/dev-page` / `apps/dev`（dev 启动器，##508 从主仓搬来；##510 把 ref 做成它的「外部仓库」页）
 
 ## 目录
 
 | 路径 | 说明 |
 |------|------|
-| `pkgs/dev-ref/` | `@diy-agent/dev-ref`：ref 命令（add / sync / list / remove），入口 `bin/dev`（**命令名仍是 `dev`**：改 bin 名会波及外部脚本，故只改包名/目录） |
+| `pkgs/dev-ref/` | `@diy-agent/dev-ref`：ref 能力库（add / sync / list / remove）。**##510 起没有 `bin/dev`**：`src/ref/**` 六文件原样被 `pkgs/dev-page` 的「外部仓库」页复用，开发期可 `./sha.sh dev ref …`（tsx 直跑源码） |
 | `pkgs/dev-core/` | `@diy-agent/dev-core`：dev 启动器业务层（静态发现 / 运行时对账 / 启停动作），无 UI 无 Electron |
-| `pkgs/dev-page/` | `@diy-agent/dev-page`：dev 启动器页面插件（主进程方法表 + 裸 DOM renderer） |
+| `pkgs/dev-page/` | `@diy-agent/dev-page`：dev 启动器页面插件，出两页 —— 「应用」（主进程方法表 + 裸 DOM renderer）与「外部仓库」（ref 同步 / 添加 / 移除） |
 | `apps/dev/` | `@diy-agent/app-dev`：装配器（插件清单 + 窗口入口 + renderer 打包入口），≤100 行 |
 | `docs/` | 历史架构文档（Python 时代，只读参考） |
 | `skills/` | 项目级 skills（git-cleanup / win-file-unlock） |
@@ -58,7 +58,7 @@
 ./sha.sh sync       # npm install + submodule 初始化
 ./sha.sh check      # 逐个 workspace（pkgs/* + apps/*）跑各自的 check
 ./sha.sh test       # vitest
-./sha.sh build      # dev-core / dev-page 编 lib + dev CLI 打包
+./sha.sh build      # dev-ref / dev-core / dev-page 编 lib
 ./sha.sh exec <cmd> # 在每个 workspace 里跑一条命令（如 ./sha.sh exec npx tsc -p tsconfig.json）
 ./sha.sh dev ...    # tsx 跑源码（cwd 即作用域）
 ```
@@ -71,6 +71,6 @@ cd apps/dev && ./sha.sh lab    # 构建（含依赖包 lib）后起 Electron；l
 
 ## 硬约束
 
-- **cwd 即作用域**：`dev` 命令在哪个目录跑，就操作哪个目录的 `diy.yaml`；`bin/dev` 刻意不 cd 到包根
+- **cwd 即作用域**：ref 操作哪个目录的 `diy.yaml` 由调用方传 `cwd`（dev app 传仓库根；`./sha.sh dev` 用当前目录）
 - 改 `ref.lock.yaml` 格式前先 `diy facts brief diydev.rule` —— 本仓是它全仓唯一写入方
 - 历史文档（`docs/`、`archive/`）描述的是已归档的 Python 实现，**不要照它改现在的代码**

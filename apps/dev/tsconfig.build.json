@@ -1,8 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // 解析用 bundler（与根 tsconfig / 各 pkgs 一致）：本文件只做类型检查，打包交给 esbuild。
+    // NodeNext 会连带检查被 import 的包的 .ts 源，而 dev-ref 的 src/ref/** 内部 import 无扩展名
+    // （那里一行不许改，见 ##510），NodeNext 下必报 TS2835。
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true

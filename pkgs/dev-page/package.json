@@ -2,7 +2,7 @@
   "name": "@diy-agent/dev-page",
   "version": "0.1.0",
   "private": true,
-  "description": "dev 启动器的页面插件：主进程方法表 + 裸 DOM 界面（树列表 / 启停 / 过滤）",
+  "description": "dev 启动器的页面插件：应用页（树列表 / 启停 / 过滤）+ 外部仓库页（ref 同步 / 添加 / 移除）",
   "files": [
     "src/"
   ],
@@ -28,8 +28,9 @@
   },
   "dependencies": {
     "@diy-agent/dev-core": "*",
-    "@diy-agent/workbench": "file:../../../diy/pkgs.ts/workbench",
-    "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui-workbench"
+    "@diy-agent/dev-ref": "file:../dev-ref",
+    "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
+    "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui/workbench-ui"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

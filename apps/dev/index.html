@@ -59,6 +59,57 @@
                 font-size: 11px;
                 margin-left: auto;
             }
+            /* 页签：应用 / 外部仓库（##510） */
+            .tabs {
+                display: flex;
+                gap: 4px;
+                padding: 6px 10px;
+                border-bottom: 1px solid var(--line);
+                background: #fbfcfe;
+            }
+            .tab {
+                padding: 3px 12px;
+                font-size: 12px;
+                border-radius: 12px;
+                border: 1px solid transparent;
+                background: transparent;
+                color: #5b6470;
+                cursor: pointer;
+            }
+            .tab:hover {
+                color: var(--accent);
+            }
+            .tab.on {
+                background: #eaf1fd;
+                border-color: #cfe0fb;
+                color: var(--accent);
+                font-weight: 600;
+            }
+            /* 外部仓库：添加行 + 列表 */
+            .refadd {
+                display: flex;
+                gap: 6px;
+                padding: 8px 10px;
+                border-bottom: 1px solid #eef0f3;
+            }
+            .refinput {
+                flex: 1;
+                min-width: 0;
+                padding: 4px 8px;
+                font-size: 11.5px;
+                font-family: ui-monospace, Menlo, monospace;
+                border: 1px solid var(--line);
+                border-radius: 6px;
+            }
+            .refinput:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+            .reflist {
+                flex: 1;
+                overflow: auto;
+                padding: 4px 0;
+            }
             #tree {
                 flex: 1;
                 overflow: auto;
@@ -459,12 +510,17 @@
                 text-align: center;
                 color: var(--dim);
                 font-size: 12.5px;
+                white-space: pre-line;
             }
         </style>
     </head>
     <body>
         <div id="side">
             <div class="top">dev 启动器 <small id="running"></small></div>
+            <div class="tabs">
+                <button id="tab-app" type="button" class="tab on">应用</button>
+                <button id="tab-ref" type="button" class="tab">外部仓库</button>
+            </div>
             <div id="tree"></div>
         </div>
         <div id="main">

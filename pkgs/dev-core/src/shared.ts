@@ -145,6 +145,61 @@ export const DEV_METHODS = {
     revealCdp: "revealCdp",
 } as const;
 
+// ── 外部仓库（##510：dev-ref 的 UI 面） ──────────────────────
+
+/** 一条已注册的 source（diy.yaml）的对齐结果 */
+export interface RefRepo {
+    /** host/owner/repo 去重键 */
+    readonly key: string;
+    /** 完整 source 串（含版本，如 https://github.com/org/repo@v1.0.0） */
+    readonly url: string;
+    /** @ 后版本段；null = 按 main（分支类 sync 时 pull） */
+    readonly version: string | null;
+    /** 镜像目录（绝对路径） */
+    readonly dir: string;
+    /** 本地镜像是否存在（false = 还没 clone，待同步） */
+    readonly exists: boolean;
+    /** 最后一次 sync 时间（ISO）；null = 从未同步 */
+    readonly lastSync: string | null;
+    /** 本地落后多少个提交（未 clone / tag 固定 / 无 upstream ⇒ null） */
+    readonly behind: number | null;
+}
+
+/** 「外部仓库」页的开头：作用域 + 镜像根 + 全部 source */
+export interface RefOverview {
+    /** 作用域目录（diy.yaml 所在；dev app 传仓库根） */
+    readonly root: string;
+    /** 镜像根（`$DIY_HOME/ref`） */
+    readonly home: string;
+    readonly repos: readonly RefRepo[];
+}
+
+/** sync 汇总（与 ref.sync 尾帧的 summary 同形） */
+export interface RefSyncSummary {
+    readonly synced: number;
+    readonly tagSkipped: number;
+    readonly total: number;
+    readonly errors: readonly { readonly spec: string; readonly message: string }[];
+}
+
+/** sync 的进度快照：UI 轮询它（page:invoke 是 unary，逐条进度落在这里） */
+export interface RefSyncState {
+    readonly running: boolean;
+    readonly lines: readonly string[];
+    readonly summary: RefSyncSummary | null;
+    readonly error: string | null;
+}
+
+/** 「外部仓库」页的主进程方法名（renderer 与本文件各写一遍字符串 = 迟早拼错） */
+export const REF_METHODS = {
+    overview: "overview",
+    add: "add",
+    remove: "remove",
+    sync: "sync",
+    syncState: "syncState",
+    open: "open",
+} as const;
+
 /** 允许在 app 目录里执行的命令（白名单：拒绝任意命令注入） */
 export const BUILD_COMMANDS = ["build", "check", "test", "sync", "build-pkgs", "clean"] as const;
 export type BuildCommand = (typeof BUILD_COMMANDS)[number];

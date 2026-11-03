@@ -44,10 +44,11 @@ _ensure_electron() {
 # 依赖包先编 lib：主进程按包名 import、renderer 打包读 exports，都指向 lib/*.js
 # 顺序 = 依赖顺序：dev-page → dev-core；主仓的 workbench / ui-workbench 由主仓自己编。
 build-deps() {
+  ( cd "$SCRIPT_DIR/../../pkgs/dev-ref" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-core" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-page" && ./sha.sh build )
-  ( cd "$(_main_repo)/pkgs.ts/workbench" && ./sha.sh build )
-  ( cd "$(_main_repo)/pkgs.ts/ui-workbench" && ./sha.sh build )
+  ( cd "$(_main_repo)/pkgs.ts/ui/workbench" && ./sha.sh build )
+  ( cd "$(_main_repo)/pkgs.ts/ui/workbench-ui" && ./sha.sh build )
 }
 
 build() {

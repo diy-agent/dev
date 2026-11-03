@@ -74,12 +74,12 @@ test() {
 
 # dev-core / dev-page 先编 lib（apps/dev 的装配器按包名解析它们）
 build() {
+  ( cd pkgs/dev-ref && ./sha.sh build )
   ( cd pkgs/dev-core && ./sha.sh build )
   ( cd pkgs/dev-page && ./sha.sh build )
-  ( cd pkgs/dev-ref && ./sha.sh build )
 }
 
-# 源码方式跑 dev CLI（cwd 即作用域：请在想操作的目录下调用）
+# 源码方式跑 ref CLI（cwd 即作用域：请在想操作的目录下调用；##510 起入口只在开发期用）
 dev() {
   run npx tsx "$SCRIPT_DIR/pkgs/dev-ref/src/cli/index.ts" "$@"
 }

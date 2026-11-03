@@ -1,8 +1,12 @@
-# diy-dev — ref（仓库引用 / vendor 镜像）CLI
+# diy-dev-ref — ref（仓库引用 / vendor 镜像）能力库
 
-> 全仓契约见**仓库根 `AGENTS.md`**。本包是独立的 `dev` 命令，**不是** diy 应用的一部分。
+> 全仓契约见**仓库根 `AGENTS.md`**。
 >
-> ⚠️ **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；`bin/dev` 刻意不 cd 到包根。
+> ##510 起本包**不再是独立命令**：`bin/dev` 已删，`src/ref/**` 六个文件原样保留，
+> 由 dev app（`apps/dev` → `pkgs/dev-page`）通过包入口 `src/index.ts` 调用，UI 侧是「外部仓库」页。
+> 开发期可 `./sha.sh dev ref list`（tsx 直跑源码，同旧 CLI 语义）。
+>
+> ⚠️ **cwd 即作用域**：`diy.yaml` 在哪个目录就在哪操作；宿主传 `cwd`（dev app 传仓库根）。
 
 ## 正文在知识库，本节只留目录
 

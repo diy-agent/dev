@@ -24,9 +24,10 @@ sync() { :; }
 check() { typecheck; lint; }
 fix() { fmt-fix; lint-fix; }
 
-# 依赖 @diy-agent/dev-core 的 lib：先编它（装配器与 renderer 都按包名解析）
+# 依赖的 lib 先编：dev-ref（ref 能力）/ dev-core（启动器业务）都按包名解析
 build-core() { ( cd ../dev-core && ./sha.sh build ); }
-build() { build-core; run npx tsc -p tsconfig.build.json; }
+build-ref() { ( cd ../dev-ref && ./sha.sh build ); }
+build() { build-ref; build-core; run npx tsc -p tsconfig.build.json; }
 
 test() { run npx vitest run "$@"; }
 test-unit() { run npx vitest run "$@"; }

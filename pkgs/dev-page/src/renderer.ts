@@ -1,10 +1,13 @@
 // renderer.ts — dev 启动器的界面（纯 DOM，无框架）。
 //
-// 四层树（##502 第二轮）：worktree → app → launch → entries。
+// 两页（##510）：顶部 tab 切换「应用」与「外部仓库」。
+//   · 应用：四层树（##502 第二轮）worktree → app → launch → entries。
+//   · 外部仓库：diy.yaml 里的 source + 同步（实现见 ref-view.ts）。
 // 数据全部来自 `page:invoke`（主进程插件）：每秒拉一次快照，所以「启动后自己刷新成运行中」
 // 不靠额外推送。分隔条来自 @diy-agent/workbench-ui 的 createSplitPane（260–520px）。
 
 import { createSplitPane } from "@diy-agent/workbench-ui";
+import { createRefView, type RefView } from "./ref-view.js";
 import {
     BUILD_COMMANDS,
     DEV_METHODS,
@@ -52,6 +55,8 @@ async function invoke<T>(method: string, args?: unknown): Promise<T> {
 let snapshot: DevSnapshot | null = null;
 let session: CommandSession | null = null;
 let selectedKey: string | null = null;
+/** 当前页签（应用 / 外部仓库）；两侧轮询与绘制按它分流 */
+let mode: "app" | "ref" = "app";
 let polling = false;
 /** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
 let onlyRunning = false;
@@ -471,6 +476,8 @@ function renderDetail(): void {
 }
 
 function render(): void {
+    // 「外部仓库」页不归本函数画；轮询的旧结果晚到也不该盖掉它
+    if (mode !== "app") return;
     if (snapshot !== null) {
         runningLabel.textContent = `${snapshot.runningCount} 个在跑`;
         repoLabel.textContent = `${snapshot.worktreeCount} worktree · ${snapshot.appCount} app`;
@@ -575,5 +582,57 @@ filterToggle.addEventListener("click", () => {
 });
 syncFilterToggle();
 
-void refresh();
-setInterval(() => void refresh(), 1000);
+// ── 页签：应用 / 外部仓库（##510） ─────────────────────────────
+
+const tabApp = requireEl("tab-app");
+const tabRef = requireEl("tab-ref");
+const MODE_KEY = "dev.mode";
+
+try {
+    mode = window.localStorage.getItem(MODE_KEY) === "ref" ? "ref" : "app";
+} catch {
+    mode = "app";
+}
+
+/** 外部仓库页的宿主：它只拿容器与桥，不反向依赖本文件的绘制逻辑 */
+const refView: RefView = createRefView({
+    tree,
+    body,
+    headTitle,
+    headBadge,
+    headMeta,
+    invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("ref", method, args) as Promise<T>,
+    toast,
+});
+
+function applyMode(next: "app" | "ref"): void {
+    mode = next;
+    try {
+        window.localStorage.setItem(MODE_KEY, next);
+    } catch {
+        /* 隐私模式：本次会话内生效即可 */
+    }
+    tabApp.classList.toggle("on", next === "app");
+    tabRef.classList.toggle("on", next === "ref");
+    // 「只显示运行中」是应用页的过滤，外部仓库页没有它
+    filterToggle.style.display = next === "app" ? "" : "none";
+    if (next === "app") {
+        void refresh();
+    } else {
+        headTitle.textContent = "外部仓库";
+        headBadge.className = "badge stop";
+        headBadge.textContent = "—";
+        headMeta.textContent = "";
+        refView.mount();
+        void refView.refresh();
+    }
+}
+
+tabApp.addEventListener("click", () => applyMode("app"));
+tabRef.addEventListener("click", () => applyMode("ref"));
+
+applyMode(mode);
+setInterval(() => {
+    if (mode === "ref") refView.poll();
+    else void refresh();
+}, 1000);
