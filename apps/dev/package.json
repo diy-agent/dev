@@ -23,6 +23,6 @@
         "typescript": "^7.0.2"
     },
     "bin": {
-        "diy-dev": "bin/diy-dev"
+        "dev": "bin/dev"
     }
 }

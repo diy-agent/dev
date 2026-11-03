@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# bin/dev — dev 启动器入口（npm 全局 / 安装到 PATH 用）。
+#
+# 用法：
+#   dev                起窗口（缺省变体 lab）
+#   dev app            同上
+#   dev app lab        明确 lab 变体
+#   dev app prod       跑 prod 产物
+#   dev list           列出可用的变体（有产物的）
+#   dev --help
+#
+# 产物：<包根>/build/<variant>/main/index.mjs（Electron 主进程）
+# 数据根：DIY_HOME，缺省 <包根>/build/<variant>/home
+set -euo pipefail
+
+_realpath() {
+  local src="$1" d
+  while [ -h "$src" ]; do
+    d="$(dirname "$src")"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$d/$src"
+  done
+  cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd
+}
+
+APP_DIR="$(dirname "$(_realpath "$0")")"
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# 可用变体 = build/ 下存在 main/index.mjs 的那些
+variants() {
+  local d
+  for d in "$APP_DIR"/build/*/; do
+    [ -f "$d/main/index.mjs" ] && basename "$d"
+  done
+}
+
+# electron 二进制定位：优先本包 node_modules，其次仓根
+electron_bin() {
+  local bin="$APP_DIR/node_modules/.bin/electron"
+  [ -x "$bin" ] || bin="$APP_DIR/../../node_modules/.bin/electron"
+  [ -x "$bin" ] || {
+    echo "找不到 electron 二进制：先在 $APP_DIR 跑 npm install" >&2
+    exit 1
+  }
+  echo "$bin"
+}
+
+run_app() {
+  local variant="${1:-lab}"
+  local main="$APP_DIR/build/$variant/main/index.mjs"
+  if [ ! -f "$main" ]; then
+    echo "dev 未构建：$main" >&2
+    local avail; avail="$(variants | tr '\n' ' ')"
+    [ -n "$avail" ] && echo "已有产物：$avail" >&2
+    echo "先在 $APP_DIR 跑 ./sha.sh build（或 ./sha.sh lab 构建并启动）" >&2
+    exit 1
+  fi
+  export DIY_HOME="${DIY_HOME:-$APP_DIR/build/$variant/home}"
+  export DIY_VARIANT="$variant"
+  [ -d "$DIY_HOME" ] || mkdir -p "$DIY_HOME"
+  exec "$(electron_bin)" "$main" "${@:2}"
+}
+
+case "${1:-}" in
+  ""|app)
+    shift || true
+    # `dev app` 或 `dev app <variant>`；`dev` 无参也走这里
+    run_app "${1:-lab}" "${@:2}"
+    ;;
+  list|ls)
+    echo "可用变体："
+    variants | sed 's/^/  /'
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "未知子命令：$1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

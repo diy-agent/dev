@@ -45,8 +45,27 @@ interface Discovery {
     readonly problems: readonly string[];
 }
 
+/**
+ * 额外要扫的仓库根。
+ *
+ * 为什么需要：`_diy` 与主仓 `diy` 是两个独立 git 仓，`git worktree list` 只看自己那个。
+ * 但 dev 启动器的职责是「本机有哪些 app 可以起」—— 主仓的 apps（chat / diy-app / minimal / web）
+ * 同样该出现在同一张表里。
+ *
+ * 来源：`DIY_DEV_EXTRA_REPOS`（冒号分隔）优先；否则默认扫同级 `../diy`（存在 apps/ 才算）。
+ */
+function extraRepoRoots(): string[] {
+    const env = process.env["DIY_DEV_EXTRA_REPOS"];
+    if (env !== undefined && env !== "") {
+        return env.split(":").map((x) => x.trim()).filter((x) => x !== "");
+    }
+    const sibling = join(REPO_ROOT, "..", "diy");
+    return existsSync(join(sibling, "apps")) ? [sibling] : [];
+}
+
 function discover(): Discovery {
-    const worktrees = listWorktrees(REPO_ROOT);
+    const roots = [REPO_ROOT, ...extraRepoRoots()];
+    const worktrees = roots.flatMap((root) => listWorktrees(root));
     const appsByWorktree = new Map<string, readonly AppSpec[]>();
     const problems: string[] = [];
     for (const worktree of worktrees) {
