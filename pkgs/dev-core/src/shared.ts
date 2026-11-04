@@ -74,6 +74,14 @@ export interface LaunchRuntime {
 export interface LaunchStatus {
     /** `(worktree, app, launch)` 的稳定 key（UI 选中 / 定位用） */
     readonly key: string;
+    /**
+     * 该 worktree 属于哪个 git 仓库（仓库根绝对路径）。
+     *
+     * 为什么必需：本机同时扫多个仓库（`_diy` 与主仓 `diy` 是两个独立 git 仓，
+     * 各自有 worktree），`git worktree list` 只看自己那个 —— 合并后必须保留归属，
+     * 否则 UI 里两个仓库的分支会混进同一张表，无法辨认。
+     */
+    readonly repo: string;
     readonly worktree: string;
     /** worktree 的展示形式（路径 + 分支，右侧面板用） */
     readonly worktreeLabel: string;

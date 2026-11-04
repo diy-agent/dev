@@ -42,6 +42,8 @@ export const REPO_ROOT = repoRootOf();
 interface Discovery {
     readonly worktrees: ReturnType<typeof listWorktrees>;
     readonly appsByWorktree: Map<string, readonly AppSpec[]>;
+    /** worktree 路径 → 它所属的仓库根（多仓库合并扫描时区分归属） */
+    readonly repoByWorktree: Map<string, string>;
     readonly problems: readonly string[];
 }
 
@@ -67,13 +69,19 @@ function discover(): Discovery {
     const roots = [REPO_ROOT, ...extraRepoRoots()];
     const worktrees = roots.flatMap((root) => listWorktrees(root));
     const appsByWorktree = new Map<string, readonly AppSpec[]>();
+    // 归属必须在这里记：一旦 flatMap 合并，`git worktree list` 的来源就丢了 ——
+    // `_diy` 与主仓 `diy` 是两个独立 git 仓，混成一张表就分不清谁是谁（UI 无法按仓库分表）。
+    const repoByWorktree = new Map<string, string>();
     const problems: string[] = [];
+    for (const root of roots) {
+        for (const worktree of listWorktrees(root)) repoByWorktree.set(worktree.path, root);
+    }
     for (const worktree of worktrees) {
         const found = discoverAppsIn(worktree.path);
         appsByWorktree.set(worktree.path, found.apps);
         problems.push(...found.problems);
     }
-    return { worktrees, appsByWorktree, problems };
+    return { worktrees, appsByWorktree, repoByWorktree, problems };
 }
 
 function builtOf(worktree: string): boolean {
@@ -85,6 +93,7 @@ export function snapshot(): DevSnapshot {
     return buildSnapshot(found.worktrees, {
         repoRoot: REPO_ROOT,
         worktrees: found.worktrees,
+        repoOf: (worktree) => found.repoByWorktree.get(worktree) ?? REPO_ROOT,
         appsOf: (worktree) => found.appsByWorktree.get(worktree) ?? [],
         records: readRecords(registryDir()),
         starting: runner.starting(),

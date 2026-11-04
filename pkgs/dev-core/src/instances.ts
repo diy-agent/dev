@@ -175,6 +175,8 @@ export function withPort(url: string, port: number | null): { href: string; mism
 export interface SnapshotInputs {
     readonly repoRoot: string;
     readonly worktrees: readonly WorktreeInfo[];
+    /** worktree → 所属仓库根（多仓库合并扫描时区分归属；缺省全归 repoRoot） */
+    readonly repoOf?: (worktree: string) => string;
     /** worktree → apps（调用方负责 IO 与解析问题收集） */
     readonly appsOf: (worktree: string) => readonly AppSpec[];
     readonly records: readonly InstanceRecordLite[];
@@ -256,11 +258,13 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                               cwd: record.cwd,
                               diyHome: record.diyHome,
                           };
+                const repo = inputs.repoOf?.(worktree.path) ?? inputs.repoRoot;
                 launches.push({
                     key,
+                    repo,
                     worktree: worktree.path,
-                    worktreeLabel: worktreeLabel(worktree.path, worktree.branch, inputs.repoRoot),
-                    worktreePath: displayPath(worktree.path, inputs.repoRoot),
+                    worktreeLabel: worktreeLabel(worktree.path, worktree.branch, repo),
+                    worktreePath: displayPath(worktree.path, repo),
                     branch: worktree.branch,
                     app: app.name,
                     appTitle: app.title,

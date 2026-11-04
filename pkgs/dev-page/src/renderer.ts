@@ -70,6 +70,33 @@ try {
 
 // ── DOM 小工具 ───────────────────────────────────────────────
 
+/** 路径最后一段（renderer 是浏览器侧，不能用 node:path） */
+/**
+ * 配色规则：**行（分支）决定色相，列（app）决定明度阶梯**。
+ *
+ * 理由（用户裁定）：矩阵里最需要「一眼分清谁是谁」的是**分支**——同一 app 在不同分支上
+ * 长得一模一样，靠列色区分反而把人绕晕。所以：
+ *   · 每个分支一个色相（行内所有格子共享，跨行不重复）
+ *   · 列只做明度递减（色阶），同一行内也能看出格子属于第几列，但不抢分支的辨识度
+ */
+const BRANCH_HUES = [210, 25, 145, 275, 45, 190, 330, 100, 250, 0, 165, 300];
+
+/**
+ * 第 i 列的明度（%）：越靠右越深，但**只做浅色域的微差**。
+ *
+ * 跨度必须收窄（总跨度 ≤ 18）：色阶一深，色相就看不出来了，分支的辨识度反而被列抢走。
+ * 实测 92→44（原来的算法）后半段变成深色块，和「主要分辨分支」的意图正好相反。
+ */
+function columnLightness(index: number, total: number): number {
+    if (total <= 1) return 94;
+    const span = Math.min(4.5, 18 / (total - 1));
+    return Math.round(94 - index * span);
+}
+
+function basename(path: string): string {
+    return path.split(/[\\/]/).filter((seg) => seg !== "").pop() ?? path;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
     const node = document.createElement(tag);
     if (className !== "") node.className = className;
@@ -187,6 +214,67 @@ function hoverActions(launch: LaunchStatus): HTMLElement {
     return acts;
 }
 
+interface WorktreeGroup {
+    readonly worktree: string;
+    readonly sample: LaunchStatus;
+    readonly apps: Map<string, LaunchStatus[]>;
+}
+
+/** 按 worktree → app 分组，保持快照里的出现顺序 */
+function groupByWorktree(launches: readonly LaunchStatus[]): WorktreeGroup[] {
+    const byWorktree = new Map<string, Map<string, LaunchStatus[]>>();
+    const order: string[] = [];
+    for (const launch of launches) {
+        let apps = byWorktree.get(launch.worktree);
+        if (apps === undefined) {
+            apps = new Map();
+            byWorktree.set(launch.worktree, apps);
+            order.push(launch.worktree);
+        }
+        const list = apps.get(launch.app);
+        if (list === undefined) apps.set(launch.app, [launch]);
+        else list.push(launch);
+    }
+    return order
+        .map((worktree) => {
+            const apps = byWorktree.get(worktree);
+            const sample = apps === undefined ? undefined : [...apps.values()][0]?.[0];
+            return sample === undefined || apps === undefined ? null : { worktree, sample, apps };
+        })
+        .filter((item): item is WorktreeGroup => item !== null);
+}
+
+/** 一个 launch 的可点 chip：运行中→停止，未运行→启动（一次点击完成，不弹确认） */
+/** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
+function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
+    const cls = [
+        "chip",
+        launch.running ? "on" : "",
+        launch.starting ? "wait" : "",
+        launch.built ? "" : "unbuilt",
+        launch.key === selectedKey ? "sel" : "",
+    ]
+        .filter((s) => s !== "")
+        .join(" ");
+    const chip = el("button", cls);
+    chip.type = "button";
+    chip.dataset["key"] = launch.key;
+    chip.style.setProperty("--h", String(hue));
+    chip.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${
+        launch.starting ? "启动中…" : launch.running ? "点击停止" : "点击启动"
+    }`;
+    chip.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
+    chip.append(el("span", "chip-nm", launch.launch));
+    chip.addEventListener("click", (event) => {
+        event.stopPropagation();
+        selectedKey = launch.key;
+        if (launch.starting) render();
+        else if (launch.running) void stopLaunch(launch);
+        else void startLaunch(launch);
+    });
+    return chip;
+}
+
 function renderTree(): void {
     tree.replaceChildren();
     if (snapshot === null) return;
@@ -198,57 +286,113 @@ function renderTree(): void {
         return;
     }
 
-    // 严格四级：repo → worktree → app → launch，每层一行、只放名字
-    tree.append(
-        el(
-            "div",
-            "lvl lvl-repo",
-            snapshot.repoBranch === null
-                ? snapshot.repoName
-                : `${snapshot.repoName}（${snapshot.repoBranch}）`,
-        ),
-    );
+    renderTreeCross(groupByWorktree(visible));
+}
 
-    const byWorktree = new Map<string, Map<string, LaunchStatus[]>>();
-    const wtOrder: string[] = [];
-    for (const launch of visible) {
-        let apps = byWorktree.get(launch.worktree);
-        if (apps === undefined) {
-            apps = new Map();
-            byWorktree.set(launch.worktree, apps);
-            wtOrder.push(launch.worktree);
-        }
-        const list = apps.get(launch.app);
-        if (list === undefined) apps.set(launch.app, [launch]);
-        else list.push(launch);
+/**
+ * 交叉表视图：**行 = 分支（worktree），列 = app，cell = 该组合下的 launch**。
+ *
+ * 一张表一个仓库 —— 本机同时扫多个 git 仓（`_diy` 与主仓 `diy` 各是独立仓、各有 worktree），
+ * 混进同一张表时分不清某条分支属于谁，所以按 `launch.repo` 拆开，每个仓库一个可折叠区块。
+ */
+function renderTreeCross(groups: readonly WorktreeGroup[]): void {
+    // 按仓库分组，保持第一次出现的顺序
+    const byRepo = new Map<string, WorktreeGroup[]>();
+    for (const group of groups) {
+        const list = byRepo.get(group.sample.repo);
+        if (list === undefined) byRepo.set(group.sample.repo, [group]);
+        else list.push(group);
     }
 
-    let wtIndex = 0;
-    for (const worktree of wtOrder) {
-        const apps = byWorktree.get(worktree);
-        if (apps === undefined) continue;
-        const sample = [...apps.values()][0]?.[0];
-        if (sample === undefined) continue;
-        // 首个 worktree = 主工作树（git worktree list 的第一行），树里用 `.` 表示仓库根本身
-        tree.append(el("div", "lvl lvl-wt", wtIndex === 0 ? "." : worktreeName(sample)));
-        wtIndex += 1;
-
-        for (const [appName, launches] of apps) {
-            tree.append(el("div", "lvl lvl-app", `apps/${appName}`));
-            for (const launch of launches) {
-                const row = el("div", `entry${launch.key === selectedKey ? " sel" : ""}${launch.built ? "" : " dim"}`);
-                row.dataset["key"] = launch.key;
-                // 一行只放：绿点 + launch id；其余属性全在右侧面板
-                row.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
-                row.append(el("span", "nm", launch.launch));
-                row.append(hoverActions(launch));
-                row.addEventListener("click", () => {
-                    selectedKey = launch.key;
-                    render();
-                });
-                tree.append(row);
+    let repoIndex = 0;
+    for (const [repo, repoGroups] of byRepo) {
+        // 列 = 该仓库下 app 名并集（按首次出现排序，避免每次刷新列序跳动）
+        const columns: string[] = [];
+        const seen = new Set<string>();
+        for (const group of repoGroups) {
+            for (const appName of group.apps.keys()) {
+                if (!seen.has(appName)) {
+                    seen.add(appName);
+                    columns.push(appName);
+                }
             }
         }
+        // 列只决定明度阶梯（见 columnLightness）；色相跟行走
+        const lightOf = (colIndex: number): number => columnLightness(colIndex, columns.length);
+        void repoIndex;
+
+        const section = el("section", "cx-sec");
+        // 标题即折叠开关：仓库名 + 分支数 / app 数
+        const head = el("button", "cx-head");
+        head.type = "button";
+        head.title = repo;
+        head.append(el("span", "cx-arrow", collapsed.has(repo) ? "▸" : "▾"));
+        head.append(el("span", "cx-repo-nm", basename(repo)));
+        head.append(el("span", "cx-meta", `${repoGroups.length} 分支 · ${columns.length} app`));
+        head.addEventListener("click", () => {
+            if (collapsed.has(repo)) collapsed.delete(repo);
+            else collapsed.add(repo);
+            saveCollapsed();
+            renderTree();
+        });
+        section.append(head);
+
+        if (!collapsed.has(repo)) {
+            const table = el("table", "cx");
+            const thead = table.createTHead();
+            const headRow = thead.insertRow();
+            headRow.append(el("th", "cx-br", "分支"));
+            columns.forEach((col, i) => {
+                const th = el("th", "cx-col", col);
+                th.title = `apps/${col}`;
+                th.style.setProperty("--l", String(lightOf(i)));
+                headRow.append(th);
+            });
+
+            const body = table.createTBody();
+            for (const [rowIndex, group] of repoGroups.entries()) {
+                const row = body.insertRow();
+                // 每个分支一个色相：同表内按行序轮转色板，保证相邻行不同色
+                const rowHue = BRANCH_HUES[rowIndex % BRANCH_HUES.length] ?? 210;
+                const branchCell = el("th", "cx-br");
+                branchCell.textContent = group.sample.branch ?? basename(group.sample.worktree);
+                branchCell.title = group.sample.worktreePath;
+                branchCell.style.setProperty("--h", String(rowHue));
+                row.append(branchCell);
+                columns.forEach((col, i) => {
+                    const cell = row.insertCell();
+                    cell.className = "cx-cell";
+                    cell.style.setProperty("--h", String(rowHue));
+                    cell.style.setProperty("--l", String(lightOf(i)));
+                    const launches = group.apps.get(col);
+                    if (launches === undefined) {
+                        cell.classList.add("na");
+                        return;
+                    }
+                    for (const launch of launches) cell.append(launchChip(launch, rowHue));
+                });
+            }
+            section.append(table);
+        }
+        tree.append(section);
+    }
+}
+
+/** 折叠状态：按仓库根路径记（localStorage；隐私模式下降级为本次会话） */
+const collapsed = new Set<string>();
+const COLLAPSE_KEY = "dev.collapsedRepos";
+try {
+    const raw = window.localStorage.getItem(COLLAPSE_KEY);
+    if (raw !== null) for (const repo of JSON.parse(raw) as string[]) collapsed.add(repo);
+} catch {
+    /* 忽略：折叠状态丢了不影响功能 */
+}
+
+function saveCollapsed(): void {
+    try {
+        window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed]));
+    } catch {
+        /* 隐私模式：本次会话内生效即可 */
     }
 }
 

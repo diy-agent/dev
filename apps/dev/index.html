@@ -85,6 +85,153 @@
                 color: var(--accent);
                 font-weight: 600;
             }
+            /* ── 交叉表（C）：行=分支，列=app ── */
+            .cx-wrap {
+                padding: 4px 0;
+                overflow-x: auto;
+            }
+            /* 每个仓库一个可折叠区块 */
+            .cx-sec {
+                margin-bottom: 6px;
+            }
+            .cx-head {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                width: 100%;
+                padding: 5px 10px;
+                border: 0;
+                border-bottom: 1px solid var(--line);
+                background: #fbfcfe;
+                font: 600 11.5px ui-monospace, Menlo, monospace;
+                color: #3a4149;
+                cursor: pointer;
+                text-align: left;
+            }
+            .cx-head:hover {
+                background: #f3f6fa;
+            }
+            .cx-arrow {
+                color: #98a1ac;
+                width: 10px;
+                flex: none;
+            }
+            .cx-repo-nm {
+                flex: none;
+            }
+            .cx-meta {
+                margin-left: auto;
+                font-weight: 400;
+                font-size: 10px;
+                color: #9aa3ae;
+            }
+            .cx {
+                border-collapse: separate;
+                border-spacing: 0;
+                font-size: 11px;
+            }
+            .cx th,
+            .cx td {
+                padding: 2px 3px;
+                white-space: nowrap;
+                border-bottom: 1px solid #f2f4f7;
+            }
+            .cx thead th {
+                font: 600 10px ui-monospace, Menlo, monospace;
+                color: #6b747f;
+                text-align: center;
+                border-bottom: 1px solid var(--line);
+                position: sticky;
+                top: 0;
+                background: #fff;
+                z-index: 1;
+            }
+            .cx .cx-br {
+                font: 600 10.5px ui-monospace, Menlo, monospace;
+                color: hsl(var(--h, 214), 48%, 26%);
+                text-align: left;
+                padding-left: 9px;
+                padding-right: 10px;
+                /* 分支名必须完整可见（长分支名不截断、不换行） */
+                white-space: nowrap;
+                position: sticky;
+                left: 0;
+                /* 行头 = 该分支色相的实底 + 左侧色条：整张表里最显眼的分支标识 */
+                background: hsl(var(--h, 214), 52%, 88%);
+                border-left: 3px solid hsl(var(--h, 214), 62%, 52%);
+                z-index: 2;
+            }
+            .cx thead .cx-br {
+                z-index: 3;
+            }
+            /*
+             * 颜色梯度：每个 app 列一个色相（--h 由 JS 算好挂上）。
+             * 表头 = 该色实底；单元格 = 该色极淡底；chip = 该色边框 / 运行中该色实底。
+             * 目的在于「横向对位」：一列一个颜色，扫一眼就知道这一格属于哪个 app。
+             */
+            .cx .cx-col {
+                min-width: 50px;
+                max-width: 76px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                background: hsl(214, 14%, calc(var(--l) * 1% - 16%));
+                color: #3a4149;
+                border-bottom: 1px solid hsl(214, 12%, 72%);
+            }
+            .cx thead .cx-col:hover {
+                background: hsl(214, 20%, calc(var(--l) * 1% - 26%));
+            }
+            .cx .cx-cell {
+                text-align: center;
+                white-space: normal;
+                background: hsl(var(--h), 52%, calc(var(--l) * 1%));
+            }
+            /* 空格子（该分支没有这个 app）：不染色，避免整片花掉 */
+            .cx .cx-cell.na {
+                background: #fff;
+            }
+            .cx tbody tr:hover .cx-cell {
+                background: hsl(var(--h), 58%, calc(var(--l) * 1% - 6%));
+            }
+            .cx tbody tr:hover .cx-cell.na {
+                background: #fafbfc;
+            }
+            .cx .cx-cell .chip {
+                margin: 1px;
+                font-size: 9.5px;
+                padding: 0 4px;
+                border-color: hsl(var(--h), 34%, 72%);
+                background: hsl(var(--h), 30%, calc(var(--l) * 1% + 5%));
+                color: hsl(var(--h), 45%, 26%);
+            }
+            .cx .cx-cell .chip:hover {
+                border-color: hsl(var(--h), 55%, 50%);
+            }
+            /* 运行中：该色实底 + 深色字 + 加粗，一眼看出"这个在跑" */
+            .cx .cx-cell .chip.on {
+                background: hsl(var(--h), 62%, calc(var(--l) * 1% - 20%));
+                border-color: hsl(var(--h), 62%, 45%);
+                color: #fff;
+                font-weight: 600;
+                box-shadow: 0 0 0 1px hsl(var(--h), 62%, 45%);
+            }
+            .cx .cx-cell .chip.wait {
+                background: hsl(var(--h), 72%, 88%);
+                border-color: hsl(var(--h), 55%, 60%);
+            }
+            .cx .cx-cell .chip .dot {
+                background: hsl(var(--h), 40%, 72%);
+            }
+            .cx .cx-cell .chip.on .dot {
+                background: #fff;
+            }
+            .cx .cx-cell .chip.wait .dot {
+                background: hsl(var(--h), 60%, 50%);
+            }
+            /* 分支列（行头）保持中性，不参与色相，否则整行都花 */
+            .cx tbody tr:hover .cx-br {
+                background: hsl(var(--h, 214), 55%, 82%);
+            }
             /* 外部仓库：添加行 + 列表 */
             .refadd {
                 display: flex;
