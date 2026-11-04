@@ -24,6 +24,8 @@ _realpath() {
 }
 
 APP_DIR="$(dirname "$(_realpath "$0")")"
+# 仓库根（= worktree 根）：数据根的基准，与 app.yaml 的 `home:` 同口径（相对 worktree 根）
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 
 usage() {
   sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
@@ -57,10 +59,10 @@ run_app() {
     exit 1
   fi
   # 数据根：只在「外部已按启动器口径注入」时继承（有 DIY_LAUNCH），否则 shell 里残留的
-  # 生产 DIY_HOME（~/.diy）会把 prod 实例带进真数据根
+  # 生产 DIY_HOME（~/.diy）会把实例带进真数据根
   local injected
   injected="${DIY_LAUNCH:+${DIY_HOME:-}}"
-  export DIY_HOME="${injected:-$APP_DIR/build/$variant/home}"
+  export DIY_HOME="${injected:-$REPO_ROOT/build/$variant/home}"
   export DIY_VARIANT="$variant"
   # 变体 = app.yaml 里的 launch id：写进实例注册表，dev 启动器据此显示「已启动」
   export DIY_LAUNCH="${DIY_LAUNCH:-$variant}"

@@ -6,12 +6,14 @@ import {
     matchLegacy,
     matchRecord,
     parseRecord,
+    sameHome,
     sameApp,
     samePath,
     withPort,
     worktreeOf,
     type InstanceRecordLite,
 } from "../src/instances.js";
+import { homedir } from "node:os";
 import type { AppSpec, WorktreeInfo } from "../src/shared.js";
 
 const record = (patch: Partial<InstanceRecordLite> = {}): InstanceRecordLite => ({
@@ -100,6 +102,36 @@ describe("匹配键 (worktree, app, launch)", () => {
         expect(matchRecord(record({ app: "diy-minimal" }), ref)).toBe(false);
         expect(matchRecord(record({ worktree: "/repo/" }), ref)).toBe(true);
         expect(matchRecord(record({ worktree: "/wt/other" }), ref)).toBe(false);
+    });
+});
+
+describe("数据根参与匹配（##518：真生产实例不许被当成 practice launch）", () => {
+    it("三元组相同但 diyHome 不同 ⇒ 不匹配", () => {
+        const ref = { worktree: "/repo", app: "chat", launch: "lab" };
+        expect(matchRecord(record({ diyHome: "/repo/build/lab/home" }), ref, "/repo/build/lab/home")).toBe(true);
+        // 生产实例：cwd/worktree/launch 都对，数据根是 ~/.diy ⇒ 不算这条 launch 在跑
+        expect(matchRecord(record({ diyHome: "/Users/x/.diy" }), ref, "/repo/build/lab/home")).toBe(false);
+        // 老记录写 `~/` 形态也要认
+        expect(sameHome("~/build/lab/home", `${homedir()}/build/lab/home`)).toBe(true);
+    });
+
+    it("没被任何 launch 认领的记录进 externals，生产根被标 production", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [
+                record({ pid: 111, diyHome: "/repo/build/lab/home" }),
+                record({ pid: 222, app: "diy-app", launch: null, worktree: null, diyHome: "/Users/x/.diy" }),
+            ],
+            starting: new Set(),
+            builtOf: () => true,
+            prodHome: "/Users/x/.diy",
+        });
+        expect(snapshot.launches[0]?.running).toBe(true);
+        expect(snapshot.externals.map((item) => item.pid)).toEqual([222]);
+        expect(snapshot.externals[0]?.production).toBe(true);
     });
 });
 
