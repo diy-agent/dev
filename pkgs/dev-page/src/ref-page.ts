@@ -23,22 +23,23 @@ import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
 const MAX_LINES = 400;
 
 /**
- * ref 域的作用域：cwd = **哪个仓库**（它的 `diy.yaml`），home = 数据根（镜像落 `<home>/ref`）。
+ * ref 域的作用域：cwd = **哪个 worktree**（它的 `diy.yaml`），home = 数据根（镜像落 `<home>/ref`）。
  *
- * ##518 第二轮：ref 不属于「dev 这一页」，而属于**仓库** —— 每个仓库根各有自己的 diy.yaml，
- * 所以 repo 由调用方（UI 的仓库区块）传进来，不在这里猜 `repoRootOf()`（那只会得到 dev 自己所在的仓）。
+ * ##518 第三轮（用户裁）：`diy.yaml` 跟着 **worktree** 走 —— 同一仓库的不同 worktree 各有一份，
+ * source 列表与锁定版本都可能不同。所以 worktree 由调用方（worktree 详情页）传进来，
+ * 这里不猜 `repoRootOf()`（那只会得到 dev 自己所在的那个 worktree）。
  */
-function scope(repo: string): { home: string; cwd: string } {
-    const cwd = repo.trim() === "" ? repoRootOf() : resolve(repo);
+function scope(worktree: string): { home: string; cwd: string } {
+    const cwd = worktree.trim() === "" ? repoRootOf() : resolve(worktree);
     if (!existsSync(join(cwd, "diy.yaml"))) {
-        throw new Error(`${cwd} 没有 diy.yaml（这个仓库还没声明外部仓库）`);
+        throw new Error(`${cwd} 没有 diy.yaml（这个 worktree 还没声明外部仓库）`);
     }
     return { home: readRuntimeConfig().home, cwd };
 }
 
 /** 每次调用建一对新的进程内 transport（轻量；不共享状态，避免在飞调用互相干扰） */
-function refClient(repo: string) {
-    const { home, cwd } = scope(repo);
+function refClient(worktree: string) {
+    const { home, cwd } = scope(worktree);
     const { serverTx, clientTx } = createMemTransportPair();
     bindRefHandlers(new ChannelServerBinding(serverTx), { home, cwd });
     return createTypedClient(new ChannelClientBinding(clientTx), refApi).ref;
@@ -78,18 +79,18 @@ function toRepo(entry: RefEntry): RefRepo {
 const states = new Map<string, RefSyncState>();
 const EMPTY_STATE: RefSyncState = { running: false, lines: [], summary: null, error: null };
 
-function stateOf(repo: string): RefSyncState {
-    return states.get(repo) ?? EMPTY_STATE;
+function stateOf(worktree: string): RefSyncState {
+    return states.get(worktree) ?? EMPTY_STATE;
 }
 
-function setState(repo: string, next: RefSyncState): void {
-    states.set(repo, next);
+function setState(worktree: string, next: RefSyncState): void {
+    states.set(worktree, next);
 }
 
-function push(repo: string, text: string): void {
-    const state = stateOf(repo);
+function push(worktree: string, text: string): void {
+    const state = stateOf(worktree);
     const lines = [...state.lines, text];
-    setState(repo, { ...state, lines: lines.length > MAX_LINES ? lines.slice(-MAX_LINES) : lines });
+    setState(worktree, { ...state, lines: lines.length > MAX_LINES ? lines.slice(-MAX_LINES) : lines });
 }
 
 function describeFrame(frame: {
@@ -111,38 +112,38 @@ function describeFrame(frame: {
     }
 }
 
-async function runSync(repo: string): Promise<void> {
-    setState(repo, { running: true, lines: ["开始同步（diy.yaml 里的 source）…"], summary: null, error: null });
+async function runSync(worktree: string): Promise<void> {
+    setState(worktree, { running: true, lines: ["开始同步（diy.yaml 里的 source）…"], summary: null, error: null });
     try {
-        const stream = await refClient(repo).sync({});
+        const stream = await refClient(worktree).sync({});
         for await (const frame of stream) {
             if (frame.action === "done") {
                 const summary: RefSyncSummary | null = frame.summary ?? null;
-                setState(repo, { ...stateOf(repo), summary });
+                setState(worktree, { ...stateOf(worktree), summary });
                 push(
-                    repo,
+                    worktree,
                     summary === null
                         ? "同步结束"
                         : `同步结束：更新 ${summary.synced} / 跳过 ${summary.tagSkipped} / 失败 ${summary.errors.length}（共 ${summary.total}）`,
                 );
                 continue;
             }
-            push(repo, describeFrame(frame));
+            push(worktree, describeFrame(frame));
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        setState(repo, { ...stateOf(repo), error: message });
-        push(repo, `✗ 同步中断：${message}`);
+        setState(worktree, { ...stateOf(worktree), error: message });
+        push(worktree, `✗ 同步中断：${message}`);
     } finally {
-        setState(repo, { ...stateOf(repo), running: false });
+        setState(worktree, { ...stateOf(worktree), running: false });
     }
 }
 
 // ── 方法实现 ────────────────────────────────────────────────
 
-async function overview(repo: string): Promise<RefOverview> {
-    const { home, cwd } = scope(repo);
-    const entries = await refClient(repo).list({});
+async function overview(worktree: string): Promise<RefOverview> {
+    const { home, cwd } = scope(worktree);
+    const entries = await refClient(worktree).list({});
     return { root: cwd, home, repos: entries.map(toRepo) };
 }
 
@@ -161,28 +162,28 @@ function requireString(args: unknown, field: string): string {
  * 与 app 域的 spawn / 注册表逻辑没有交集，混进 page.ts 只会让两边都难读。
  */
 export const refMethods: PageContribution["methods"] = {
-        [REF_METHODS.overview]: async (args): Promise<RefOverview> => overview(requireString(args, "repo")),
+        [REF_METHODS.overview]: async (args): Promise<RefOverview> => overview(requireString(args, "worktree")),
 
         [REF_METHODS.add]: async (args) => {
-            const repo = requireString(args, "repo");
-            const result = await refClient(repo).add({ url: requireString(args, "url") });
+            const worktree = requireString(args, "worktree");
+            const result = await refClient(worktree).add({ url: requireString(args, "url") });
             return { ok: true, name: result.data.name, spec: result.data.spec };
         },
 
         [REF_METHODS.remove]: async (args) => {
-            const repo = requireString(args, "repo");
-            const result = await refClient(repo).remove({ name: requireString(args, "name") });
+            const worktree = requireString(args, "worktree");
+            const result = await refClient(worktree).remove({ name: requireString(args, "name") });
             return { ok: true, removed: result.data.removed };
         },
 
         // 立即返回当前快照；真正跑批在后台（running=false 时才起）
         [REF_METHODS.sync]: (args): RefSyncState => {
-            const repo = requireString(args, "repo");
-            if (!stateOf(repo).running) void runSync(repo);
-            return stateOf(repo);
+            const worktree = requireString(args, "worktree");
+            if (!stateOf(worktree).running) void runSync(worktree);
+            return stateOf(worktree);
         },
 
-        [REF_METHODS.syncState]: (args): RefSyncState => stateOf(requireString(args, "repo")),
+        [REF_METHODS.syncState]: (args): RefSyncState => stateOf(requireString(args, "worktree")),
 
         [REF_METHODS.open]: (args) => openPath(requireString(args, "path"), "finder"),
 };

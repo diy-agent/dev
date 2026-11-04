@@ -59,10 +59,10 @@ let selectedKey: string | null = null;
 let selectedWorktree: string | null = null;
 /** 右侧面板此刻归谁：app（矩阵选中项 / worktree 详情）还是 ref（某个仓库的外部仓库） */
 let panel: "app" | "ref" = "app";
-/** panel === "ref" 时是哪个仓库的外部仓库 */
-let refRepo: string | null = null;
-/** 每个仓库区块的页签：应用（矩阵）/ 外部仓库（该仓库 diy.yaml 的 source） */
-const repoPanes = new Map<string, "app" | "ref">();
+/** panel === "ref" 时是哪个 worktree 的外部仓库 */
+let refWorktree: string | null = null;
+/** worktree 详情页的页签：详情 / 外部仓库（该 worktree 的 diy.yaml）。`diy.yaml` 跟着 worktree 走 */
+const wtPanes = new Map<string, "info" | "ref">();
 let polling = false;
 /** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
 let onlyRunning = false;
@@ -355,28 +355,7 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
             renderTree();
         });
 
-        // 仓库级页签：外部仓库属于**仓库**（每个仓库根的 diy.yaml 各一份），不属于整页
-        const tabs = el("div", "reptabs");
-        const pane = repoPanes.get(repo) ?? "app";
-        for (const [id, label] of [
-            ["app", "应用"],
-            ["ref", "外部仓库"],
-        ] as const) {
-            const tab = el("button", `reptab${pane === id ? " on" : ""}`, label);
-            tab.type = "button";
-            tab.addEventListener("click", () => switchRepoPane(repo, id));
-            tabs.append(tab);
-        }
-        const headWrap = el("div", "cx-headwrap");
-        headWrap.append(head, tabs);
-        section.append(headWrap);
-
-        if (!collapsed.has(repo) && pane === "ref") {
-            // 该仓库的外部仓库列表就长在这个区块里（容器稳定，避免每秒重挂）
-            section.append(refPaneOf(repo).box);
-            tree.append(section);
-            continue;
-        }
+        section.append(head);
 
         if (!collapsed.has(repo)) {
             const table = el("table", "cx");
@@ -744,6 +723,29 @@ function renderWorktreeDetail(worktree: string): void {
     headBadge.textContent = running > 0 ? `● ${running} 个在跑` : "○ 全部未启动";
     headMeta.textContent = sample.worktreePath;
 
+    // 页签：详情 / 外部仓库 —— diy.yaml 跟着 **worktree** 走（同仓库不同 worktree 各一份），
+    // 所以外部仓库属于这个 worktree，而不是属于仓库或整页。
+    const pane = wtPanes.get(worktree) ?? "info";
+    const tabs = el("div", "wt-tabs");
+    for (const [id, label] of [
+        ["info", "详情"],
+        ["ref", "外部仓库"],
+    ] as const) {
+        const tab = el("button", `wt-tab${pane === id ? " on" : ""}`, label);
+        tab.type = "button";
+        tab.addEventListener("click", () => switchWtPane(worktree, id));
+        tabs.append(tab);
+    }
+    body.append(tabs);
+
+    if (pane === "ref") {
+        // 列表 + 同步面板都画在这一栏（ref 视图的 refs 与 body 是同一个容器）
+        const pane = refPaneOf(worktree);
+        body.append(pane.box);
+        pane.view.render();
+        return;
+    }
+
     const info = card("worktree", el("span", "hint", `${group.apps.size} 个 app`));
     const list = el("dl", "kv");
     list.append(...kv("路径", sample.worktreePath));
@@ -820,13 +822,8 @@ function render(): void {
     const treeTop = tree.scrollTop;
     const bodyTop = body.scrollTop;
     renderTree();
-    if (panel === "ref" && refRepo !== null) {
-        // 右侧归那个仓库的外部仓库视图：标题 / 角标由它自己写，这里不插手
-        refPanes.get(refRepo)?.view.render();
-        tree.scrollTop = treeTop;
-        body.scrollTop = bodyTop;
-        return;
-    }
+    // 面板归属由 renderDetail → renderWorktreeDetail 决定（那里也负责把 ref 容器挂回 body：
+    // 在这里直接画 ref 会让 body 只剩 ref 内容，连页签一起丢）
     renderDetail();
     tree.scrollTop = treeTop;
     body.scrollTop = bodyTop;
@@ -944,56 +941,59 @@ syncFilterToggle();
 // ── 外部仓库区（##518：属于**仓库**，从「ref」页并进来） ─────────
 
 /**
- * 每个仓库一个 ref 视图（各有自己的 diy.yaml 与同步状态，后端按 `repo` 参数隔离）。
- * 容器缓存下来：区块每秒重画时把同一个 DOM 塞回去，输入框里的 URL 不会被清掉。
+ * 每个 worktree 一个 ref 视图（各读自己那份 diy.yaml，同步状态也各自一份，后端按 `worktree` 隔离）。
+ * 列表与详情都画在**同一个容器**里（详情页的页签下方），这个容器由本文件持有并插进 body ——
+ * 不能直接用 body 当容器：视图每画一次都会 `replaceChildren`，会把页签行一起清掉。
  */
 const refPanes = new Map<string, { readonly view: RefView; readonly box: HTMLElement }>();
 
-function refPaneOf(repo: string): { readonly view: RefView; readonly box: HTMLElement } {
-    const cached = refPanes.get(repo);
+function refPaneOf(worktree: string): { readonly view: RefView; readonly box: HTMLElement } {
+    const cached = refPanes.get(worktree);
     if (cached !== undefined) return cached;
-    const box = el("div", "refpanel");
+    const box = el("div", "refpane");
     const view = createRefView({
         refs: box,
-        body,
+        body: box,
         headTitle,
         headBadge,
         headMeta,
-        repo,
+        worktree,
+        // 标题带上「是哪个 worktree 的」：多窗口并排时分得清
+        title: `${basename(worktree)} · 外部仓库`,
         invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("dev", method, args) as Promise<T>,
         toast,
         // 右侧只在「本来框就归这个仓库的 ref」时才画：否则会把 app 详情冲掉
-        isVisible: () => panel === "ref" && refRepo === repo,
+        isVisible: () => panel === "ref" && refWorktree === worktree,
         onSelect: () => {
             panel = "ref";
-            refRepo = repo;
+            refWorktree = worktree;
             lastPaint = "";
             render();
         },
     });
     view.mount();
     const pane = { view, box };
-    refPanes.set(repo, pane);
+    refPanes.set(worktree, pane);
     return pane;
 }
 
-/** 切某个仓库区块的页签：左侧区块换内容，右侧跟着换（外部仓库 → 该仓库的概览） */
-function switchRepoPane(repo: string, next: "app" | "ref"): void {
-    repoPanes.set(repo, next);
+/** 切 worktree 详情页的页签：详情（信息 + launch + 命令）/ 外部仓库（该 worktree 的 diy.yaml） */
+function switchWtPane(worktree: string, next: "info" | "ref"): void {
+    wtPanes.set(worktree, next);
     if (next === "ref") {
         panel = "ref";
-        refRepo = repo;
-    } else if (refRepo === repo) {
+        refWorktree = worktree;
+    } else if (refWorktree === worktree) {
         panel = "app";
-        refRepo = null;
+        refWorktree = null;
     }
     lastPaint = "";
     render();
-    if (next === "ref") void refPaneOf(repo).view.refresh();
+    if (next === "ref") void refPaneOf(worktree).view.refresh();
 }
 
 setInterval(() => {
     void refresh();
     // 外部仓库的同步进度只在它占着右侧时才有意义
-    if (panel === "ref" && refRepo !== null) refPanes.get(refRepo)?.view.poll();
+    if (panel === "ref" && refWorktree !== null) refPanes.get(refWorktree)?.view.poll();
 }, 1000);

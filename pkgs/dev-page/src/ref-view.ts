@@ -19,8 +19,10 @@ export interface RefHost {
     readonly headTitle: HTMLElement;
     readonly headBadge: HTMLElement;
     readonly headMeta: HTMLElement;
-    /** 本视图属于哪个仓库（它的 diy.yaml）；每个方法都带上，ref 域按仓库隔离 */
-    readonly repo: string;
+    /** 本视图属于哪个 worktree（它的 diy.yaml）；每个方法都带上，ref 域按 worktree 隔离 */
+    readonly worktree: string;
+    /** 标题栏文案（外壳给的，如 `main · 外部仓库`）；缺省「外部仓库」 */
+    readonly title?: string;
     invoke<T>(method: string, args?: unknown): Promise<T>;
     toast(text: string): void;
     /** 用户点了某个仓库：外壳该把右侧面板切到本视图 */
@@ -143,7 +145,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function refreshOverview(): Promise<void> {
         try {
-            const next = await host.invoke<RefOverview>(REF_METHODS.overview, { repo: host.repo });
+            const next = await host.invoke<RefOverview>(REF_METHODS.overview, { worktree: host.worktree });
             overview = next;
             if (selected === null && next.repos.length > 0) selected = next.repos[0].key;
             if (selected !== null && !next.repos.some((repo) => repo.key === selected)) selected = null;
@@ -157,7 +159,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function refreshState(): Promise<void> {
         try {
-            const next = await host.invoke<RefSyncState>(REF_METHODS.syncState, { repo: host.repo });
+            const next = await host.invoke<RefSyncState>(REF_METHODS.syncState, { worktree: host.worktree });
             const wasRunning = sync?.running === true;
             sync = next;
             renderRight();
@@ -198,7 +200,7 @@ export function createRefView(host: RefHost): RefView {
     function renderRight(): void {
         // 右侧不归本视图时不画：否则轮询会把正在看的 app 详情整块冲掉
         if (!host.isVisible()) return;
-        host.headTitle.textContent = "外部仓库";
+        host.headTitle.textContent = host.title ?? "外部仓库";
         const running = sync?.running === true;
         host.headBadge.className = `badge ${running ? "wait" : "stop"}`;
         host.headBadge.textContent = running ? "● 同步中" : "○ 空闲";
@@ -208,6 +210,8 @@ export function createRefView(host: RefHost): RefView {
                 : `${overview.repos.length} 个 source · ${overview.repos.filter((repo) => repo.exists).length} 个已同步 · ${overview.root}`;
 
         host.body.replaceChildren();
+        // 单容器模式（worktree 详情页）：列表与详情同处一栏，列表在上
+        if (host.refs === host.body) host.body.append(addRow, list);
 
         // 概况
         const info = card("概况", el("span", "hint", "diy.yaml 里的 source → 镜像到 $DIY_HOME/ref/"));
@@ -277,7 +281,7 @@ export function createRefView(host: RefHost): RefView {
         busy = true;
         addButton.disabled = true;
         try {
-            const result = await host.invoke<{ name: string; spec: string }>(REF_METHODS.add, { repo: host.repo, url });
+            const result = await host.invoke<{ name: string; spec: string }>(REF_METHODS.add, { worktree: host.worktree, url });
             addInput.value = "";
             host.toast(`已注册：${result.name}`);
             selected = result.name.includes("/") ? findKeyOf(result.name) : selected;
@@ -299,7 +303,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function removeRepo(repo: RefRepo): Promise<void> {
         try {
-            await host.invoke(REF_METHODS.remove, { repo: host.repo, name: repo.key });
+            await host.invoke(REF_METHODS.remove, { worktree: host.worktree, name: repo.key });
             host.toast(`已移除：${repo.key}`);
             if (selected === repo.key) selected = null;
             await refreshOverview();
@@ -311,7 +315,7 @@ export function createRefView(host: RefHost): RefView {
     async function startSync(): Promise<void> {
         if (busy) return;
         try {
-            sync = await host.invoke<RefSyncState>(REF_METHODS.sync, { repo: host.repo });
+            sync = await host.invoke<RefSyncState>(REF_METHODS.sync, { worktree: host.worktree });
             renderRight();
             void refreshState();
         } catch (error) {
