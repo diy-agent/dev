@@ -55,6 +55,8 @@ async function invoke<T>(method: string, args?: unknown): Promise<T> {
 let snapshot: DevSnapshot | null = null;
 let session: CommandSession | null = null;
 let selectedKey: string | null = null;
+/** worktree 详情：点分支名进入（右栏看该 worktree 的 app / launch / 命令）。与 selectedKey 二选一 */
+let selectedWorktree: string | null = null;
 /** 当前页签（应用 / 外部仓库）；两侧轮询与绘制按它分流 */
 let mode: "app" | "ref" = "app";
 let polling = false;
@@ -69,6 +71,33 @@ try {
 }
 
 // ── DOM 小工具 ───────────────────────────────────────────────
+
+/**
+ * 配色规则：**行（分支）决定色相，列（app）决定明度阶梯**。
+ *
+ * 理由（用户裁定）：矩阵里最需要「一眼分清谁是谁」的是**分支**——同一 app 在不同分支上
+ * 长得一模一样，靠列色区分反而把人绕晕。所以：
+ *   · 每个分支一个色相（行内所有格子共享，跨行不重复）
+ *   · 列只做明度递减（色阶），同一行内也能看出格子属于第几列，但不抢分支的辨识度
+ */
+const BRANCH_HUES = [210, 25, 145, 275, 45, 190, 330, 100, 250, 0, 165, 300];
+
+/**
+ * 第 i 列的明度（%）：越靠右越深，但**只做浅色域的微差**。
+ *
+ * 跨度必须收窄（总跨度 ≤ 18）：色阶一深，色相就看不出来了，分支的辨识度反而被列抢走。
+ * 实测 92→44（原来的算法）后半段变成深色块，和「主要分辨分支」的意图正好相反。
+ */
+function columnLightness(index: number, total: number): number {
+    if (total <= 1) return 94;
+    const span = Math.min(4.5, 18 / (total - 1));
+    return Math.round(94 - index * span);
+}
+
+/** 路径最后一段（renderer 是浏览器侧，不能用 node:path） */
+function basename(path: string): string {
+    return path.split(/[\\/]/).filter((seg) => seg !== "").pop() ?? path;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
     const node = document.createElement(tag);
@@ -187,68 +216,212 @@ function hoverActions(launch: LaunchStatus): HTMLElement {
     return acts;
 }
 
-function renderTree(): void {
-    tree.replaceChildren();
-    if (snapshot === null) return;
+interface WorktreeGroup {
+    readonly worktree: string;
+    readonly sample: LaunchStatus;
+    readonly apps: Map<string, LaunchStatus[]>;
+}
 
-    // 「只显示运行中」：连祖先一起过滤（没在跑的 launch 不列 ⇒ 它的 app / worktree 也不列）
-    const visible = snapshot.launches.filter((item) => !onlyRunning || item.running || item.starting);
-    if (visible.length === 0) {
-        tree.append(el("div", "empty", onlyRunning ? "没有在跑的 launch" : "（清单为空）"));
-        return;
-    }
-
-    // 严格四级：repo → worktree → app → launch，每层一行、只放名字
-    tree.append(
-        el(
-            "div",
-            "lvl lvl-repo",
-            snapshot.repoBranch === null
-                ? snapshot.repoName
-                : `${snapshot.repoName}（${snapshot.repoBranch}）`,
-        ),
-    );
-
+/** 按 worktree → app 分组，保持快照里的出现顺序 */
+function groupByWorktree(launches: readonly LaunchStatus[]): WorktreeGroup[] {
     const byWorktree = new Map<string, Map<string, LaunchStatus[]>>();
-    const wtOrder: string[] = [];
-    for (const launch of visible) {
+    const order: string[] = [];
+    for (const launch of launches) {
         let apps = byWorktree.get(launch.worktree);
         if (apps === undefined) {
             apps = new Map();
             byWorktree.set(launch.worktree, apps);
-            wtOrder.push(launch.worktree);
+            order.push(launch.worktree);
         }
         const list = apps.get(launch.app);
         if (list === undefined) apps.set(launch.app, [launch]);
         else list.push(launch);
     }
+    return order
+        .map((worktree) => {
+            const apps = byWorktree.get(worktree);
+            const sample = apps === undefined ? undefined : [...apps.values()][0]?.[0];
+            return sample === undefined || apps === undefined ? null : { worktree, sample, apps };
+        })
+        .filter((item): item is WorktreeGroup => item !== null);
+}
 
-    let wtIndex = 0;
-    for (const worktree of wtOrder) {
-        const apps = byWorktree.get(worktree);
-        if (apps === undefined) continue;
-        const sample = [...apps.values()][0]?.[0];
-        if (sample === undefined) continue;
-        // 首个 worktree = 主工作树（git worktree list 的第一行），树里用 `.` 表示仓库根本身
-        tree.append(el("div", "lvl lvl-wt", wtIndex === 0 ? "." : worktreeName(sample)));
-        wtIndex += 1;
+/** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
+/**
+ * 一个 launch 的 chip：**单击只选中**（看详情），启停交给悬停出现的按钮。
+ *
+ * 为什么不再「单击即启停」（##518）：chip 同时是选中入口，想读详情的人一按就把 app 起来/杀掉，
+ * 误操作代价太大；启停是破坏性动作，必须落在明确的按钮上。
+ */
+function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
+    const cls = [
+        "chip",
+        launch.running ? "on" : "",
+        launch.starting ? "wait" : "",
+        launch.built ? "" : "unbuilt",
+        launch.configIssues.length > 0 ? "warn" : "",
+        launch.key === selectedKey ? "sel" : "",
+    ]
+        .filter((s) => s !== "")
+        .join(" ");
+    const chip = el("button", cls);
+    chip.type = "button";
+    chip.dataset["key"] = launch.key;
+    chip.style.setProperty("--h", String(hue));
+    chip.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${
+        launch.starting ? "启动中…" : launch.running ? "运行中" : "未启动"
+    }${launch.configIssues.length > 0 ? `\n⚠ ${launch.configIssues.map((item) => item.message).join("\n⚠ ")}` : ""}\n点击看详情`;
+    chip.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
+    chip.append(el("span", "chip-nm", launch.launch));
+    chip.addEventListener("click", (event) => {
+        event.stopPropagation();
+        selectedKey = launch.key;
+        selectedWorktree = null;
+        render();
+    });
+    return chip;
+}
 
-        for (const [appName, launches] of apps) {
-            tree.append(el("div", "lvl lvl-app", `apps/${appName}`));
-            for (const launch of launches) {
-                const row = el("div", `entry${launch.key === selectedKey ? " sel" : ""}${launch.built ? "" : " dim"}`);
-                row.dataset["key"] = launch.key;
-                // 一行只放：绿点 + launch id；其余属性全在右侧面板
-                row.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
-                row.append(el("span", "nm", launch.launch));
-                row.append(hoverActions(launch));
-                row.addEventListener("click", () => {
-                    selectedKey = launch.key;
-                    render();
-                });
-                tree.append(row);
+/** 单元格 = chip + 悬停才出现的启停按钮（破坏性动作不藏在单击里） */
+function launchCell(launch: LaunchStatus, hue: number): HTMLElement {
+    const wrap = el("span", "cx-launch");
+    wrap.append(launchChip(launch, hue));
+    wrap.append(hoverActions(launch));
+    return wrap;
+}
+
+function renderTree(): void {
+    tree.replaceChildren();
+    if (snapshot === null) return;
+
+    if (snapshot.launches.length === 0) {
+        tree.append(el("div", "empty", "（清单为空）"));
+        return;
+    }
+    // 「只显示运行中」= 只隐藏**未运行的单元格**，行（worktree）与列（app）都保留：
+    // 否则想找出「哪个没跑」得先关过滤，且整个 worktree 会从眼前消失（##518）
+    renderTreeCross(groupByWorktree(snapshot.launches));
+}
+
+/**
+ * 交叉表视图：**行 = 分支（worktree），列 = app，cell = 该组合下的 launch**。
+ *
+ * 一张表一个仓库 —— 本机同时扫多个 git 仓（`_diy` 与主仓 `diy` 各是独立仓、各有 worktree），
+ * 混进同一张表时分不清某条分支属于谁，所以按 `launch.repo` 拆开，每个仓库一个可折叠区块。
+ */
+function renderTreeCross(groups: readonly WorktreeGroup[]): void {
+    // 按仓库分组，保持第一次出现的顺序
+    const byRepo = new Map<string, WorktreeGroup[]>();
+    for (const group of groups) {
+        const list = byRepo.get(group.sample.repo);
+        if (list === undefined) byRepo.set(group.sample.repo, [group]);
+        else list.push(group);
+    }
+
+    let repoIndex = 0;
+    for (const [repo, repoGroups] of byRepo) {
+        // 列 = 该仓库下 app 名并集（按首次出现排序，避免每次刷新列序跳动）
+        const columns: string[] = [];
+        const seen = new Set<string>();
+        for (const group of repoGroups) {
+            for (const appName of group.apps.keys()) {
+                if (!seen.has(appName)) {
+                    seen.add(appName);
+                    columns.push(appName);
+                }
             }
         }
+        // 列只决定明度阶梯（见 columnLightness）；色相跟行走
+        const lightOf = (colIndex: number): number => columnLightness(colIndex, columns.length);
+        void repoIndex;
+
+        const section = el("section", "cx-sec");
+        // 标题即折叠开关：仓库名 + 分支数 / app 数
+        const head = el("button", "cx-head");
+        head.type = "button";
+        head.title = repo;
+        head.append(el("span", "cx-arrow", collapsed.has(repo) ? "▸" : "▾"));
+        head.append(el("span", "cx-repo-nm", basename(repo)));
+        head.append(el("span", "cx-meta", `${repoGroups.length} 分支 · ${columns.length} app`));
+        head.addEventListener("click", () => {
+            if (collapsed.has(repo)) collapsed.delete(repo);
+            else collapsed.add(repo);
+            saveCollapsed();
+            renderTree();
+        });
+        section.append(head);
+
+        if (!collapsed.has(repo)) {
+            const table = el("table", "cx");
+            const thead = table.createTHead();
+            const headRow = thead.insertRow();
+            headRow.append(el("th", "cx-br", "分支"));
+            columns.forEach((col, i) => {
+                const th = el("th", "cx-col", col);
+                th.title = `apps/${col}`;
+                th.style.setProperty("--l", String(lightOf(i)));
+                headRow.append(th);
+            });
+
+            const body = table.createTBody();
+            for (const [rowIndex, group] of repoGroups.entries()) {
+                const row = body.insertRow();
+                // 每个分支一个色相：同表内按行序轮转色板，保证相邻行不同色
+                const rowHue = BRANCH_HUES[rowIndex % BRANCH_HUES.length] ?? 210;
+                const branchCell = el("th", "cx-br");
+                branchCell.style.setProperty("--h", String(rowHue));
+                if (group.worktree === selectedWorktree) branchCell.classList.add("sel");
+                // 分支名可点：进该 worktree 的详情页（不点 launch 也能 build / sync / 看详情）
+                const branchBtn = el("button", "cx-br-btn", group.sample.branch ?? basename(group.sample.worktree));
+                branchBtn.type = "button";
+                branchBtn.title = `${group.sample.worktreePath}\n点击查看该 worktree 详情`;
+                branchBtn.addEventListener("click", () => {
+                    selectedWorktree = group.worktree;
+                    selectedKey = null;
+                    render();
+                });
+                branchCell.append(branchBtn);
+                row.append(branchCell);
+                columns.forEach((col, i) => {
+                    const cell = row.insertCell();
+                    cell.className = "cx-cell";
+                    cell.style.setProperty("--h", String(rowHue));
+                    cell.style.setProperty("--l", String(lightOf(i)));
+                    const launches = group.apps.get(col);
+                    if (launches === undefined) {
+                        cell.classList.add("na");
+                        return;
+                    }
+                    const shown = launches.filter((item) => !onlyRunning || item.running || item.starting);
+                    if (shown.length === 0) {
+                        // 过滤态下的空格子：不显示 chip，但仍可从分支详情页启动
+                        cell.classList.add("na");
+                        return;
+                    }
+                    for (const launch of shown) cell.append(launchCell(launch, rowHue));
+                });
+            }
+            section.append(table);
+        }
+        tree.append(section);
+    }
+}
+
+/** 折叠状态：按仓库根路径记（localStorage；隐私模式下降级为本次会话） */
+const collapsed = new Set<string>();
+const COLLAPSE_KEY = "dev.collapsedRepos";
+try {
+    const raw = window.localStorage.getItem(COLLAPSE_KEY);
+    if (raw !== null) for (const repo of JSON.parse(raw) as string[]) collapsed.add(repo);
+} catch {
+    /* 忽略：折叠状态丢了不影响功能 */
+}
+
+function saveCollapsed(): void {
+    try {
+        window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed]));
+    } catch {
+        /* 隐私模式：本次会话内生效即可 */
     }
 }
 
@@ -280,6 +453,22 @@ function card(title: string, extra?: Node): HTMLElement {
         head.append(right);
     }
     box.append(head);
+    return box;
+}
+
+/** 配置错误卡：错在哪 + 怎么改 + 打开 app.yaml（配置错不该默默按缺省跑） */
+function renderConfigCard(launch: LaunchStatus): HTMLElement | null {
+    if (launch.configIssues.length === 0) return null;
+    const box = card("⚠ 配置问题（app.yaml 需要修）", el("span", "hint", `${String(launch.configIssues.length)} 条`));
+    for (const issue of launch.configIssues) {
+        const item = el("div", "cfgissue");
+        item.append(el("div", "cfgmsg", issue.message));
+        item.append(el("div", "cfgfix", `修法：${issue.fix}`));
+        box.append(item);
+    }
+    const acts = el("div", "cmdgrid");
+    acts.append(button("打开 app.yaml", "", () => openDir(launch, "yaml", "editor")));
+    box.append(acts);
     return box;
 }
 
@@ -449,12 +638,112 @@ function renderLogCard(): HTMLElement {
     return box;
 }
 
+/** worktree 详情的一个 app 节：launch 列表（启/停/聚焦）+ app 级命令 */
+function renderAppSection(group: WorktreeGroup, appName: string, launches: readonly LaunchStatus[]): HTMLElement {
+    const sample = launches[0];
+    const running = launches.filter((item) => item.running).length;
+    const issues = launches.reduce((n, item) => n + item.configIssues.length, 0);
+    const box = card(
+        `apps/${appName}${sample?.appTitle !== undefined ? ` · ${sample.appTitle}` : ""}`,
+        el("span", issues > 0 ? "hint bad" : "hint", issues > 0 ? `⚠ ${String(issues)} 条配置问题` : launches.length === 1 ? (running > 0 ? "运行中" : "未启动") : `${running}/${launches.length} 在跑`),
+    );
+
+    // launch 行：状态点 + launch id + 命令 + 启停/聚焦
+    const rows = el("div", "wt-launches");
+    for (const launch of launches) {
+        const row = el("div", "wt-launch");
+        row.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
+        const name = el("button", "wt-launch-nm", launch.launch);
+        name.type = "button";
+        name.title = `${launch.command}\n点击看这条 launch 的详情`;
+        name.addEventListener("click", () => {
+            selectedWorktree = null;
+            selectedKey = launch.key;
+            render();
+        });
+        row.append(name);
+        row.append(el("span", "wt-launch-cmd", launch.command));
+        row.append(el("span", "wt-launch-uri", launch.uri ?? "—"));
+        if (launch.configIssues.length > 0) {
+            const warn = el("button", "wt-warn", `⚠ ${String(launch.configIssues.length)}`);
+            warn.type = "button";
+            warn.title = launch.configIssues.map((issue) => issue.message).join("\n");
+            warn.addEventListener("click", () => {
+                selectedWorktree = null;
+                selectedKey = launch.key;
+                render();
+            });
+            row.append(warn);
+        }
+        const acts = el("span", "acts");
+        if (launch.running) {
+            acts.append(
+                button("聚焦", "small", () => void focusLaunch(launch)),
+                button("停止", "small stop", () => void stopLaunch(launch)),
+            );
+        } else if (launch.starting) {
+            acts.append(el("span", "hint", "启动中…"));
+        } else {
+            acts.append(button("启动", "small", () => void startLaunch(launch)));
+        }
+        row.append(acts);
+        rows.append(row);
+    }
+    box.append(rows);
+
+    // 命令：app 级（不依赖某条 launch），输出进下面的日志卡
+    const grid = el("div", "cmdgrid");
+    for (const command of BUILD_COMMANDS) {
+        grid.append(button(command, "", () => void runAppCommand(group.worktree, appName, command)));
+    }
+    box.append(grid);
+    return box;
+}
+
+/** worktree 详情页：路径 / 分支 / 仓库 + 该 worktree 下每个 app 的 launch 与命令 */
+function renderWorktreeDetail(worktree: string): void {
+    const group = groupByWorktree(snapshot?.launches ?? []).find((item) => item.worktree === worktree);
+    if (group === undefined) {
+        body.append(el("div", "empty", "这个 worktree 已经不在清单里了（刷新后重选）"));
+        return;
+    }
+    const sample = group.sample;
+    const running = [...group.apps.values()].flat().filter((item) => item.running).length;
+    headTitle.textContent = worktreeName(sample);
+    headBadge.className = `badge ${running > 0 ? "run" : "stop"}`;
+    headBadge.textContent = running > 0 ? `● ${running} 个在跑` : "○ 全部未启动";
+    headMeta.textContent = sample.worktreePath;
+
+    const info = card("worktree", el("span", "hint", `${group.apps.size} 个 app`));
+    const list = el("dl", "kv");
+    list.append(...kv("路径", sample.worktreePath));
+    list.append(...kv("分支", sample.branch ?? "（detached HEAD）"));
+    list.append(...kv("仓库", sample.repo));
+    list.append(...kv("构建状态", sample.built ? "已构建（有 build/ 产物）" : "未构建"));
+    const open = el("span", "open");
+    for (const [label, mode] of [
+        ["open", "finder"],
+        ["VS Code", "editor"],
+        ["终端", "terminal"],
+    ] as const) open.append(button(label, "", () => openDir(sample, "worktree", mode)));
+    list.append(...kv("打开", open));
+    info.append(list);
+    body.append(info);
+
+    for (const [appName, launches] of group.apps) body.append(renderAppSection(group, appName, launches));
+    body.append(renderLogCard());
+}
+
 function renderDetail(): void {
     body.replaceChildren();
     if (snapshot === null) return;
+    if (selectedWorktree !== null) {
+        renderWorktreeDetail(selectedWorktree);
+        return;
+    }
     const launch = snapshot.launches.find((item) => item.key === selectedKey) ?? null;
     if (launch === null) {
-        body.append(el("div", "empty", "左侧选一个启动项"));
+        body.append(el("div", "empty", "左侧选一个启动项（点分支名可看整个 worktree）"));
         return;
     }
     headTitle.textContent = `${launch.app} · ${launch.launchTitle}`;
@@ -464,6 +753,8 @@ function renderDetail(): void {
         launch.running && launch.runtime !== null
             ? `PID ${launch.runtime.pid}${launch.runtime.port === null ? "" : ` · :${launch.runtime.port}`}`
             : launch.command;
+    const config = renderConfigCard(launch);
+    if (config !== null) body.append(config);
     const entries = renderEntriesCard(launch);
     if (entries !== null) body.append(entries);
     body.append(
@@ -475,18 +766,35 @@ function renderDetail(): void {
     );
 }
 
+/** 上一次画出来的样子：内容没变就不重绘（1s 轮询不该把滚动 / hover / 焦点冲掉） */
+let lastPaint = "";
+
 function render(): void {
     // 「外部仓库」页不归本函数画；轮询的旧结果晚到也不该盖掉它
     if (mode !== "app") return;
+    const issueCount = snapshot?.launches.reduce((n, item) => n + item.configIssues.length, 0) ?? 0;
+    // 指纹里要把**每次都变**的运行时数字抹平：uptime 精确到 5s、内存到 8MB。
+    // 否则 1s 轮询永远“内容变了”，重绘照旧，滚动位置白保（##518 自检时踩到）。
+    const paint = JSON.stringify([mode, snapshot, selectedKey, selectedWorktree, onlyRunning, session?.lines.length ?? -1], (key, value) => {
+        if (key === "uptimeMs" && typeof value === "number") return Math.round(value / 5000);
+        if (key === "memBytes" && typeof value === "number") return Math.round(value / 8_000_000);
+        return value;
+    });
+    if (paint === lastPaint) return;
+    lastPaint = paint;
     if (snapshot !== null) {
         runningLabel.textContent = `${snapshot.runningCount} 个在跑`;
-        repoLabel.textContent = `${snapshot.worktreeCount} worktree · ${snapshot.appCount} app`;
-        if (snapshot.problems.length > 0) {
-            repoLabel.title = snapshot.problems.join("\n");
-        }
+        repoLabel.textContent = `${snapshot.worktreeCount} worktree · ${snapshot.appCount} app${issueCount > 0 ? ` · ⚠ ${String(issueCount)} 配置问题` : ""}`;
+        const problems = [...snapshot.problems, ...snapshot.launches.flatMap((item) => item.configIssues.map((issue) => `${item.app}.${item.launch}：${issue.message}`))];
+        repoLabel.title = problems.length > 0 ? problems.join("\n") : "";
+        repoLabel.classList.toggle("bad", issueCount > 0);
     }
+    const treeTop = tree.scrollTop;
+    const bodyTop = body.scrollTop;
     renderTree();
     renderDetail();
+    tree.scrollTop = treeTop;
+    body.scrollTop = bodyTop;
 }
 
 // ── 动作 ─────────────────────────────────────────────────────
@@ -535,6 +843,16 @@ async function runCommand(launch: LaunchStatus, command: BuildCommand): Promise<
     }
 }
 
+/** worktree 详情里的命令：app 级（不带 launch）；输出进同一张日志卡 */
+async function runAppCommand(worktree: string, app: string, command: BuildCommand): Promise<void> {
+    try {
+        session = await invoke<CommandSession>(DEV_METHODS.run, { worktree, app, command });
+        render();
+    } catch (error) {
+        toast(`命令启动失败：${String(error)}`);
+    }
+}
+
 // ── 轮询 ─────────────────────────────────────────────────────
 
 async function refresh(): Promise<void> {
@@ -547,7 +865,13 @@ async function refresh(): Promise<void> {
         ]);
         snapshot = next;
         session = nextSession;
-        if (selectedKey === null && next.launches.length > 0) selectedKey = next.launches[0].key;
+        // 选中态三态：worktree 详情（优先级高） / 单条 launch / 未选
+        if (selectedWorktree !== null && !next.launches.some((item) => item.worktree === selectedWorktree)) {
+            selectedWorktree = null;
+        }
+        if (selectedWorktree === null && selectedKey === null && next.launches.length > 0) {
+            selectedKey = next.launches[0].key;
+        }
         if (selectedKey !== null && !next.launches.some((item) => item.key === selectedKey)) selectedKey = null;
         render();
     } catch (error) {
@@ -619,6 +943,8 @@ function applyMode(next: "app" | "ref"): void {
     if (next === "app") {
         void refresh();
     } else {
+        // 外部仓库页会把 body 整个换掉：作废“上一次画的样子”，切回应用页时才会重画
+        lastPaint = "";
         headTitle.textContent = "外部仓库";
         headBadge.className = "badge stop";
         headBadge.textContent = "—";

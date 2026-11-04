@@ -47,6 +47,14 @@ export interface WorktreeInfo {
     readonly branch: string | null;
 }
 
+/** app.yaml 的配置错误（不阻止用，但必须让人看见：错了还默默按缺省跑 = 排查时最坑） */
+export interface LaunchConfigIssue {
+    readonly code: "home-missing" | "home-duplicate";
+    readonly message: string;
+    /** 给用户看的修法（一句话，含要写什么） */
+    readonly fix: string;
+}
+
 /** 一个入口此刻的样子 */
 export interface EntryStatus extends EntrySpec {
     /** 可点的地址（web 且运行时已知实际端口 ⇒ 用实际端口） */
@@ -74,6 +82,14 @@ export interface LaunchRuntime {
 export interface LaunchStatus {
     /** `(worktree, app, launch)` 的稳定 key（UI 选中 / 定位用） */
     readonly key: string;
+    /**
+     * 该 worktree 属于哪个 git 仓库（仓库根绝对路径）。
+     *
+     * 为什么必需：本机同时扫多个仓库（`_diy` 与主仓 `diy` 是两个独立 git 仓，
+     * 各自有 worktree），`git worktree list` 只看自己那个 —— 合并后必须保留归属，
+     * 否则 UI 里两个仓库的分支会混进同一张表，无法辨认。
+     */
+    readonly repo: string;
     readonly worktree: string;
     /** worktree 的展示形式（路径 + 分支，右侧面板用） */
     readonly worktreeLabel: string;
@@ -93,6 +109,10 @@ export interface LaunchStatus {
     readonly yamlPath: string;
     /** 数据根（绝对路径；app.yaml 的 home 相对 worktree 解析） */
     readonly home: string;
+    /** app.yaml 里是否显式声明了 `home`（没声明 = 配置错误，见 configIssues） */
+    readonly homeDeclared: boolean;
+    /** 该 launch 的配置问题（空数组 = 正常） */
+    readonly configIssues: readonly LaunchConfigIssue[];
     /** 数据根的 instance-id；从未启动过 = null */
     readonly nodeId: string | null;
     /** `diy://<nodeId>/<app>.<launch>`；nodeId 缺席 = null */

@@ -51,10 +51,14 @@ launches:
 ## 运行时怎么自报
 
 - workbench 装配的 app（chat / minimal / dev）：`createWorkbench({ app, launch })` 启动时自报；
-  `app` = 短名（`diy-chat`），`launch` 优先取 `DIY_LAUNCH`。
+  `app` = 短名（`diy-chat`），`launch` 优先取 `DIY_LAUNCH`，**没有就缺省 `lab`**（手工 `./sha.sh lab` 也算对得上）。
 - apps/web：自己写注册表（它不是 workbench 装配），`launch` 取 `DIY_LAUNCH`，手工跑回推 `web-<实际端口>`。
 - apps/remote-shell：自己写，`launch` 取 `DIY_LAUNCH`。
+- apps/diy-app：自己写，`launch` 取 `DIY_LAUNCH`（手工跑按变体回推 `lab` / `prod`），`worktree` 从 cwd 往上找 `.git`。
 - `worktree` 由外壳/宿主从 cwd 往上找 `.git` 得到（不调 git）。
+- **老记录兜底**（`launch` / `worktree` 缺字段）：读侧按 cwd 归 worktree，再按 argv 里的 `build/<variant>/`
+  或「该 app 只有一条 launch」判归属 —— 缺一个字段不会让活着的实例显示成「未启动」。
+  判据：`~/.diy-instances/<pid>.json` 里缺字段也能在页面亮绿；真要一条不缺，让 app 自己自报。
 
 ## 启动为什么「不抢焦点」
 

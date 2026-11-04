@@ -17,11 +17,14 @@ import type { InstanceRecordLite } from "./instances.js";
 const STRIPPED_ENV = ["DIY_HOME", "DIY_ENV", "DIY_VARIANT", "DIY_LAUNCH", "DIY_CLI"] as const;
 
 /** 子进程环境：剔除继承的数据根类变量，再叠这条 launch 的（`DIY_INSTANCE_REGISTRY` 保留 = 测试隔离） */
-export function launchEnv(launch: LaunchSpec, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function launchEnv(launch: LaunchSpec, base: NodeJS.ProcessEnv = process.env, home?: string): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...base };
     for (const key of STRIPPED_ENV) delete env[key];
     env["DIY_ENV"] = "development";
     env["DIY_NO_FOCUS"] = "1";
+    // app.yaml 的 `home` 是**声明**，不是注释：声明的数据根必须真的生效，
+    // 否则同一个 app 的多条 launch 会各自按缺省根跑，UI 显示与实际分叉（单实例锁也拦不住）
+    if (home !== undefined && home !== "") env["DIY_HOME"] = home;
     // 注册表靠它把运行时对回 app.yaml 的那一条（匹配键之一）
     env["DIY_LAUNCH"] = launch.id;
     return { ...env, ...launch.env };
@@ -96,6 +99,8 @@ export interface StartInput {
     /** 命令在哪执行（app 目录） */
     readonly appDir: string;
     readonly launch: LaunchSpec;
+    /** 声明数据根的绝对路径（app.yaml 的 home 相对 worktree 解析）；给出则强制注入 DIY_HOME */
+    readonly home?: string;
 }
 
 export class DevRunner {
@@ -134,7 +139,7 @@ export class DevRunner {
         // 一条启动命令 = 一段 shell（app.yaml 里写的就是人怎么手工跑它）
         const child = this.spawnFn(input.launch.command, {
             cwd: input.appDir,
-            env: launchEnv(input.launch),
+            env: launchEnv(input.launch, process.env, input.home),
             shell: true,
             detached: true,
             stdio: ["ignore", "pipe", "pipe"],

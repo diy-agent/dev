@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
     buildSnapshot,
     displayPath,
+    launchHint,
+    matchLegacy,
     matchRecord,
     parseRecord,
     sameApp,
     samePath,
     withPort,
+    worktreeOf,
     type InstanceRecordLite,
 } from "../src/instances.js";
 import type { AppSpec, WorktreeInfo } from "../src/shared.js";
@@ -97,6 +100,81 @@ describe("匹配键 (worktree, app, launch)", () => {
         expect(matchRecord(record({ app: "diy-minimal" }), ref)).toBe(false);
         expect(matchRecord(record({ worktree: "/repo/" }), ref)).toBe(true);
         expect(matchRecord(record({ worktree: "/wt/other" }), ref)).toBe(false);
+    });
+});
+
+describe("老记录兜底（手工 ./sha.sh lab：launch = null）", () => {
+    const ref = { worktree: "/repo", app: "chat", launch: "lab" };
+
+    it("worktree 缺字段时按 cwd 归到已知 worktree（嵌套取最长）", () => {
+        const rec = record({ worktree: null, cwd: "/repo/apps/chat" });
+        expect(worktreeOf(rec, ["/repo", "/wt/t502"])).toBe("/repo");
+        expect(worktreeOf(rec, ["/repo", "/repo/apps"])).toBe("/repo/apps");
+        expect(worktreeOf(rec, ["/wt/t502"])).toBeNull();
+        // 已写明的字段不重算
+        expect(worktreeOf(record({ worktree: "/wt/t502" }), ["/repo"])).toBe("/wt/t502");
+    });
+
+    it("launchHint 从 argv / cwd 看得出 build/<variant>", () => {
+        expect(launchHint(record())).toBe("lab");
+        expect(launchHint(record({ argv: ["/electron", "/repo/build/prod/main/index.mjs"] }))).toBe("prod");
+        expect(launchHint(record({ argv: ["node", "main.mjs"], cwd: "/repo/apps/web" }))).toBeNull();
+    });
+
+    it("有 build/<x> 痕迹 ⇒ 只认同名 launch；多条 launch 又没痕迹 ⇒ 不猜", () => {
+        const legacy = record({ launch: null });
+        expect(matchLegacy(legacy, ref, { uniqueLaunch: true })).toBe(true);
+        expect(matchLegacy(legacy, ref, { uniqueLaunch: false })).toBe(true); // 痕迹 lab 命中
+        expect(matchLegacy(record({ launch: null, argv: ["/electron", "build/prod/main/index.mjs"] }), ref, { uniqueLaunch: true })).toBe(
+            false,
+        );
+        const noHint = record({ launch: null, argv: ["node", "main.mjs"] });
+        expect(matchLegacy(noHint, ref, { uniqueLaunch: false })).toBe(false);
+        expect(matchLegacy(noHint, ref, { uniqueLaunch: true })).toBe(true);
+        // 精确记录不走兜底；别的 app 不沾
+        expect(matchLegacy(record(), ref, { uniqueLaunch: true })).toBe(false);
+        expect(matchLegacy(record({ launch: null, app: "diy-minimal" }), ref, { uniqueLaunch: true })).toBe(false);
+    });
+});
+
+describe("home 声明的错误检测", () => {
+    const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+    const app = (home: string | undefined): AppSpec => ({
+        name: "diy-app",
+        title: "diy 管控台",
+        dir: "/repo/apps/diy-app",
+        launches: [
+            { id: "lab", command: "./sha.sh lab", ...(home === undefined ? {} : { home }), entries: [] },
+            { id: "prod", command: "./sha.sh start", ...(home === undefined ? {} : { home }), entries: [] },
+        ],
+    });
+    const snap = (spec: AppSpec) =>
+        buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [spec],
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+
+    it("都声明且不同根 ⇒ 无问题", () => {
+        const s = snap(app("build/lab/home"));
+        // 两条同值 ⇒ duplicate（这就是 diy-app 曾经的坑）
+        expect(s.launches[0]?.configIssues.map((i) => i.code)).toEqual(["home-duplicate"]);
+        expect(s.launches[0]?.homeDeclared).toBe(true);
+    });
+
+    it("声明了不同根 ⇒ 干净（homeDeclared=true，configIssues 空）", () => {
+        const s = snap({
+            ...app("build/lab/home"),
+            launches: [
+                { id: "lab", command: "./sha.sh lab", home: "build/lab/home", entries: [] },
+                { id: "prod", command: "./sha.sh start", home: "build/prod/home", entries: [] },
+            ],
+        });
+        expect(s.launches.map((item) => item.configIssues)).toEqual([[], []]);
+        expect(s.launches[1]?.home).toBe("/repo/build/prod/home");
     });
 });
 
@@ -204,6 +282,40 @@ describe("displayPath / buildSnapshot", () => {
         expect(web.entries[0]?.configuredUrl).toBe("http://localhost:8123");
         expect(web.entries[0]?.portMismatch).toBe(true);
         // chat 的那条记录在静态清单里没有对应 launch ⇒ 不算 running（清单来自 app.yaml）
+        expect(snapshot.runningCount).toBe(1);
+    });
+
+    it("app.yaml 没写 home ⇒ home-missing；多条 launch 共用一个根 ⇒ home-duplicate", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: "main" }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp(), webApp()],
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const chat = snapshot.launches.find((item) => item.app === "chat")!;
+        expect(chat.homeDeclared).toBe(false);
+        expect(chat.configIssues.map((issue) => issue.code)).toEqual(["home-missing"]);
+        expect(chat.home).toBe("/repo/build/lab/home");
+    });
+
+    it("手工跑的老记录（launch / worktree 都是 null）也能对上 ⇒ running", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: "main" }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp(), webApp()],
+            records: [record({ pid: 5555, app: "diy-chat", launch: null, worktree: null, cwd: "/repo/apps/chat" })],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const chat = snapshot.launches.find((item) => item.app === "chat")!;
+        expect(chat.running).toBe(true);
+        expect(chat.runtime?.pid).toBe(5555);
+        // web 那条 launch 不该被老记录蹭上（app 不同）
+        expect(snapshot.launches.find((item) => item.app === "web")?.running).toBe(false);
         expect(snapshot.runningCount).toBe(1);
     });
 
