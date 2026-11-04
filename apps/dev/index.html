@@ -44,6 +44,25 @@
                 flex-direction: column;
                 flex-shrink: 0;
             }
+            /* 外部仓库每行的移除按钮：悬停才亮，避免误点 */
+            .entry .refdel {
+                margin-left: auto;
+                appearance: none;
+                border: 0;
+                background: transparent;
+                color: #9aa1a9;
+                cursor: pointer;
+                font-size: 13px;
+                line-height: 1;
+                padding: 0 2px;
+                opacity: 0;
+            }
+            .entry:hover .refdel {
+                opacity: 1;
+            }
+            .entry .refdel:hover {
+                color: #c0392b;
+            }
             /* worktree 详情页的页签：详情 / 外部仓库（diy.yaml 跟着 worktree 走） */
             .wt-tabs {
                 display: flex;
