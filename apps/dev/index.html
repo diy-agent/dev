@@ -44,6 +44,18 @@
                 flex-direction: column;
                 flex-shrink: 0;
             }
+            /* 外部仓库区：压在左栏底部，自己滚动，不抢矩阵的高度 */
+            #refs {
+                flex: none;
+                max-height: 38vh;
+                overflow-y: auto;
+                border-top: 1px solid var(--line);
+                padding: 6px 10px 10px;
+                background: #fbfcfe;
+            }
+            #refs:empty {
+                display: none;
+            }
             #side .top {
                 padding: 11px 14px;
                 border-bottom: 1px solid var(--line);
@@ -802,11 +814,9 @@
     <body>
         <div id="side">
             <div class="top">dev 启动器 <small id="running"></small></div>
-            <div class="tabs">
-                <button id="tab-app" type="button" class="tab on">应用</button>
-                <button id="tab-ref" type="button" class="tab">外部仓库</button>
-            </div>
             <div id="tree"></div>
+            <!-- 外部仓库区（##518 从独立的「ref」页并进来）：常驻在左栏底部，和矩阵同一个页面 -->
+            <div id="refs"></div>
         </div>
         <div id="main">
             <div id="head">

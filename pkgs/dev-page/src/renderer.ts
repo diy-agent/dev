@@ -38,6 +38,8 @@ function requireEl(id: string): HTMLElement {
 const bridge = window.workbench;
 if (!bridge) throw new Error("preload 桥没注入 window.workbench");
 const tree = requireEl("tree");
+/** 左栏底部的外部仓库区（常驻，不再是一页） */
+const refsBox = requireEl("refs");
 const body = requireEl("body");
 const runningLabel = requireEl("running");
 const repoLabel = requireEl("repo");
@@ -57,8 +59,8 @@ let session: CommandSession | null = null;
 let selectedKey: string | null = null;
 /** worktree 详情：点分支名进入（右栏看该 worktree 的 app / launch / 命令）。与 selectedKey 二选一 */
 let selectedWorktree: string | null = null;
-/** 当前页签（应用 / 外部仓库）；两侧轮询与绘制按它分流 */
-let mode: "app" | "ref" = "app";
+/** 右侧面板此刻归谁：app（矩阵选中项 / worktree 详情）还是 ref（外部仓库）。左栏两个区都在，只是右侧切换 */
+let panel: "app" | "ref" = "app";
 let polling = false;
 /** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
 let onlyRunning = false;
@@ -277,6 +279,7 @@ function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
         event.stopPropagation();
         selectedKey = launch.key;
         selectedWorktree = null;
+        panel = "app";
         render();
     });
     return chip;
@@ -378,6 +381,7 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
                 branchBtn.addEventListener("click", () => {
                     selectedWorktree = group.worktree;
                     selectedKey = null;
+                    panel = "app";
                     render();
                 });
                 branchCell.append(branchBtn);
@@ -659,6 +663,7 @@ function renderAppSection(group: WorktreeGroup, appName: string, launches: reado
         name.addEventListener("click", () => {
             selectedWorktree = null;
             selectedKey = launch.key;
+            panel = "app";
             render();
         });
         row.append(name);
@@ -671,6 +676,7 @@ function renderAppSection(group: WorktreeGroup, appName: string, launches: reado
             warn.addEventListener("click", () => {
                 selectedWorktree = null;
                 selectedKey = launch.key;
+                panel = "app";
                 render();
             });
             row.append(warn);
@@ -770,12 +776,10 @@ function renderDetail(): void {
 let lastPaint = "";
 
 function render(): void {
-    // 「外部仓库」页不归本函数画；轮询的旧结果晚到也不该盖掉它
-    if (mode !== "app") return;
     const issueCount = snapshot?.launches.reduce((n, item) => n + item.configIssues.length, 0) ?? 0;
     // 指纹里要把**每次都变**的运行时数字抹平：uptime 精确到 5s、内存到 8MB。
     // 否则 1s 轮询永远“内容变了”，重绘照旧，滚动位置白保（##518 自检时踩到）。
-    const paint = JSON.stringify([mode, snapshot, selectedKey, selectedWorktree, onlyRunning, session?.lines.length ?? -1], (key, value) => {
+    const paint = JSON.stringify([panel, snapshot, selectedKey, selectedWorktree, onlyRunning, session?.lines.length ?? -1], (key, value) => {
         if (key === "uptimeMs" && typeof value === "number") return Math.round(value / 5000);
         if (key === "memBytes" && typeof value === "number") return Math.round(value / 8_000_000);
         return value;
@@ -792,6 +796,13 @@ function render(): void {
     const treeTop = tree.scrollTop;
     const bodyTop = body.scrollTop;
     renderTree();
+    if (panel === "ref") {
+        // 右侧归外部仓库视图：标题 / 角标由它自己写，这里不插手
+        refView.render();
+        tree.scrollTop = treeTop;
+        body.scrollTop = bodyTop;
+        return;
+    }
     renderDetail();
     tree.scrollTop = treeTop;
     body.scrollTop = bodyTop;
@@ -906,59 +917,33 @@ filterToggle.addEventListener("click", () => {
 });
 syncFilterToggle();
 
-// ── 页签：应用 / 外部仓库（##510） ─────────────────────────────
+// ── 外部仓库区（##518：从独立的「ref」页并进本页） ─────────────
 
-const tabApp = requireEl("tab-app");
-const tabRef = requireEl("tab-ref");
-const MODE_KEY = "dev.mode";
-
-try {
-    mode = window.localStorage.getItem(MODE_KEY) === "ref" ? "ref" : "app";
-} catch {
-    mode = "app";
-}
-
-/** 外部仓库页的宿主：它只拿容器与桥，不反向依赖本文件的绘制逻辑 */
+/**
+ * 宿主：只给容器与桥，不反向依赖本文件的绘制逻辑。
+ * `isVisible` 让它在「右侧归 app」时别碰 body —— 否则它的轮询会把正在看的详情冲掉。
+ */
 const refView: RefView = createRefView({
-    tree,
+    refs: refsBox,
     body,
     headTitle,
     headBadge,
     headMeta,
-    invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("ref", method, args) as Promise<T>,
+    invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("dev", method, args) as Promise<T>,
     toast,
+    isVisible: () => panel === "ref",
+    onSelect: () => {
+        panel = "ref";
+        lastPaint = "";
+        render();
+    },
 });
 
-function applyMode(next: "app" | "ref"): void {
-    mode = next;
-    try {
-        window.localStorage.setItem(MODE_KEY, next);
-    } catch {
-        /* 隐私模式：本次会话内生效即可 */
-    }
-    tabApp.classList.toggle("on", next === "app");
-    tabRef.classList.toggle("on", next === "ref");
-    // 「只显示运行中」是应用页的过滤，外部仓库页没有它
-    filterToggle.style.display = next === "app" ? "" : "none";
-    if (next === "app") {
-        void refresh();
-    } else {
-        // 外部仓库页会把 body 整个换掉：作废“上一次画的样子”，切回应用页时才会重画
-        lastPaint = "";
-        headTitle.textContent = "外部仓库";
-        headBadge.className = "badge stop";
-        headBadge.textContent = "—";
-        headMeta.textContent = "";
-        refView.mount();
-        void refView.refresh();
-    }
-}
+refView.mount();
+void refView.refresh();
 
-tabApp.addEventListener("click", () => applyMode("app"));
-tabRef.addEventListener("click", () => applyMode("ref"));
-
-applyMode(mode);
 setInterval(() => {
-    if (mode === "ref") refView.poll();
-    else void refresh();
+    void refresh();
+    // 外部仓库的进度只在它占着右侧时才有意义（同步中的拍子要密一点）
+    if (panel === "ref") refView.poll();
 }, 1000);

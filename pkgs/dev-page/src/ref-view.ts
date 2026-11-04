@@ -10,8 +10,10 @@ import { REF_METHODS, type RefOverview, type RefRepo, type RefSyncState } from "
 
 /** 页面宿主：renderer 把「属于外壳的」东西传进来（不反向 import renderer，避免环形依赖） */
 export interface RefHost {
-    /** 左侧列表容器（外壳切换页面时重建，本视图接管其内容） */
-    readonly tree: HTMLElement;
+    /** 左侧底部容器（外部仓库区，常驻；本视图接管其内容） */
+    readonly refs: HTMLElement;
+    /** 此刻右侧面板归不归本视图：不归时**不要碰 body**（否则会把 app 详情冲掉） */
+    isVisible(): boolean;
     /** 右侧内容容器 */
     readonly body: HTMLElement;
     readonly headTitle: HTMLElement;
@@ -19,11 +21,15 @@ export interface RefHost {
     readonly headMeta: HTMLElement;
     invoke<T>(method: string, args?: unknown): Promise<T>;
     toast(text: string): void;
+    /** 用户点了某个仓库：外壳该把右侧面板切到本视图 */
+    onSelect?(): void;
 }
 
 export interface RefView {
-    /** 挂到左侧容器（切回本页时调用；每次切页外壳会重画容器） */
+    /** 挂到左侧容器（外壳启动时调一次；之后容器常驻，不再重画骨架） */
     mount(): void;
+    /** 重画左右（外壳切到「外部仓库」面板时调用） */
+    render(): void;
     /** 首次进入 / 切回本页：拉数据并重绘 */
     refresh(): Promise<void>;
     /** 每秒一次：同步中更快看进度，空闲时也顺带刷新列表 */
@@ -179,6 +185,8 @@ export function createRefView(host: RefHost): RefView {
             row.addEventListener("click", () => {
                 selected = repo.key;
                 renderLeft();
+                // 先由外壳把右侧切到「外部仓库」，再画（isVisible 依赖它）
+                host.onSelect?.();
                 renderRight();
             });
             list.append(row);
@@ -186,6 +194,8 @@ export function createRefView(host: RefHost): RefView {
     }
 
     function renderRight(): void {
+        // 右侧不归本视图时不画：否则轮询会把正在看的 app 详情整块冲掉
+        if (!host.isVisible()) return;
         host.headTitle.textContent = "外部仓库";
         const running = sync?.running === true;
         host.headBadge.className = `badge ${running ? "wait" : "stop"}`;
@@ -318,8 +328,12 @@ export function createRefView(host: RefHost): RefView {
 
     return {
         mount(): void {
-            host.tree.replaceChildren(addRow, list);
+            host.refs.replaceChildren(addRow, list);
             renderLeft();
+        },
+        render(): void {
+            renderLeft();
+            renderRight();
         },
         async refresh(): Promise<void> {
             await Promise.all([refreshOverview(), refreshState()]);

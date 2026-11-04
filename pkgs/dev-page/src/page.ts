@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
+import { refMethods } from "./ref-page.js";
 import {
     DevRunner,
     DEFAULT_HOME,
@@ -232,6 +233,8 @@ export const page: PageContribution = {
     title: "dev 启动器",
     icon: "⚙",
     methods: {
+        // 外部仓库（原「ref」页）并进来（##518）：同一页两个区，方法表合成一张
+        ...refMethods,
         [DEV_METHODS.snapshot]: () => snapshot(),
         [DEV_METHODS.start]: (args) => startLaunch(args as LaunchRef),
         [DEV_METHODS.stop]: (args) => stopLaunch(args as LaunchRef),
