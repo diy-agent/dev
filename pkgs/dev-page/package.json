@@ -27,8 +27,16 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-javascript": "^6.2.3",
+    "@codemirror/lang-yaml": "^6.1.2",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.4",
     "@diy-agent/dev-core": "*",
+    "@diy-agent/dev-fs": "file:../dev-fs",
     "@diy-agent/dev-ref": "file:../dev-ref",
+    "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
+    "@diy-agent/ui": "file:../../../diy/pkgs.ts/ui/core",
     "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
     "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui/workbench-ui"
   },

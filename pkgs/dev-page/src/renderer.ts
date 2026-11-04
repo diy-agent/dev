@@ -7,6 +7,7 @@
 // 不靠额外推送。分隔条来自 @diy-agent/workbench-ui 的 createSplitPane（260–520px）。
 
 import { createSplitPane } from "@diy-agent/workbench-ui";
+import { createFilesPane, type FilesPane } from "./files-view.js";
 import { createRefView, type RefView } from "./ref-view.js";
 import {
     BUILD_COMMANDS,
@@ -61,8 +62,23 @@ let selectedWorktree: string | null = null;
 let panel: "app" | "ref" = "app";
 /** panel === "ref" 时是哪个 worktree 的外部仓库 */
 let refWorktree: string | null = null;
-/** worktree 详情页的页签：详情 / 外部仓库（该 worktree 的 diy.yaml）。`diy.yaml` 跟着 worktree 走 */
-const wtPanes = new Map<string, "info" | "ref">();
+/** worktree 详情页的页签：详情 / 文件（编辑器）/ 外部仓库。diy.yaml 与源码都跟着 worktree 走 */
+const wtPanes = new Map<string, "info" | "files" | "ref">();
+/** 每个 worktree 一个文件视图（各绑自己的 jail 根；容器缓存，避免每秒重挂编辑器） */
+const filesPanes = new Map<string, { readonly view: FilesPane; readonly box: HTMLElement }>();
+
+function filesPaneOf(worktree: string): { readonly view: FilesPane; readonly box: HTMLElement } {
+    const cached = filesPanes.get(worktree);
+    if (cached !== undefined) return cached;
+    const holder = el("div");
+    const view = createFilesPane(
+        { worktree, isVisible: () => panel === "app" && wtPanes.get(worktree) === "files", toast },
+        { body: holder, headTitle, headBadge, headMeta },
+    );
+    const pane = { view, box: holder };
+    filesPanes.set(worktree, pane);
+    return pane;
+}
 let polling = false;
 /** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
 let onlyRunning = false;
@@ -729,6 +745,7 @@ function renderWorktreeDetail(worktree: string): void {
     const tabs = el("div", "wt-tabs");
     for (const [id, label] of [
         ["info", "详情"],
+        ["files", "文件"],
         ["ref", "外部仓库"],
     ] as const) {
         const tab = el("button", `wt-tab${pane === id ? " on" : ""}`, label);
@@ -737,6 +754,13 @@ function renderWorktreeDetail(worktree: string): void {
         tabs.append(tab);
     }
     body.append(tabs);
+
+    if (pane === "files") {
+        const files = filesPaneOf(worktree);
+        body.append(files.box);
+        files.view.render();
+        return;
+    }
 
     if (pane === "ref") {
         // 列表 + 同步面板都画在这一栏（ref 视图的 refs 与 body 是同一个容器）
@@ -978,7 +1002,7 @@ function refPaneOf(worktree: string): { readonly view: RefView; readonly box: HT
 }
 
 /** 切 worktree 详情页的页签：详情（信息 + launch + 命令）/ 外部仓库（该 worktree 的 diy.yaml） */
-function switchWtPane(worktree: string, next: "info" | "ref"): void {
+function switchWtPane(worktree: string, next: "info" | "files" | "ref"): void {
     wtPanes.set(worktree, next);
     if (next === "ref") {
         panel = "ref";
