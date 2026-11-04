@@ -16,8 +16,8 @@
 ```bash
 ./sha.sh build      # 只构建：产物一份，落在 build/app/（与变体无关）
 ./sha.sh lab        # 构建 + 起 lab 实例（development、CDP 9223、副屏）
-./sha.sh prod       # 构建 + 起 prod 实例（production，真数据根）
-./bin/dev app prod  # 等价于「跑 build/app 的产物」，不构建
+./sha.sh staging    # 构建 + 起 staging（production 环境 + 隔离数据根）
+./bin/dev app staging  # 同上但 staging；bin/dev 只执行 app.yaml 里那条 command，不自己拼
 ./sha.sh check      # 类型 + lint
 cd ../../pkgs/dev-core && ./sha.sh test   # 纯逻辑单测（不拉 Electron）
 ```
