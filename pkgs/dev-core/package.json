@@ -23,7 +23,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@diy-agent/dev-paths": "file:../../vendor/diy-agent-dev-paths-0.1.0.tgz",
+    "@diy-agent/dev-paths": "^0.1.0",
     "js-yaml": "^5.5.0"
   },
   "devDependencies": {
