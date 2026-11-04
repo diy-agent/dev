@@ -14,12 +14,16 @@
 ## 跑
 
 ```bash
-./sha.sh lab        # 编依赖包 lib + 构建后起实例（lab 变体开 CDP 9223）
+./sha.sh build      # 只构建：产物一份，落在 build/app/（与变体无关）
+./sha.sh lab        # 构建 + 起 lab 实例（development、CDP 9223、副屏）
+./sha.sh prod       # 构建 + 起 prod 实例（production，真数据根）
+./bin/dev app prod  # 等价于「跑 build/app 的产物」，不构建
 ./sha.sh check      # 类型 + lint
 cd ../../pkgs/dev-core && ./sha.sh test   # 纯逻辑单测（不拉 Electron）
 ```
 
-数据根 = `<仓库根>/build/lab/home`（与其它包同一约定），日志在 `<数据根>/log/dev/<launch>.log`。
+**产物 vs 变体是两件事**：`tsc + esbuild` 只跟源码有关 ⇒ 一份 `build/app/`；变体只决定运行空间
+（数据根 `<仓库根>/build/<variant>/home`、`DIY_ENV`、CDP / 副屏）。日志在 `<数据根>/log/dev/<launch>.log`。
 
 ## 四层模型（##502 第二轮）
 
