@@ -63,6 +63,50 @@
             .entry .refdel:hover {
                 color: #c0392b;
             }
+            /* 外部实例区（真生产 / 孤儿实例）：只展示，不给停止 */
+            .ext-sec {
+                border-top: 1px solid var(--line);
+                margin-top: 6px;
+                padding-top: 4px;
+            }
+            .ext-head {
+                font: 600 11px/1.6 inherit;
+                color: #6b7280;
+                padding: 4px 10px;
+                cursor: default;
+            }
+            .ext-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                width: 100%;
+                box-sizing: border-box;
+                appearance: none;
+                border: 0;
+                background: transparent;
+                padding: 4px 10px;
+                font: 11.5px/1.5 ui-monospace, Menlo, monospace;
+                color: #2f353c;
+                cursor: pointer;
+                text-align: left;
+            }
+            .ext-row:hover {
+                background: #eef1f5;
+            }
+            .ext-row.sel {
+                background: #dfe6f2;
+                color: #123a6b;
+            }
+            .ext-nm {
+                flex: none;
+            }
+            .ext-home {
+                margin-left: auto;
+                color: #8b95a1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
             /* 「文件」页签：左树 + 右编辑器（CodeMirror 撑满剩余高度） */
             .filespane {
                 display: flex;

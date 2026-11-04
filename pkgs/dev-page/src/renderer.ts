@@ -58,6 +58,8 @@ let session: CommandSession | null = null;
 let selectedKey: string | null = null;
 /** worktree 详情：点分支名进入（右栏看该 worktree 的 app / launch / 命令）。与 selectedKey 二选一 */
 let selectedWorktree: string | null = null;
+/** 选中的外部实例（真生产 / 孤儿实例的 pid）；与上面两个选中态互斥 */
+let selectedExternal: number | null = null;
 /** 右侧面板此刻归谁：app（矩阵选中项 / worktree 详情）还是 ref（某个仓库的外部仓库） */
 let panel: "app" | "ref" = "app";
 /** panel === "ref" 时是哪个 worktree 的外部仓库 */
@@ -298,6 +300,7 @@ function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
         selectedKey = launch.key;
         selectedWorktree = null;
         panel = "app";
+        selectedExternal = null;
         render();
     });
     return chip;
@@ -322,6 +325,7 @@ function renderTree(): void {
     // 「只显示运行中」= 只隐藏**未运行的单元格**，行（worktree）与列（app）都保留：
     // 否则想找出「哪个没跑」得先关过滤，且整个 worktree 会从眼前消失（##518）
     renderTreeCross(groupByWorktree(snapshot.launches));
+    renderExternals();
 }
 
 /**
@@ -400,6 +404,7 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
                 branchBtn.addEventListener("click", () => {
                     selectedWorktree = group.worktree;
                     selectedKey = null;
+                    selectedExternal = null;
                     panel = "app";
                     render();
                 });
@@ -428,6 +433,34 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
         }
         tree.append(section);
     }
+}
+
+/**
+ * 外部实例区（##518）：没有被任何 worktree launch 认领的实例。
+ * 典型就是**真生产实例**（数据根 `~/.diy`）—— 只展示，不给停止（guard：生产实例不可杀）。
+ */
+function renderExternals(): void {
+    const list = snapshot?.externals ?? [];
+    if (list.length === 0) return;
+    const box = el("section", "cx-sec ext-sec");
+    box.append(el("div", "cx-head ext-head", `外部实例 · ${String(list.length)}`));
+    for (const item of list) {
+        const row = el("button", `ext-row${selectedExternal === item.pid ? " sel" : ""}`);
+        row.type = "button";
+        row.title = `${item.diyHome}\nPID ${String(item.pid)}`;
+        row.append(el("span", "dot on"));
+        row.append(el("span", "ext-nm", `${item.app ?? "?"}${item.launch === null ? "" : `.${item.launch}`}`));
+        row.append(el("span", "ext-home", item.production ? "生产 ~/.diy" : item.diyHome));
+        row.addEventListener("click", () => {
+            selectedExternal = item.pid;
+            selectedKey = null;
+            selectedWorktree = null;
+            panel = "app";
+            render();
+        });
+        box.append(row);
+    }
+    tree.append(box);
 }
 
 /** 折叠状态：按仓库根路径记（localStorage；隐私模式下降级为本次会话） */
@@ -790,9 +823,46 @@ function renderWorktreeDetail(worktree: string): void {
     body.append(renderLogCard());
 }
 
+/** 外部实例详情：只读（真生产实例绝不给停止按钮） */
+function renderExternalDetail(pid: number): void {
+    const item = snapshot?.externals.find((entry) => entry.pid === pid);
+    if (item === undefined) {
+        body.append(el("div", "empty", "这个实例已经不在了（刷新后重选）"));
+        return;
+    }
+    headTitle.textContent = `${item.app ?? "?"}${item.launch === null ? "" : `.${item.launch}`}（外部实例）`;
+    headBadge.className = "badge run";
+    headBadge.textContent = item.production ? "● 生产实例" : "● 外部实例";
+    headMeta.textContent = `PID ${String(item.pid)}`;
+    const box = card("实例", el("span", "hint", item.production ? "不许终止（guard）" : "不归任何 worktree launch"));
+    const list = el("dl", "kv");
+    list.append(...kv("PID", String(item.pid)));
+    list.append(...kv("app", item.app ?? "—"));
+    list.append(...kv("launch", item.launch ?? "—"));
+    list.append(...kv("数据根", item.diyHome));
+    list.append(...kv("worktree", item.worktree ?? "—"));
+    list.append(...kv("端口", item.port === null ? "—" : String(item.port)));
+    list.append(...kv("启动于", item.startedAt));
+    box.append(list);
+    box.append(
+        el(
+            "div",
+            "hint",
+            item.production
+                ? "这是真正的生产实例（数据根 ~/.diy）：面板只展示，不提供停止/重启——请在你的终端里管它。"
+                : "它不属于任何 worktree 的 launch：可能是在别处手工起的，也可能是 launch 匹配不上。",
+        ),
+    );
+    body.append(box);
+}
+
 function renderDetail(): void {
     body.replaceChildren();
     if (snapshot === null) return;
+    if (selectedExternal !== null) {
+        renderExternalDetail(selectedExternal);
+        return;
+    }
     if (selectedWorktree !== null) {
         renderWorktreeDetail(selectedWorktree);
         return;
@@ -925,7 +995,8 @@ async function refresh(): Promise<void> {
         if (selectedWorktree !== null && !next.launches.some((item) => item.worktree === selectedWorktree)) {
             selectedWorktree = null;
         }
-        if (selectedWorktree === null && selectedKey === null && next.launches.length > 0) {
+        if (selectedExternal !== null && !next.externals.some((item) => item.pid === selectedExternal)) selectedExternal = null;
+        if (selectedWorktree === null && selectedKey === null && selectedExternal === null && next.launches.length > 0) {
             selectedKey = next.launches[0].key;
         }
         if (selectedKey !== null && !next.launches.some((item) => item.key === selectedKey)) selectedKey = null;

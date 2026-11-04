@@ -126,6 +126,25 @@ export interface LaunchStatus {
     readonly runtime: LaunchRuntime | null;
 }
 
+/**
+ * 没被任何 worktree launch 认领的实例（典型：全局 `diy` 起的**真生产实例**，数据根 `~/.diy`）。
+ *
+ * 为什么要单列：这类实例的 `(worktree, app, launch)` 可能与某个 worktree 的 launch 撞上，
+ * 但数据根完全不同 —— 它既不是那条 launch 在跑，也**绝不能**被面板上的「停止」误杀。
+ * 匹配键因此必须带数据根（见 matchRecord 的 expectedHome）。
+ */
+export interface ExternalInstance {
+    readonly pid: number;
+    readonly app: string | null;
+    readonly launch: string | null;
+    readonly diyHome: string;
+    readonly worktree: string | null;
+    readonly startedAt: string;
+    readonly port: number | null;
+    /** 数据根是不是**真正的生产根**（`~/.diy`）：是 ⇒ 只读，不可停止 */
+    readonly production: boolean;
+}
+
 export interface DevSnapshot {
     readonly repoRoot: string;
     /** 仓库名（主 worktree 目录名），左侧树第一层 */
@@ -138,6 +157,8 @@ export interface DevSnapshot {
     readonly runningCount: number;
     /** 解析 app.yaml 时遇到的问题（坏 YAML / 缺字段），显示在顶部提示里 */
     readonly problems: readonly string[];
+    /** 不属于任何 worktree launch 的实例（真生产 / 手工起的孤儿），只展示不接管 */
+    readonly externals: readonly ExternalInstance[];
     readonly launches: readonly LaunchStatus[];
 }
 

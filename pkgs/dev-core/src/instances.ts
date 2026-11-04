@@ -130,15 +130,34 @@ export function samePath(a: string | null, b: string): boolean {
     return resolve(a) === resolve(b);
 }
 
+/** 数据根比较：`~/.diy` 与 `/Users/x/.diy` 视为同一个根（老记录可能带 `~`） */
+export function sameHome(a: string | null, b: string | null): boolean {
+    if (a === null || b === null || a === "" || b === "") return false;
+    const norm = (v: string): string => {
+        const expanded = v.startsWith("~/") ? join(homedir(), v.slice(2)) : v;
+        return resolve(expanded);
+    };
+    return norm(a) === norm(b);
+}
+
 export interface LaunchRefLike {
     readonly worktree: string;
     readonly app: string;
     readonly launch: string;
 }
 
-/** 这条记录是否对应这个 launch（三元组） */
-export function matchRecord(record: InstanceRecordLite, ref: LaunchRefLike): boolean {
-    return samePath(record.worktree, ref.worktree) && sameApp(record.app, ref.app) && record.launch === ref.launch;
+/**
+ * 这条记录是否对应这个 launch。
+ *
+ * 除了 `(worktree, app, launch)` 三元组，**数据根也必须一致**（##518 用户裁）：
+ * 全局 `diy` 起的生产实例 `cwd` 落在主 worktree、`variant=prod`，三元组可能刚好撞上某个
+ * worktree 的 prod/staging launch —— 但它跑在 `~/.diy`，不是那条 launch。少这一条就会
+ * 「面板显示运行中，点停止杀掉了真生产」。
+ */
+export function matchRecord(record: InstanceRecordLite, ref: LaunchRefLike, expectedHome?: string): boolean {
+    if (!samePath(record.worktree, ref.worktree) || !sameApp(record.app, ref.app) || record.launch !== ref.launch) return false;
+    if (expectedHome === undefined) return true;
+    return sameHome(record.diyHome, expectedHome);
 }
 
 /**
@@ -229,6 +248,8 @@ export interface SnapshotInputs {
     readonly nodeIdOf?: (home: string) => string | null;
     readonly now?: number;
     readonly registry?: string;
+    /** 真生产数据根（缺省 `~/.diy`）；用来把「生产实例」与 worktree 的沙箱区分开 */
+    readonly prodHome?: string;
 }
 
 /** 数据根缺省（与 apps/* 的 sha.sh 同口径） */
@@ -255,6 +276,8 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
     const builtOf = inputs.builtOf ?? (() => true);
     const nodeIdOf = inputs.nodeIdOf ?? readNodeId;
     const launches: LaunchStatus[] = [];
+    /** 已被某条 launch 认领的记录（其余进 externals：真生产 / 孤儿实例） */
+    const claimed = new Set<number>();
     let appCount = 0;
     // 老记录没有 worktree：先按 cwd 归到已知 worktree（嵌套取最长前缀），否则永远匹配不上
     const knownPaths = targets.map((item) => item.path);
@@ -278,11 +301,15 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                 const ref = { worktree: worktree.path, app: app.name, launch: launch.id };
                 // 先按三元组精确匹配；匹配不上再给老记录（launch=null）一次机会：
                 // 手工 `./sha.sh lab` / 旧版本自报的记录没有 launch，靠 build/<variant> 痕迹或「该 app 只有一条 launch」归属
-                const record =
-                    records.find((rec) => matchRecord(rec, ref)) ??
-                    records.find((rec) => matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }));
-                const running = record !== undefined;
                 const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
+                const record =
+                    records.find((rec) => matchRecord(rec, ref, home)) ??
+                    records.find(
+                        (rec) =>
+                            matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }) && sameHome(rec.diyHome, home),
+                    );
+                const running = record !== undefined;
+                if (record !== undefined) claimed.add(record.pid);
                 const homeDeclared = launch.home !== undefined && launch.home !== "";
                 const configIssues: LaunchConfigIssue[] = [];
                 if (!homeDeclared) {
@@ -366,6 +393,18 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
         repoName: main === undefined ? basename(inputs.repoRoot) : basename(main.path),
         repoBranch: main?.branch ?? null,
         registryDir: inputs.registry ?? registryDir(),
+        externals: records
+            .filter((rec) => !claimed.has(rec.pid))
+            .map((rec) => ({
+                pid: rec.pid,
+                app: rec.app,
+                launch: rec.launch,
+                diyHome: rec.diyHome,
+                worktree: rec.worktree,
+                startedAt: rec.startedAt,
+                port: rec.port,
+                production: sameHome(rec.diyHome, inputs.prodHome ?? join(homedir(), ".diy")),
+            })),
         worktreeCount: targets.length,
         appCount,
         runningCount: launches.filter((item) => item.running).length,
