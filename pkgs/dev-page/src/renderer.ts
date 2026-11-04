@@ -72,7 +72,6 @@ try {
 
 // ── DOM 小工具 ───────────────────────────────────────────────
 
-/** 路径最后一段（renderer 是浏览器侧，不能用 node:path） */
 /**
  * 配色规则：**行（分支）决定色相，列（app）决定明度阶梯**。
  *
@@ -95,6 +94,7 @@ function columnLightness(index: number, total: number): number {
     return Math.round(94 - index * span);
 }
 
+/** 路径最后一段（renderer 是浏览器侧，不能用 node:path） */
 function basename(path: string): string {
     return path.split(/[\\/]/).filter((seg) => seg !== "").pop() ?? path;
 }
@@ -246,13 +246,13 @@ function groupByWorktree(launches: readonly LaunchStatus[]): WorktreeGroup[] {
         .filter((item): item is WorktreeGroup => item !== null);
 }
 
+/** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
 /**
  * 一个 launch 的 chip：**单击只选中**（看详情），启停交给悬停出现的按钮。
  *
  * 为什么不再「单击即启停」（##518）：chip 同时是选中入口，想读详情的人一按就把 app 起来/杀掉，
  * 误操作代价太大；启停是破坏性动作，必须落在明确的按钮上。
  */
-/** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
 function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
     const cls = [
         "chip",
@@ -773,7 +773,13 @@ function render(): void {
     // 「外部仓库」页不归本函数画；轮询的旧结果晚到也不该盖掉它
     if (mode !== "app") return;
     const issueCount = snapshot?.launches.reduce((n, item) => n + item.configIssues.length, 0) ?? 0;
-    const paint = JSON.stringify([snapshot, selectedKey, selectedWorktree, onlyRunning, session?.lines.length ?? -1]);
+    // 指纹里要把**每次都变**的运行时数字抹平：uptime 精确到 5s、内存到 8MB。
+    // 否则 1s 轮询永远“内容变了”，重绘照旧，滚动位置白保（##518 自检时踩到）。
+    const paint = JSON.stringify([mode, snapshot, selectedKey, selectedWorktree, onlyRunning, session?.lines.length ?? -1], (key, value) => {
+        if (key === "uptimeMs" && typeof value === "number") return Math.round(value / 5000);
+        if (key === "memBytes" && typeof value === "number") return Math.round(value / 8_000_000);
+        return value;
+    });
     if (paint === lastPaint) return;
     lastPaint = paint;
     if (snapshot !== null) {
@@ -937,6 +943,8 @@ function applyMode(next: "app" | "ref"): void {
     if (next === "app") {
         void refresh();
     } else {
+        // 外部仓库页会把 body 整个换掉：作废“上一次画的样子”，切回应用页时才会重画
+        lastPaint = "";
         headTitle.textContent = "外部仓库";
         headBadge.className = "badge stop";
         headBadge.textContent = "—";
