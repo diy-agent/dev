@@ -1,8 +1,9 @@
 // src/ref/store.ts — diy.yaml / ref.lock.yaml 读写 + URL 解析
 //
 // 纯数据层：只做文件读写与字符串解析，不调 git、不含业务编排（编排在 impl.ts）。
-// diy.yaml:    js-yaml dump（源 source 列表，版本含在字符串里）
-// ref.lock.yaml: js-yaml 结构化 {version, generated, source:{key:{url,version,dir,lastSync}}}
+// diy.yaml:    用 `yaml`（eemeli）的 **Document API** 就地改 `ref.source` —— 保留注释 / 缩进 / 键序
+//              （不能 js-yaml.dump 整个对象：那是「整篇重写」，人工写的注释会被挪到文件头）
+// ref.lock.yaml: js-yaml 结构化 {version, generated, source:{key:{url,version,dir,lastSync}}}（机器生成，重写无妨）
 //
 // 路径语义：LockEntry.dir 存「相对 $DIY_HOME」的镜像路径（如 ref/github.com/org/repo/main），
 // 跨 worktree 复用时需拼当前 home（join(runtime.home, dir)）。对齐旧 Python ref 的 ~/... 惯例。
@@ -10,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as yaml from "js-yaml";
+import { isSeq, parseDocument } from "yaml";
 
 // ═══════════════════════════════════════
 // URL 解析
@@ -194,12 +196,14 @@ interface DiyYamlShape {
     ref?: { source?: unknown[] };
 }
 
-/** 读 diy.yaml 的 source 字符串列表（js-yaml 解析失败返回 []）。 */
+/** 读 diy.yaml 的 source 字符串列表（解析失败返回 []）。 */
 export function listSpecs(dir: string): string[] {
     const p = join(dir, "diy.yaml");
     if (!existsSync(p)) return [];
     try {
-        const raw = yaml.load(readFileSync(p, "utf-8")) as DiyYamlShape | null;
+        const doc = parseDocument(readFileSync(p, "utf-8"));
+        if (doc.errors.length > 0) return [];
+        const raw = doc.toJS() as DiyYamlShape | null;
         const arr = raw?.ref?.source;
         if (!Array.isArray(arr)) return [];
         return arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
@@ -268,11 +272,40 @@ export function stripVersion(spec: string): string {
     }
 }
 
+/** 模板（文件不存在时新建）：注释只在**首次生成**时写，之后由 Document 原样保留 */
+const DIY_YAML_HEADER = "# diy-dev — 源码镜像配置（source 列表由 dev ref 管理）\n";
+
+/**
+ * 就地改 `ref.source`。
+ *
+ * ⚠️ 不许改成 `yaml.dump(对象)` 那种整篇重写：diy.yaml 是**人也会手改**的文件，
+ * dump 会把注释挪到文件头、缩进统一成 2 空格、键序重排 —— 每次点「添加 / 移除」都产生一片无关 diff。
+ * Document API 只替换 `ref.source` 这个节点，其余字节（注释、空行、其它键）原样保留。
+ */
 function _writeDiyYaml(dir: string, specs: string[]): void {
     const p = join(dir, "diy.yaml");
-    // 用 js-yaml dump 输出稳定结构；保留 comment 由模板文件自然携带（整体重写会丢注释，v1 接受）
-    const body = yaml.dump({ ref: { source: specs } }, { indent: 2, noRefs: true, lineWidth: -1 });
-    writeFileSync(p, `# diy-dev — 源码镜像配置（source 列表由 dev ref 管理）\n${body}`, "utf-8");
+    const text = existsSync(p) ? readFileSync(p, "utf-8") : DIY_YAML_HEADER;
+    const doc = parseDocument(text);
+    const seq = doc.getIn(["ref", "source"]);
+    if (!isSeq(seq)) {
+        doc.setIn(["ref", "source"], specs);
+    } else {
+        // **逐个条目增删**，而不是整体替换数组：整段替换会把挂在条目上的注释一起丢掉
+        // （注释属于 YAML 节点，不在值里）。留下来的条目沿用原节点 ⇒ 它们的注释 / 引号 / 缩进都不动。
+        const keep = new Map<string, unknown>();
+        for (const item of seq.items) {
+            const value = typeof item === "object" && item !== null && "value" in item ? (item as { value: unknown }).value : item;
+            if (typeof value === "string" && !keep.has(value)) keep.set(value, item);
+        }
+        seq.items = specs.map((spec) => keep.get(spec) ?? doc.createNode(spec));
+    }
+    // 缩进风格跟着原文走：本仓的 diy.yaml 是「`- ` 与 key 同缩进」（indentSeq: false）。
+    // 先拿一份**未改动**的文档试一下哪种缩进能逐字节还原原文，免得把整篇缩进改掉。
+    const probe = parseDocument(text);
+    const compact = probe.toString({ lineWidth: 0, indent: 2, indentSeq: false }) === text;
+    const out = doc.toString({ lineWidth: 0, indent: 2, indentSeq: !compact });
+    // 原本没有换行结尾 / 新生成的文件：补上（diff 友好）
+    writeFileSync(p, out.endsWith("\n") ? out : `${out}\n`, "utf-8");
 }
 
 // ═══════════════════════════════════════
