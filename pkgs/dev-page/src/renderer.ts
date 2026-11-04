@@ -38,8 +38,6 @@ function requireEl(id: string): HTMLElement {
 const bridge = window.workbench;
 if (!bridge) throw new Error("preload 桥没注入 window.workbench");
 const tree = requireEl("tree");
-/** 左栏底部的外部仓库区（常驻，不再是一页） */
-const refsBox = requireEl("refs");
 const body = requireEl("body");
 const runningLabel = requireEl("running");
 const repoLabel = requireEl("repo");
@@ -59,8 +57,12 @@ let session: CommandSession | null = null;
 let selectedKey: string | null = null;
 /** worktree 详情：点分支名进入（右栏看该 worktree 的 app / launch / 命令）。与 selectedKey 二选一 */
 let selectedWorktree: string | null = null;
-/** 右侧面板此刻归谁：app（矩阵选中项 / worktree 详情）还是 ref（外部仓库）。左栏两个区都在，只是右侧切换 */
+/** 右侧面板此刻归谁：app（矩阵选中项 / worktree 详情）还是 ref（某个仓库的外部仓库） */
 let panel: "app" | "ref" = "app";
+/** panel === "ref" 时是哪个仓库的外部仓库 */
+let refRepo: string | null = null;
+/** 每个仓库区块的页签：应用（矩阵）/ 外部仓库（该仓库 diy.yaml 的 source） */
+const repoPanes = new Map<string, "app" | "ref">();
 let polling = false;
 /** 「只显示运行中」过滤（titlebar 的 toggle；只影响左侧树） */
 let onlyRunning = false;
@@ -352,7 +354,29 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
             saveCollapsed();
             renderTree();
         });
-        section.append(head);
+
+        // 仓库级页签：外部仓库属于**仓库**（每个仓库根的 diy.yaml 各一份），不属于整页
+        const tabs = el("div", "reptabs");
+        const pane = repoPanes.get(repo) ?? "app";
+        for (const [id, label] of [
+            ["app", "应用"],
+            ["ref", "外部仓库"],
+        ] as const) {
+            const tab = el("button", `reptab${pane === id ? " on" : ""}`, label);
+            tab.type = "button";
+            tab.addEventListener("click", () => switchRepoPane(repo, id));
+            tabs.append(tab);
+        }
+        const headWrap = el("div", "cx-headwrap");
+        headWrap.append(head, tabs);
+        section.append(headWrap);
+
+        if (!collapsed.has(repo) && pane === "ref") {
+            // 该仓库的外部仓库列表就长在这个区块里（容器稳定，避免每秒重挂）
+            section.append(refPaneOf(repo).box);
+            tree.append(section);
+            continue;
+        }
 
         if (!collapsed.has(repo)) {
             const table = el("table", "cx");
@@ -796,9 +820,9 @@ function render(): void {
     const treeTop = tree.scrollTop;
     const bodyTop = body.scrollTop;
     renderTree();
-    if (panel === "ref") {
-        // 右侧归外部仓库视图：标题 / 角标由它自己写，这里不插手
-        refView.render();
+    if (panel === "ref" && refRepo !== null) {
+        // 右侧归那个仓库的外部仓库视图：标题 / 角标由它自己写，这里不插手
+        refPanes.get(refRepo)?.view.render();
         tree.scrollTop = treeTop;
         body.scrollTop = bodyTop;
         return;
@@ -917,33 +941,59 @@ filterToggle.addEventListener("click", () => {
 });
 syncFilterToggle();
 
-// ── 外部仓库区（##518：从独立的「ref」页并进本页） ─────────────
+// ── 外部仓库区（##518：属于**仓库**，从「ref」页并进来） ─────────
 
 /**
- * 宿主：只给容器与桥，不反向依赖本文件的绘制逻辑。
- * `isVisible` 让它在「右侧归 app」时别碰 body —— 否则它的轮询会把正在看的详情冲掉。
+ * 每个仓库一个 ref 视图（各有自己的 diy.yaml 与同步状态，后端按 `repo` 参数隔离）。
+ * 容器缓存下来：区块每秒重画时把同一个 DOM 塞回去，输入框里的 URL 不会被清掉。
  */
-const refView: RefView = createRefView({
-    refs: refsBox,
-    body,
-    headTitle,
-    headBadge,
-    headMeta,
-    invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("dev", method, args) as Promise<T>,
-    toast,
-    isVisible: () => panel === "ref",
-    onSelect: () => {
-        panel = "ref";
-        lastPaint = "";
-        render();
-    },
-});
+const refPanes = new Map<string, { readonly view: RefView; readonly box: HTMLElement }>();
 
-refView.mount();
-void refView.refresh();
+function refPaneOf(repo: string): { readonly view: RefView; readonly box: HTMLElement } {
+    const cached = refPanes.get(repo);
+    if (cached !== undefined) return cached;
+    const box = el("div", "refpanel");
+    const view = createRefView({
+        refs: box,
+        body,
+        headTitle,
+        headBadge,
+        headMeta,
+        repo,
+        invoke: <T>(method: string, args?: unknown): Promise<T> => gateway.invoke("dev", method, args) as Promise<T>,
+        toast,
+        // 右侧只在「本来框就归这个仓库的 ref」时才画：否则会把 app 详情冲掉
+        isVisible: () => panel === "ref" && refRepo === repo,
+        onSelect: () => {
+            panel = "ref";
+            refRepo = repo;
+            lastPaint = "";
+            render();
+        },
+    });
+    view.mount();
+    const pane = { view, box };
+    refPanes.set(repo, pane);
+    return pane;
+}
+
+/** 切某个仓库区块的页签：左侧区块换内容，右侧跟着换（外部仓库 → 该仓库的概览） */
+function switchRepoPane(repo: string, next: "app" | "ref"): void {
+    repoPanes.set(repo, next);
+    if (next === "ref") {
+        panel = "ref";
+        refRepo = repo;
+    } else if (refRepo === repo) {
+        panel = "app";
+        refRepo = null;
+    }
+    lastPaint = "";
+    render();
+    if (next === "ref") void refPaneOf(repo).view.refresh();
+}
 
 setInterval(() => {
     void refresh();
-    // 外部仓库的进度只在它占着右侧时才有意义（同步中的拍子要密一点）
-    if (panel === "ref") refView.poll();
+    // 外部仓库的同步进度只在它占着右侧时才有意义
+    if (panel === "ref" && refRepo !== null) refPanes.get(refRepo)?.view.poll();
 }, 1000);

@@ -44,17 +44,43 @@
                 flex-direction: column;
                 flex-shrink: 0;
             }
-            /* 外部仓库区：压在左栏底部，自己滚动，不抢矩阵的高度 */
-            #refs {
-                flex: none;
-                max-height: 38vh;
-                overflow-y: auto;
-                border-top: 1px solid var(--line);
-                padding: 6px 10px 10px;
-                background: #fbfcfe;
+            /* 仓库区块的标题行：仓库名（点击折叠）+ 仓库级页签（应用 / 外部仓库） */
+            .cx-headwrap {
+                display: flex;
+                align-items: center;
+                gap: 6px;
             }
-            #refs:empty {
-                display: none;
+            .cx-headwrap .cx-head {
+                flex: 1;
+                min-width: 0;
+            }
+            .reptabs {
+                display: flex;
+                gap: 2px;
+                padding-right: 6px;
+            }
+            .reptab {
+                appearance: none;
+                border: 1px solid transparent;
+                background: transparent;
+                border-radius: 6px;
+                padding: 2px 8px;
+                font: 11px/1.5 inherit;
+                color: #6b7280;
+                cursor: pointer;
+            }
+            .reptab:hover {
+                background: #eef1f5;
+            }
+            .reptab.on {
+                background: #fff;
+                border-color: var(--line);
+                color: #123a6b;
+                font-weight: 600;
+            }
+            /* 区块内的外部仓库列表：不再压左栏底部，而是占据矩阵的位置 */
+            .refpanel {
+                padding: 6px 10px 12px;
             }
             #side .top {
                 padding: 11px 14px;
@@ -815,8 +841,6 @@
         <div id="side">
             <div class="top">dev 启动器 <small id="running"></small></div>
             <div id="tree"></div>
-            <!-- 外部仓库区（##518 从独立的「ref」页并进来）：常驻在左栏底部，和矩阵同一个页面 -->
-            <div id="refs"></div>
         </div>
         <div id="main">
             <div id="head">

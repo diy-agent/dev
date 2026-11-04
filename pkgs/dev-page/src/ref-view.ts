@@ -19,6 +19,8 @@ export interface RefHost {
     readonly headTitle: HTMLElement;
     readonly headBadge: HTMLElement;
     readonly headMeta: HTMLElement;
+    /** 本视图属于哪个仓库（它的 diy.yaml）；每个方法都带上，ref 域按仓库隔离 */
+    readonly repo: string;
     invoke<T>(method: string, args?: unknown): Promise<T>;
     toast(text: string): void;
     /** 用户点了某个仓库：外壳该把右侧面板切到本视图 */
@@ -141,7 +143,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function refreshOverview(): Promise<void> {
         try {
-            const next = await host.invoke<RefOverview>(REF_METHODS.overview);
+            const next = await host.invoke<RefOverview>(REF_METHODS.overview, { repo: host.repo });
             overview = next;
             if (selected === null && next.repos.length > 0) selected = next.repos[0].key;
             if (selected !== null && !next.repos.some((repo) => repo.key === selected)) selected = null;
@@ -155,7 +157,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function refreshState(): Promise<void> {
         try {
-            const next = await host.invoke<RefSyncState>(REF_METHODS.syncState);
+            const next = await host.invoke<RefSyncState>(REF_METHODS.syncState, { repo: host.repo });
             const wasRunning = sync?.running === true;
             sync = next;
             renderRight();
@@ -275,7 +277,7 @@ export function createRefView(host: RefHost): RefView {
         busy = true;
         addButton.disabled = true;
         try {
-            const result = await host.invoke<{ name: string; spec: string }>(REF_METHODS.add, { url });
+            const result = await host.invoke<{ name: string; spec: string }>(REF_METHODS.add, { repo: host.repo, url });
             addInput.value = "";
             host.toast(`已注册：${result.name}`);
             selected = result.name.includes("/") ? findKeyOf(result.name) : selected;
@@ -297,7 +299,7 @@ export function createRefView(host: RefHost): RefView {
 
     async function removeRepo(repo: RefRepo): Promise<void> {
         try {
-            await host.invoke(REF_METHODS.remove, { name: repo.key });
+            await host.invoke(REF_METHODS.remove, { repo: host.repo, name: repo.key });
             host.toast(`已移除：${repo.key}`);
             if (selected === repo.key) selected = null;
             await refreshOverview();
@@ -309,7 +311,7 @@ export function createRefView(host: RefHost): RefView {
     async function startSync(): Promise<void> {
         if (busy) return;
         try {
-            sync = await host.invoke<RefSyncState>(REF_METHODS.sync);
+            sync = await host.invoke<RefSyncState>(REF_METHODS.sync, { repo: host.repo });
             renderRight();
             void refreshState();
         } catch (error) {
