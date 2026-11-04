@@ -44,43 +44,31 @@
                 flex-direction: column;
                 flex-shrink: 0;
             }
-            /* 仓库区块的标题行：仓库名（点击折叠）+ 仓库级页签（应用 / 外部仓库） */
-            .cx-headwrap {
+            /* worktree 详情页的页签：详情 / 外部仓库（diy.yaml 跟着 worktree 走） */
+            .wt-tabs {
                 display: flex;
-                align-items: center;
-                gap: 6px;
+                gap: 4px;
+                margin-bottom: 10px;
+                border-bottom: 1px solid var(--line);
             }
-            .cx-headwrap .cx-head {
-                flex: 1;
-                min-width: 0;
-            }
-            .reptabs {
-                display: flex;
-                gap: 2px;
-                padding-right: 6px;
-            }
-            .reptab {
+            .wt-tab {
                 appearance: none;
-                border: 1px solid transparent;
+                border: 0;
                 background: transparent;
-                border-radius: 6px;
-                padding: 2px 8px;
-                font: 11px/1.5 inherit;
+                padding: 6px 10px;
+                font: 12.5px/1.4 inherit;
                 color: #6b7280;
                 cursor: pointer;
+                border-bottom: 2px solid transparent;
+                margin-bottom: -1px;
             }
-            .reptab:hover {
-                background: #eef1f5;
+            .wt-tab:hover {
+                color: #123a6b;
             }
-            .reptab.on {
-                background: #fff;
-                border-color: var(--line);
+            .wt-tab.on {
                 color: #123a6b;
                 font-weight: 600;
-            }
-            /* 区块内的外部仓库列表：不再压左栏底部，而是占据矩阵的位置 */
-            .refpanel {
-                padding: 6px 10px 12px;
+                border-bottom-color: #3b6fd4;
             }
             #side .top {
                 padding: 11px 14px;
