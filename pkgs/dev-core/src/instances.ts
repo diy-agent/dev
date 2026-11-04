@@ -11,13 +11,12 @@
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
+import { registryDir as registryDirOf } from "@diy-agent/dev-paths";
 import type { AppSpec, DevSnapshot, EntryStatus, LaunchConfigIssue, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
 
-/** 注册表目录：与 diy-app / apps/web 同一口径（`DIY_INSTANCE_REGISTRY` 可覆盖，测试隔离用） */
+/** 注册表目录：**唯一真源在 `@diy-agent/dev-paths`**（`~/.diy/dev/apps`），这里只转发 */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-    const override = env["DIY_INSTANCE_REGISTRY"];
-    if (override !== undefined && override.trim() !== "") return override.trim();
-    return join(homedir(), ".diy-instances");
+    return registryDirOf(env);
 }
 
 /** 注册表一条（宽松版：只取 UI 用得到的字段；缺字段 = 缺省值） */
