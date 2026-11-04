@@ -1007,7 +1007,9 @@ function switchWtPane(worktree: string, next: "info" | "files" | "ref"): void {
     if (next === "ref") {
         panel = "ref";
         refWorktree = worktree;
-    } else if (refWorktree === worktree) {
+    } else {
+        // 非 ref 页签一律把右侧收回 app：否则从「别的 worktree 的外部仓库」切到「文件」时，
+        // panel 还是 "ref" ⇒ 文件视图的 isVisible() 为假、直接不画（只留一个空壳）
         panel = "app";
         refWorktree = null;
     }
