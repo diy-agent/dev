@@ -4,7 +4,7 @@
  * 纯逻辑 + tmpdir 文件操作，不触网、不调 git。
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -124,6 +124,42 @@ describe("diy.yaml source 读写", () => {
         expect(removeSource(dir, "zzz")).toBeNull();
         const raw = readFileSync(join(dir, "diy.yaml"), "utf-8");
         expect(raw).toContain("https://github.com/a/x");
+    });
+
+    it("增量改写：注释位置 / 缩进 / 其它键 / 键序都原样保留", () => {
+        writeFileSync(
+            join(dir, "diy.yaml"),
+            [
+                "# 顶部说明（人工写的）",
+                "project:",
+                "  id: '7'",
+                "ref:",
+                "  source:",
+                "    - https://github.com/a/x",
+                "    # 这行注释属于列表",
+                "    - https://github.com/b/y",
+                "",
+                "# 尾部说明",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+        addSource(dir, "https://github.com/c/z");
+        const raw = readFileSync(join(dir, "diy.yaml"), "utf-8");
+        // 注释没有被挪到文件头 / 也没有消失
+        expect(raw.indexOf("# 顶部说明")).toBe(0);
+        expect(raw).toContain("# 这行注释属于列表");
+        expect(raw).toContain("# 尾部说明");
+        // 其它键与 4 空格缩进保持
+        expect(raw).toContain("project:");
+        expect(raw).toContain("    - https://github.com/a/x");
+        expect(raw).toContain("    - https://github.com/c/z");
+
+        removeSource(dir, "a/x");
+        const after = readFileSync(join(dir, "diy.yaml"), "utf-8");
+        expect(after).toContain("# 顶部说明");
+        expect(after).not.toContain("github.com/a/x");
+        expect(after).toContain("github.com/b/y");
     });
 
     it("remove 在无 diy.yaml 目录 → null 且不创建文件（190 核对表 #10）", () => {

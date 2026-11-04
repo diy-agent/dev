@@ -19,6 +19,7 @@
     "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
     "@diy-agent/time": "file:../../../diy/pkgs.ts/core/time",
     "js-yaml": "^5.5.0",
+    "yaml": "file:../../../diy/node_modules/yaml",
     "zod": "file:../../../diy/node_modules/zod"
   },
   "devDependencies": {
