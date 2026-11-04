@@ -1,4 +1,4 @@
-// ref-page.ts — 「外部仓库」页的主进程侧（##510）：把 @diy-agent/dev-ref 的 ref 域摆成页面方法表。
+// ref-page.ts — 外部仓库域的主进程侧（##510 建，##518 从独立页并入 dev 页）：把 ref 域摆成方法表。
 //
 // 复用方式：不重写 ref 逻辑，而是按 CLI 的同一机制建**进程内 mem transport**
 // （ChannelServerBinding + ChannelClientBinding），把 `bindRefHandlers` 注册上去再用 typed client 调。
@@ -131,11 +131,13 @@ function requireString(args: unknown, field: string): string {
     return value.trim();
 }
 
-export const refPage: PageContribution = {
-    id: "ref",
-    title: "外部仓库",
-    icon: "📦",
-    methods: {
+/**
+ * 外部仓库的方法表（##518：已并入 dev 页，不再单独出一页）。
+ *
+ * 为什么还留在这个文件：ref 域用的是进程内 mem transport + typed client（##510 的复用方式），
+ * 与 app 域的 spawn / 注册表逻辑没有交集，混进 page.ts 只会让两边都难读。
+ */
+export const refMethods: PageContribution["methods"] = {
         [REF_METHODS.overview]: (): Promise<RefOverview> => overview(),
 
         [REF_METHODS.add]: async (args) => {
@@ -157,7 +159,4 @@ export const refPage: PageContribution = {
         [REF_METHODS.syncState]: (): RefSyncState => state,
 
         [REF_METHODS.open]: (args) => openPath(requireString(args, "path"), "finder"),
-    },
 };
-
-export default refPage;

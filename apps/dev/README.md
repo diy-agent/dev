@@ -1,13 +1,13 @@
 # dev 启动器（`@diy-agent/app-dev`）
 
-本机所有可测试入口的一页看板。界面形态见任务 ##502 正文（定稿 demo 是 `/tmp/dev-demo/index.html`，临时件）。
+本机所有可测试入口的一页看板（##518：外部仓库不再是独立页，改左栏底部的常驻区；右侧按选中项在 app / worktree / 仓库之间切）。
 
 ## 布局（##508：本包只是装配器，≤100 行）
 
 | 位置 | 说明 |
 |------|------|
 | `apps/dev/` | 装配器：插件清单（`index.ts`）+ 窗口入口（`main.ts`）+ preload + renderer 打包入口 |
-| `@diy-agent/dev-page` | 页面插件：主进程方法表（`page.ts`）+ 裸 DOM 界面（`renderer.ts`） |
+| `@diy-agent/dev-page` | 页面插件：主进程方法表（`page.ts`，含并进来的 ref 域 `ref-page.ts`）+ 裸 DOM 界面（`renderer.ts`） |
 | `@diy-agent/dev-core` | 业务层：`discovery` / `instances` / `actions` / `shared`（纯逻辑，单测在这） |
 
 ## 跑

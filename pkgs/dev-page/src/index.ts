@@ -1,14 +1,10 @@
 // index.ts — 页面插件的包入口：工作台按 `pages` 取页面贡献（`packages/workbench/src/loader.ts`）。
 //
-// 主进程装配器只 `import * as devPage from "@diy-agent/dev-page"` 然后塞进插件清单；
-// renderer 单独走 `@diy-agent/dev-page/renderer`（esbuild 打包时读 exports）。
-//
-// ##510：一个插件出两页 —— 「dev」（启动本仓 app）与「ref」（diy.yaml 里的外部仓库）。
-// loader 的归一顺序是 pages → default → apply，`pages` 存在即按数组取。
+// ##518：外部仓库并入 dev 页（原来是一页「ref」）—— 一页两区：左侧矩阵 + 底部外部仓库列表，
+// 右侧按当前选中的东西画（app / worktree / 仓库）。方法表也在 page.ts 里合并成一张。
 
 import appPage from "./page.js";
-import refPage from "./ref-page.js";
 
-export { appPage, refPage };
-export const pages = [appPage, refPage];
+export { appPage };
+export const pages = [appPage];
 export default pages;
