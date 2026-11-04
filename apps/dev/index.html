@@ -232,6 +232,144 @@
             .cx tbody tr:hover .cx-br {
                 background: hsl(var(--h, 214), 55%, 82%);
             }
+            /* 分支名 = 进 worktree 详情的入口（不点 launch 也能 build / sync / 看详情） */
+            .cx .cx-br-btn {
+                appearance: none;
+                border: 0;
+                background: transparent;
+                padding: 0;
+                font: inherit;
+                color: inherit;
+                cursor: pointer;
+                text-align: left;
+                border-bottom: 1px dashed transparent;
+            }
+            .cx .cx-br-btn:hover {
+                border-bottom-color: currentColor;
+            }
+            .cx .cx-br.sel {
+                box-shadow: inset 0 0 0 2px hsl(var(--h, 214), 60%, 52%);
+            }
+            /* worktree 详情：每个 app 一节，launch 一行 */
+            .wt-launches {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                margin-bottom: 8px;
+            }
+            .wt-launch {
+                display: grid;
+                grid-template-columns: 8px auto auto 1fr auto;
+                align-items: center;
+                gap: 8px;
+                padding: 5px 6px;
+                border-radius: 7px;
+                font-size: 12px;
+            }
+            .wt-launch:hover {
+                background: #f6f8fa;
+            }
+            .wt-launch .dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: #c8ced6;
+            }
+            .wt-launch .dot.on {
+                background: #22a35c;
+            }
+            .wt-launch .dot.wait {
+                background: #d97706;
+            }
+            .wt-launch-nm {
+                appearance: none;
+                border: 0;
+                background: transparent;
+                padding: 0;
+                font: 600 12px ui-monospace, Menlo, monospace;
+                color: #123a6b;
+                cursor: pointer;
+                border-bottom: 1px dashed transparent;
+            }
+            .wt-launch-nm:hover {
+                border-bottom-color: currentColor;
+            }
+            .wt-launch-cmd {
+                font: 11px ui-monospace, Menlo, monospace;
+                color: #6b7280;
+            }
+            .wt-launch-uri {
+                font: 11px ui-monospace, Menlo, monospace;
+                color: #8b95a1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            /* chip 旁的悬停操作（启动 / 停止 / 聚焦）：破坏性动作只出现在明确的按钮上 */
+            .cx-launch {
+                display: inline-flex;
+                align-items: center;
+                gap: 2px;
+            }
+            .cx-launch .acts {
+                display: none;
+                gap: 2px;
+            }
+            .cx .cx-cell:hover .cx-launch .acts {
+                display: inline-flex;
+            }
+            .cx-launch .acts button {
+                font-size: 9px;
+                padding: 0 3px;
+                border-radius: 4px;
+                border: 1px solid hsl(var(--h), 34%, 72%);
+                background: #fff;
+                color: #2f353c;
+            }
+            /* 配置错误：chip 上加一道警示（点进去看修法） */
+            .cx .cx-cell .chip.warn {
+                box-shadow: inset 0 0 0 1px #d97706;
+            }
+            .chip.warn::after {
+                content: "⚠";
+                font-size: 9px;
+                margin-left: 2px;
+                color: #b45309;
+            }
+            /* 顶部计数里的配置问题提示 */
+            #repo.bad {
+                color: #b45309;
+                font-weight: 600;
+            }
+            /* 配置问题卡 */
+            .cfgissue {
+                padding: 6px 0;
+                border-top: 1px solid var(--line);
+                font-size: 12px;
+            }
+            .cfgissue:first-of-type {
+                border-top: 0;
+            }
+            .cfgmsg {
+                color: #b45309;
+            }
+            .cfgfix {
+                color: var(--dim);
+                margin-top: 2px;
+            }
+            .wt-warn {
+                appearance: none;
+                border: 1px solid #d97706;
+                background: #fffbeb;
+                color: #b45309;
+                border-radius: 5px;
+                font-size: 10px;
+                padding: 0 4px;
+                cursor: pointer;
+            }
+            .hint.bad {
+                color: #b45309;
+            }
             /* 外部仓库：添加行 + 列表 */
             .refadd {
                 display: flex;

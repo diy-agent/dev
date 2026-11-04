@@ -137,6 +137,47 @@ describe("老记录兜底（手工 ./sha.sh lab：launch = null）", () => {
     });
 });
 
+describe("home 声明的错误检测", () => {
+    const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+    const app = (home: string | undefined): AppSpec => ({
+        name: "diy-app",
+        title: "diy 管控台",
+        dir: "/repo/apps/diy-app",
+        launches: [
+            { id: "lab", command: "./sha.sh lab", ...(home === undefined ? {} : { home }), entries: [] },
+            { id: "prod", command: "./sha.sh start", ...(home === undefined ? {} : { home }), entries: [] },
+        ],
+    });
+    const snap = (spec: AppSpec) =>
+        buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [spec],
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+
+    it("都声明且不同根 ⇒ 无问题", () => {
+        const s = snap(app("build/lab/home"));
+        // 两条同值 ⇒ duplicate（这就是 diy-app 曾经的坑）
+        expect(s.launches[0]?.configIssues.map((i) => i.code)).toEqual(["home-duplicate"]);
+        expect(s.launches[0]?.homeDeclared).toBe(true);
+    });
+
+    it("声明了不同根 ⇒ 干净（homeDeclared=true，configIssues 空）", () => {
+        const s = snap({
+            ...app("build/lab/home"),
+            launches: [
+                { id: "lab", command: "./sha.sh lab", home: "build/lab/home", entries: [] },
+                { id: "prod", command: "./sha.sh start", home: "build/prod/home", entries: [] },
+            ],
+        });
+        expect(s.launches.map((item) => item.configIssues)).toEqual([[], []]);
+        expect(s.launches[1]?.home).toBe("/repo/build/prod/home");
+    });
+});
+
 describe("withPort（配置端口 vs 实际端口）", () => {
     it("一致时原样，不一致时换端口并标 mismatch", () => {
         expect(withPort("http://localhost:8123", 8123)).toEqual({ href: "http://localhost:8123", mismatch: false });
@@ -242,6 +283,22 @@ describe("displayPath / buildSnapshot", () => {
         expect(web.entries[0]?.portMismatch).toBe(true);
         // chat 的那条记录在静态清单里没有对应 launch ⇒ 不算 running（清单来自 app.yaml）
         expect(snapshot.runningCount).toBe(1);
+    });
+
+    it("app.yaml 没写 home ⇒ home-missing；多条 launch 共用一个根 ⇒ home-duplicate", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: "main" }];
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp(), webApp()],
+            records: [],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const chat = snapshot.launches.find((item) => item.app === "chat")!;
+        expect(chat.homeDeclared).toBe(false);
+        expect(chat.configIssues.map((issue) => issue.code)).toEqual(["home-missing"]);
+        expect(chat.home).toBe("/repo/build/lab/home");
     });
 
     it("手工跑的老记录（launch / worktree 都是 null）也能对上 ⇒ running", () => {

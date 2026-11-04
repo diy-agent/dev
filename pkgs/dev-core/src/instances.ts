@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative, isAbsolute, resolve } from "node:path";
-import type { AppSpec, DevSnapshot, EntryStatus, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
+import type { AppSpec, DevSnapshot, EntryStatus, LaunchConfigIssue, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
 
 /** 注册表目录：与 diy-app / apps/web 同一口径（`DIY_INSTANCE_REGISTRY` 可覆盖，测试隔离用） */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -267,6 +267,12 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
         appCount += apps.length;
         const built = builtOf(worktree.path);
         for (const app of apps) {
+            // 同一 app 内每个数据根被几条 launch 占着：>1 就是配置错误（同时启动会抢单实例锁）
+            const homeUse = new Map<string, number>();
+            for (const item of app.launches) {
+                const path = resolve(worktree.path, item.home ?? DEFAULT_HOME);
+                homeUse.set(path, (homeUse.get(path) ?? 0) + 1);
+            }
             for (const launch of app.launches) {
                 const key = launchKey(worktree.path, app.name, launch.id);
                 const ref = { worktree: worktree.path, app: app.name, launch: launch.id };
@@ -277,6 +283,22 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                     records.find((rec) => matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }));
                 const running = record !== undefined;
                 const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
+                const homeDeclared = launch.home !== undefined && launch.home !== "";
+                const configIssues: LaunchConfigIssue[] = [];
+                if (!homeDeclared) {
+                    configIssues.push({
+                        code: "home-missing",
+                        message: `app.yaml 未声明 home：启动器只能按缺省 ${DEFAULT_HOME} 显示数据根 / 实例 URI，与实际启动的数据根对不上时会误导排查`,
+                        fix: `在该 launch 下补一行 \`home: ${DEFAULT_HOME}\`（与本 app 的 sha.sh 实际用的数据根一致；多个 launch 共用同一根则各写不同的）`,
+                    });
+                }
+                if ((homeUse.get(home) ?? 0) > 1) {
+                    configIssues.push({
+                        code: "home-duplicate",
+                        message: `同一 app 有 ${String(homeUse.get(home))} 条 launch 共用数据根 ${home}：同时启动会抢单实例锁，后起的那条会静默退出`,
+                        fix: "给每条 launch 写不同的 `home:`（按变体 / 端口分根，如 `home: build/prod/home`）",
+                    });
+                }
                 const nodeId = nodeIdOf(home);
                 const actualPort = running ? record.port : null;
                 const entries: EntryStatus[] = launch.entries.map((entry) => {
@@ -324,6 +346,8 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                     appDir: app.dir,
                     yamlPath: join(app.dir, "app.yaml"),
                     home,
+                    homeDeclared,
+                    configIssues,
                     nodeId,
                     uri: nodeId === null ? null : `diy://${nodeId}/${app.name}.${launch.id}`,
                     built,

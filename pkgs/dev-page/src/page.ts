@@ -124,6 +124,8 @@ export function startLaunch(ref: LaunchRef): { ok: boolean; pid: number | null; 
         key: launchKey(ref.worktree, ref.app, ref.launch),
         appDir: resolved.app.dir,
         launch: resolved.launch,
+        // 声明的数据根必须真的生效（否则 UI 按声明显示、进程按自己的缺省根跑，两边分叉）
+        home: resolve(ref.worktree, resolved.launch.home ?? DEFAULT_HOME),
     });
     return {
         ok: started.pid !== null,
@@ -199,20 +201,22 @@ export function openTarget(args: unknown): { ok: boolean; reason: string } {
     return openPath(path, input.mode);
 }
 
+/**
+ * 在**某个 app 目录**里跑白名单命令。
+ *
+ * `launch` 可选：worktree 详情页按 app 给按钮（build / check / test / sync 都是 app 级的，
+ * 不依赖某个 launch），此时 session key 用 `launch=""`，与任何具体 launch 互不干扰。
+ */
 export function runBuild(args: unknown): ReturnType<DevRunner["run"]> {
     const input = (args ?? {}) as { worktree?: unknown; app?: unknown; launch?: unknown; command?: unknown };
-    if (
-        typeof input.worktree !== "string" ||
-        typeof input.app !== "string" ||
-        typeof input.launch !== "string" ||
-        !isBuildCommand(input.command)
-    ) {
-        throw new Error(`run 参数不合法（要 launch 三元组 + 白名单命令）：${JSON.stringify(args)}`);
+    if (typeof input.worktree !== "string" || typeof input.app !== "string" || !isBuildCommand(input.command)) {
+        throw new Error(`run 参数不合法（要 worktree + app + 白名单命令）：${JSON.stringify(args)}`);
     }
-    const ref: LaunchRef = { worktree: input.worktree, app: input.app, launch: input.launch };
-    const resolved = resolveLaunch(ref);
-    if (resolved === null) throw new Error(`没有这个 launch：${ref.app}.${ref.launch}`);
-    return runner.run(launchKey(ref.worktree, ref.app, ref.launch), resolved.app.dir, input.command);
+    const apps = discoverAppsIn(input.worktree).apps;
+    const app = apps.find((item) => item.name === input.app);
+    if (app === undefined) throw new Error(`找不到 app：${input.app}`);
+    const launch = typeof input.launch === "string" ? input.launch : "";
+    return runner.run(launchKey(input.worktree, input.app, launch), app.dir, input.command);
 }
 
 export function revealCdp(ref: LaunchRef): { ok: boolean; reason: string } {
