@@ -193,6 +193,12 @@ export function createRefView(host: RefHost): RefView {
                 host.onSelect?.();
                 renderRight();
             });
+            // 每行自带移除入口：不必先选中、再滚到详情卡底部去找
+            const remove = button("×", "refdel", () => {
+                if (window.confirm(`从 diy.yaml 移除 ${repo.key}？（本地镜像保留，可再加回来）`)) void removeRepo(repo);
+            });
+            remove.title = `从 diy.yaml 移除 ${repo.key}\n（只删声明，$DIY_HOME/ref 下的镜像不删）`;
+            row.append(remove);
             list.append(row);
         }
     }
@@ -265,10 +271,11 @@ export function createRefView(host: RefHost): RefView {
 
         const acts = el("div", "acts");
         acts.append(
-            button("移除注册", "danger small", () => {
-                if (window.confirm(`从 diy.yaml 移除 ${shortName(repo)}？（本地镜像保留）`)) void removeRepo(repo);
+            button("从 diy.yaml 移除", "danger small", () => {
+                if (window.confirm(`从 diy.yaml 移除 ${shortName(repo)}？（本地镜像保留，可再加回来）`)) void removeRepo(repo);
             }),
         );
+        acts.append(el("span", "hint", "只删声明；镜像目录仍在 $DIY_HOME/ref 下"));
         box.append(acts);
         return box;
     }
