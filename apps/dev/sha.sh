@@ -46,6 +46,7 @@ _ensure_electron() {
 build-deps() {
   ( cd "$SCRIPT_DIR/../../pkgs/dev-ref" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-core" && ./sha.sh build )
+  ( cd "$SCRIPT_DIR/../../pkgs/dev-fs" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-page" && ./sha.sh build )
   ( cd "$(_main_repo)/pkgs.ts/ui/workbench" && ./sha.sh build )
   ( cd "$(_main_repo)/pkgs.ts/ui/workbench-ui" && ./sha.sh build )
@@ -86,8 +87,9 @@ lab() {
   _ensure_electron
   build
   local d; d="$(_build_dir)"
-  # 数据根：DIY_HOME 已在环境里（dev 启动器按 app.yaml 的 `home` 注入）就用它
-  local home; home="${DIY_HOME:-$(_repo_root)/build/$DIY_VARIANT/home}"
+  # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
+  # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
+  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/$DIY_VARIANT/home}"
   run mkdir -p "$home"
   echo "${info}数据根：$home${reset}"
   run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" DIY_ENV=development npx electron "$d/main/index.mjs" "$@"

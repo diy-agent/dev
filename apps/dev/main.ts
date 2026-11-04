@@ -7,6 +7,9 @@ import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWorkbench } from "@diy-agent/workbench";
+import { ChannelServerBinding, type EnvelopeTransport } from "@diy-agent/rpc";
+import { bindFsHandlers } from "@diy-agent/dev-fs";
+import { ipcMain } from "electron";
 import { ASSEMBLY } from "./index.js";
 
 // lab 变体开 CDP：agent 用 `curl 127.0.0.1:9223/json` / playwright 查 DOM。
@@ -33,6 +36,43 @@ createWorkbench({
     height: 820,
 })
     .then((workbench) => {
+        // 文件能力（##518）：@diy-agent/rpc 的 electron 传输 —— preload 递出 transport，
+        // 这里把 dev-fs 的三个方法绑上去。页面方法表（page:invoke）不受影响，两者并存。
+        // main 侧 transport 自己写（不用 @diy-agent/rpc/electron）：那个模块顶层同时 import 了
+        // ipcRenderer，而主进程的 electron 没有这个导出 ⇒ 加载即 SyntaxError。
+        // 语义与它一致：同名 channel、webContents.send 下行、ipcMain.on 上行、窗口销毁即 onClose。
+        const RPC_CHANNEL = "rpc";
+        const mainTransport: EnvelopeTransport = (() => {
+            const handlers = new Set<(msg: unknown) => void>();
+            const close = new Set<() => void>();
+            ipcMain.on(RPC_CHANNEL, (_event, payload: unknown) => {
+                for (const handler of handlers) handler(payload);
+            });
+            const contents = () => workbench.window()?.webContents;
+            contents()?.on("destroyed", () => {
+                for (const cb of close) cb();
+            });
+            return {
+                send: (payload: unknown) => {
+                    try {
+                        contents()?.send(RPC_CHANNEL, payload);
+                    } catch {
+                        for (const cb of close) cb();
+                    }
+                },
+                on: (handler: (msg: never) => void) => {
+                    handlers.add(handler as (msg: unknown) => void);
+                    return () => handlers.delete(handler as (msg: unknown) => void);
+                },
+                onClose: (cb: () => void) => {
+                    close.add(cb);
+                    return () => close.delete(cb);
+                },
+            };
+        })();
+        const binding = new ChannelServerBinding(mainTransport);
+        bindFsHandlers(binding);
+        app.once("will-quit", () => binding.destroy());
         app.on("window-all-closed", () => {
             workbench.dispose();
             app.quit();

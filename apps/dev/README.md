@@ -7,7 +7,8 @@
 | 位置 | 说明 |
 |------|------|
 | `apps/dev/` | 装配器：插件清单（`index.ts`）+ 窗口入口（`main.ts`）+ preload + renderer 打包入口 |
-| `@diy-agent/dev-page` | 页面插件：主进程方法表（`page.ts`，含并进来的 ref 域 `ref-page.ts`）+ 裸 DOM 界面（`renderer.ts`） |
+| `@diy-agent/dev-page` | 页面插件：主进程方法表（`page.ts`，含并进来的 ref 域 `ref-page.ts`）+ 界面（`renderer.ts`；文件页签在 `files-view.ts`） |
+| `@diy-agent/dev-fs` | 文件能力：`@diy-agent/rpc` 声明式 API（`fs.list/read/write`）+ worktree 内路径 jail |
 | `@diy-agent/dev-core` | 业务层：`discovery` / `instances` / `actions` / `shared`（纯逻辑，单测在这） |
 
 ## 跑
@@ -74,3 +75,13 @@ launches:
 `build` / `check` / `test` / `sync` / `build-pkgs` / `clean`，在 app 目录下 `./sha.sh <cmd>` 执行。
 白名单在 `shared.ts`（`BUILD_COMMANDS`），主进程侧再校验一次 —— 不接受任意命令。
 worktree 没有 `build/` 目录时条目置灰并提示先构建（不自动 build）。
+
+## 文件页签（##518）
+
+worktree 详情页里除了「详情 / 外部仓库」，还有「文件」：左侧文件树、右侧 CodeMirror 6 编辑器，`Ctrl/Cmd+S` 保存。
+
+- **界面**用 `@diy-agent/ui/browser`（`html.*` Spec + `GenApp` 声明式渲染，零框架）；
+- **读写**用 `@diy-agent/rpc`：preload 递出 `createRendererTransport()`，renderer 用
+  `ChannelClientBinding` + `createTypedClient(fsApi)`；主进程把 `bindFsHandlers` 绑到同名 `rpc` 通道。
+  方法表在 `@diy-agent/dev-fs/api`（只含 schema，不带 node:fs —— 渲染侧只 import 这个子入口）。
+- **安全**：`worktree` + 相对路径，主进程做三道 jail（必须是 git worktree / 拒绝对路径 / realpath 比边界）。

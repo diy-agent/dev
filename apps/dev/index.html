@@ -63,7 +63,77 @@
             .entry .refdel:hover {
                 color: #c0392b;
             }
-            /* worktree 详情页的页签：详情 / 外部仓库（diy.yaml 跟着 worktree 走） */
+            /* 「文件」页签：左树 + 右编辑器（CodeMirror 撑满剩余高度） */
+            .filespane {
+                display: flex;
+                gap: 12px;
+                height: 100%;
+                min-height: 420px;
+            }
+            .filetree {
+                flex: none;
+                width: 232px;
+                overflow: auto;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                background: #fbfcfe;
+                padding: 6px 0;
+                font: 12px/1.6 ui-monospace, Menlo, monospace;
+            }
+            .fitem {
+                padding: 2px 8px;
+                cursor: pointer;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .fitem:hover {
+                background: #eef1f5;
+            }
+            .fitem.sel {
+                background: #dfe6f2;
+                color: #123a6b;
+                font-weight: 600;
+            }
+            .fitem.dir {
+                color: #3a4149;
+            }
+            .filemain {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+            }
+            .filebar {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 0 0 6px;
+            }
+            .filehint {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                color: var(--dim);
+                font: 12px ui-monospace, Menlo, monospace;
+            }
+            .fileeditor {
+                flex: 1;
+                min-height: 360px;
+                overflow: auto;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+            }
+            .fileeditor .cm-editor {
+                height: 100%;
+                font: 12.5px/1.6 ui-monospace, Menlo, monospace;
+            }
+            .fileeditor .cm-scroller {
+                font-family: inherit;
+            }
+            /* worktree 详情页的页签：详情 / 文件 / 外部仓库（都跟着 worktree 走） */
             .wt-tabs {
                 display: flex;
                 gap: 4px;
