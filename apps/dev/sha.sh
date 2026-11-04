@@ -22,8 +22,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "../../sha.common.sh"
 
-export DIY_VARIANT="${DIY_VARIANT:-lab}"
-_build_dir() { echo "build/${DIY_VARIANT}"; }
+# ── 产物 vs 变体：两件事，别绑一起 ─────────────────────────
+# 产物（tsc + esbuild）只跟**源码**有关：一份，落在 `build/app/`，与变体无关。
+# 变体只决定**运行空间**：数据根 `build/<variant>/home`、`DIY_ENV`、CDP / 副屏行为。
+#   lab  = 试验（development、CDP、副屏、watch 重启会打断轮次）
+#   prod = 生产（production、真数据根；改 src 不重启）
+_build_dir() { echo "build/app"; }
+_home_dir() { echo "$(_repo_root)/build/${1:-lab}/home"; }
 _repo_root() { ( cd "$SCRIPT_DIR/../.." && pwd ); }
 _main_repo() { ( cd "$SCRIPT_DIR/../../../diy" && pwd ); }
 
@@ -83,17 +88,26 @@ build-renderer() {
 }
 
 # 开发实例：构建后直接起（lab 变体自带 CDP 9223）
-lab() {
+# 起实例：产物固定 build/app，变体只换运行参数
+_run_app() {
+  local variant="$1" env="$2"; shift 2
   _ensure_electron
   build
   local d; d="$(_build_dir)"
   # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
   # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_repo_root)/build/$DIY_VARIANT/home}"
+  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_home_dir "$variant")}"
   run mkdir -p "$home"
-  echo "${info}数据根：$home${reset}"
-  run env DIY_HOME="$home" DIY_VARIANT="$DIY_VARIANT" DIY_ENV=development npx electron "$d/main/index.mjs" "$@"
+  echo "${info}产物：$d（与变体无关）${reset}"
+  echo "${info}数据根：$home（变体 $variant）${reset}"
+  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" npx electron "$d/main/index.mjs" "$@"
 }
+
+# 试验变体：开发环境 + CDP + 副屏
+lab() { _run_app "${DIY_VARIANT:-lab}" development "$@"; }
+
+# 生产变体：与 `dev`（bin/dev）跑的是**同一份** build/app 产物
+prod() { _run_app "${DIY_VARIANT:-prod}" production "$@"; }
 
 typecheck() { run npx tsc -p tsconfig.json; }
 lint() { run npx oxlint .; }
