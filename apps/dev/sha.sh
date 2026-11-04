@@ -100,14 +100,17 @@ _run_app() {
   run mkdir -p "$home"
   echo "${info}产物：$d（与变体无关）${reset}"
   echo "${info}数据根：$home（变体 $variant）${reset}"
-  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" npx electron "$d/main/index.mjs" "$@"
+  # DIY_LAUNCH = 这条 launch 的身份：注册表匹配键 + 窗口标题里的实例 URI（diy://<node>/…）
+  # 一律注入 ⇒ 手工跑与 dev 面板拉起在注册表里长得一模一样，没有「另一个 lance」这回事
+  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$variant" npx electron "$d/main/index.mjs" "$@"
 }
 
 # 试验变体：开发环境 + CDP + 副屏
 lab() { _run_app "${DIY_VARIANT:-lab}" development "$@"; }
 
-# 生产变体：与 `dev`（bin/dev）跑的是**同一份** build/app 产物
-prod() { _run_app "${DIY_VARIANT:-prod}" production "$@"; }
+# 预生产变体（staging）：prod 构建 + 隔离数据根 `build/staging/home`。
+# `prod` 这个词只留给真正的生产（~/.diy），worktree 里不再有叫 prod 的 launch。
+staging() { _run_app "${DIY_VARIANT:-staging}" production "$@"; }
 
 typecheck() { run npx tsc -p tsconfig.json; }
 lint() { run npx oxlint .; }

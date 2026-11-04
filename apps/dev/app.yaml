@@ -15,3 +15,12 @@ launches:
     entries:
       - kind: app
         title: Electron 窗口
+
+  - id: staging
+    title: 预生产（prod 构建 + 隔离数据）
+    command: ./sha.sh staging
+    # 与 lab 同一份 build/app 产物，只是运行参数不同（production + 自己的数据根）
+    home: build/staging/home
+    entries:
+      - kind: app
+        title: Electron 窗口

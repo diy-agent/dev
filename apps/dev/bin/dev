@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# bin/dev — dev 启动器入口（npm 全局 / 安装到 PATH 用）。
+# bin/dev — dev 启动器入口（安装到 PATH 用）。
+#
+# **单一真源**：本脚本不自己拼启动命令，只执行 `app.yaml` 里那条 launch 的 `command`
+# （`./sha.sh lab` / `./sha.sh staging`）—— 与 dev 面板的「启动」按钮完全同一个入口。
+# 所以产物、数据根、DIY_ENV、DIY_LAUNCH 全部由 sha.sh 决定，这里不重复一遍。
 #
 # 用法：
-#   dev                起窗口（缺省变体 lab）
+#   dev                起窗口（缺省 lab）
 #   dev app            同上
 #   dev app lab        明确 lab 变体
-#   dev app prod       跑 prod 产物
-#   dev list           列出可用的变体（有产物的）
+#   dev app staging    预生产（prod 构建 + 隔离数据根 build/staging/home）
+#   dev list           列出 app.yaml 里的 launch id
 #   dev --help
 #
-# 产物：<包根>/build/app/main/index.mjs（**与变体无关**，一份产物两种跑法）
-# 数据根：DIY_HOME，缺省 <包根>/build/<variant>/home（变体只影响运行空间）
+# 产物：<包根>/build/app（与变体无关）。缺产物时下面会提示先 `./sha.sh build`。
 set -euo pipefail
 
 _realpath() {
@@ -24,63 +27,59 @@ _realpath() {
 }
 
 APP_DIR="$(dirname "$(_realpath "$0")")"
-# 仓库根（= worktree 根）：数据根的基准，与 app.yaml 的 `home:` 同口径（相对 worktree 根）
-REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
-
-usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
-}
-
-# 变体是**运行空间**，不是产物目录：产物永远 build/app
-variants() {
-  printf '%s\n' lab prod
-}
-
-# 产物路径（与变体无关）
+APP_YAML="$APP_DIR/app.yaml"
 MAIN="$APP_DIR/build/app/main/index.mjs"
 
-# electron 二进制定位：优先本包 node_modules，其次仓根
-electron_bin() {
-  local bin="$APP_DIR/node_modules/.bin/electron"
-  [ -x "$bin" ] || bin="$APP_DIR/../../node_modules/.bin/electron"
-  [ -x "$bin" ] || {
-    echo "找不到 electron 二进制：先在 $APP_DIR 跑 npm install" >&2
-    exit 1
-  }
-  echo "$bin"
+usage() {
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# 读 app.yaml：`variants` 列 id，`launch_command <id>` 取 command
+_yaml() {
+  node -e "
+    const { readFileSync } = require('node:fs');
+    const { parse } = require('yaml');
+    const [mode, id] = process.argv.slice(1);
+    const doc = parse(readFileSync('$APP_YAML', 'utf-8'));
+    const launches = doc?.launches ?? [];
+    if (mode === 'list') {
+      for (const item of launches) console.log(item.id);
+      process.exit(0);
+    }
+    const hit = launches.find((item) => item.id === id);
+    if (!hit) {
+      console.error('app.yaml 里没有 launch \"' + id + '\"（有：' + launches.map((i) => i.id).join(', ') + '）');
+      process.exit(1);
+    }
+    process.stdout.write(hit.command);
+  " "$@"
 }
 
 run_app() {
   local variant="${1:-lab}"
-  local main="$MAIN"
-  if [ ! -f "$main" ]; then
-    echo "dev 未构建：$main" >&2
-    echo "先跑 ./sha.sh build（产物一份，lab / prod 共用）" >&2
+  shift || true
+  [ -f "$APP_YAML" ] || { echo "缺 app.yaml：$APP_YAML" >&2; exit 1; }
+  if [ ! -f "$MAIN" ]; then
+    echo "dev 未构建：$MAIN" >&2
+    echo "先跑 ./sha.sh build（产物一份，与变体无关）" >&2
     exit 1
   fi
-  # 数据根：只在「外部已按启动器口径注入」时继承（有 DIY_LAUNCH），否则 shell 里残留的
-  # 生产 DIY_HOME（~/.diy）会把实例带进真数据根
-  local injected
-  injected="${DIY_LAUNCH:+${DIY_HOME:-}}"
-  export DIY_HOME="${injected:-$REPO_ROOT/build/$variant/home}"
-  export DIY_VARIANT="$variant"
-  # 变体 = app.yaml 里的 launch id：写进实例注册表，dev 启动器据此显示「已启动」
-  export DIY_LAUNCH="${DIY_LAUNCH:-$variant}"
-  # 变体只改运行空间：prod ⇒ production，其余 ⇒ development
-  if [ "$variant" = "prod" ]; then export DIY_ENV=production; else export DIY_ENV=development; fi
-  [ -d "$DIY_HOME" ] || mkdir -p "$DIY_HOME"
-  exec "$(electron_bin)" "$main" "${@:2}"
+  local command
+  command="$(_yaml launch "$variant")"
+  echo "dev: 执行 app.yaml 的 launch ${variant} —— ${command}（cwd=${APP_DIR}）"
+  cd "$APP_DIR"
+  # 环境由那条 command 自己决定（sha.sh 设 DIY_HOME / DIY_ENV / DIY_LAUNCH），这里只透传参数
+  exec bash -lc "$command \"\$@\"" dev "$@"
 }
 
 case "${1:-}" in
   ""|app)
     shift || true
-    # `dev app` 或 `dev app <variant>`；`dev` 无参也走这里
     run_app "${1:-lab}" "${@:2}"
     ;;
   list|ls)
-    echo "可用变体（同一份 build/app 产物）："
-    variants | sed 's/^/  /'
+    echo "可用变体（app.yaml 的 launch id，共用一份 build/app 产物）："
+    _yaml list | sed 's/^/  /'
     ;;
   -h|--help|help)
     usage
