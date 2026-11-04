@@ -59,10 +59,11 @@ run_app() {
   local variant="${1:-lab}"
   shift || true
   [ -f "$APP_YAML" ] || { echo "缺 app.yaml：$APP_YAML" >&2; exit 1; }
+  # 缺产物就**先构建**，而不是让人再敲一遍命令：`dev` 是日常入口，它自己该补齐前提。
+  # （仓根 `./sha.sh build` 只编 pkgs，不产出本 app 的 build/app —— 这点最容易踩。）
   if [ ! -f "$MAIN" ]; then
-    echo "dev 未构建：$MAIN" >&2
-    echo "先跑 ./sha.sh build（产物一份，与变体无关）" >&2
-    exit 1
+    echo "dev: 产物缺失，先构建（$APP_DIR/sha.sh build）…" >&2
+    "$APP_DIR/sha.sh" build || { echo "dev: 构建失败" >&2; exit 1; }
   fi
   local command
   command="$(_yaml launch "$variant")"
