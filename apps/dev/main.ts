@@ -23,6 +23,9 @@ createWorkbench({
     title: ASSEMBLY.title,
     // 实例注册表里的 app 短名：它自己也该出现在「谁活着」里
     app: "diy-dev",
+    // launch = app.yaml 里那条启动命令（dev 启动器拉起的会注入 DIY_LAUNCH）；
+    // 手工 `./sha.sh lab` 没有这个变量 ⇒ 缺省 lab，否则注册表里 launch=null，启动器永远显示「未启动」
+    launch: process.env["DIY_LAUNCH"] ?? "lab",
     plugins: ASSEMBLY.plugins,
     preloadFile: join(here, "../preload/index.cjs"),
     rendererFile: join(here, "../renderer/index.html"),

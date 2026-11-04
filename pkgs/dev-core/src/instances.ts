@@ -141,6 +141,44 @@ export function matchRecord(record: InstanceRecordLite, ref: LaunchRefLike): boo
     return samePath(record.worktree, ref.worktree) && sameApp(record.app, ref.app) && record.launch === ref.launch;
 }
 
+/**
+ * 记录的 worktree：缺字段（老记录 / 不是 workbench 装配的 app）时按 `cwd` 归属到某个已知 worktree。
+ *
+ * 为什么需要：`worktree` 是 ##502 才加的字段，之前的记录只有 `cwd`；没有它 `samePath(null, …)` 永远 false，
+ * 明明活着的实例在启动器里也显示「未启动」。取**最长前缀**（嵌套 worktree 时归给更深的那个）。
+ */
+export function worktreeOf(record: InstanceRecordLite, known: readonly string[]): string | null {
+    if (record.worktree !== null) return record.worktree;
+    const cwd = resolve(record.cwd === "" ? "." : record.cwd);
+    let best: string | null = null;
+    for (const path of known) {
+        const root = resolve(path);
+        if (cwd !== root && !cwd.startsWith(`${root}/`)) continue;
+        if (best === null || root.length > resolve(best).length) best = root;
+    }
+    return best;
+}
+
+/** 老记录从 argv / cwd 里能否看出 `build/<variant>/`（`lab` / `prod` 靠这个分） */
+export function launchHint(record: InstanceRecordLite): string | null {
+    const text = `${record.argv.join(" ")} ${record.cwd}`;
+    // 前置分隔符放宽到「非路径字符」：argv 里是 `build/lab/main/index.mjs`（相对）也可能是绝对路径
+    const hit = /(?:^|[^\w.-])build[/\\]([A-Za-z0-9._-]+)[/\\]/.exec(text);
+    return hit?.[1] ?? null;
+}
+
+/**
+ * 老记录（`launch === null`，手工 `./sha.sh lab` / 旧版自报）归给哪条 launch：
+ *   · 有 `build/<x>/` 痕迹 ⇒ 只认同名 launch；
+ *   · 没有痕迹 ⇒ 该 app 只有一条 launch 时才归它（多条时分不清，宁可不猜）。
+ */
+export function matchLegacy(record: InstanceRecordLite, ref: LaunchRefLike, options: { readonly uniqueLaunch: boolean }): boolean {
+    if (record.launch !== null) return false;
+    if (!samePath(record.worktree, ref.worktree) || !sameApp(record.app, ref.app)) return false;
+    const hint = launchHint(record);
+    return hint === null ? options.uniqueLaunch : hint === ref.launch;
+}
+
 /** 展示形式的路径：仓库内相对路径优先，其次 `~` 缩写，最后原样 */
 export function displayPath(path: string, repoRoot: string): string {
     const rel = relative(resolve(repoRoot), resolve(path));
@@ -218,6 +256,12 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
     const nodeIdOf = inputs.nodeIdOf ?? readNodeId;
     const launches: LaunchStatus[] = [];
     let appCount = 0;
+    // 老记录没有 worktree：先按 cwd 归到已知 worktree（嵌套取最长前缀），否则永远匹配不上
+    const knownPaths = targets.map((item) => item.path);
+    const records = inputs.records.map((rec) => {
+        const worktree = worktreeOf(rec, knownPaths);
+        return worktree === null || worktree === rec.worktree ? rec : { ...rec, worktree };
+    });
     for (const worktree of targets) {
         const apps = inputs.appsOf(worktree.path);
         appCount += apps.length;
@@ -225,7 +269,12 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
         for (const app of apps) {
             for (const launch of app.launches) {
                 const key = launchKey(worktree.path, app.name, launch.id);
-                const record = inputs.records.find((rec) => matchRecord(rec, { worktree: worktree.path, app: app.name, launch: launch.id }));
+                const ref = { worktree: worktree.path, app: app.name, launch: launch.id };
+                // 先按三元组精确匹配；匹配不上再给老记录（launch=null）一次机会：
+                // 手工 `./sha.sh lab` / 旧版本自报的记录没有 launch，靠 build/<variant> 痕迹或「该 app 只有一条 launch」归属
+                const record =
+                    records.find((rec) => matchRecord(rec, ref)) ??
+                    records.find((rec) => matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }));
                 const running = record !== undefined;
                 const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
                 const nodeId = nodeIdOf(home);
