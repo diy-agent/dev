@@ -147,13 +147,26 @@ const KNOWN_VARIANTS = new Set(["lab", "test", "staging", "prod"]);
  * `build/lab/1/home` → `<worktree>/build/lab`；`build/lab/home`（老写法）→ 同样归一。
  * 多实例匹配靠它：`lab/1` 与 `lab/2` 是同一个 launch，只是数据根不同。
  */
-export function homeRootOf(worktree: string, home: string | undefined): string {
-    const abs = resolve(worktree, home ?? DEFAULT_HOME);
+export function homeRootOf(worktree: string, launchId: string, home?: string): string {
+    // 没显式声明 ⇒ 数据根族就是 `build/<launch>`（洞位在它下面）
+    if (home === undefined || home === "") return resolve(worktree, "build", launchId);
+    const abs = resolve(worktree, home);
     const parts = abs.split(sep);
     if (parts[parts.length - 1] === "home") parts.pop();
     const last = parts[parts.length - 1] ?? "";
     if (last !== "" && !KNOWN_VARIANTS.has(last)) parts.pop(); // 去掉 slot 段
     return parts.join(sep) || sep;
+}
+
+/**
+ * 一条 launch 的**缺省数据根**：`build/<launch>/<slot>/home`。
+ *
+ * 为什么由槽位推导而不是在 app.yaml 声明（##518 用户裁）：声明与实际常常对不上，
+ * 而「一个入口 N 份实例」意味着数据根本来就得随槽位变 —— 声明一份固定值天生错。
+ * 显式 `home:` 仍支持（旧数据 / /tmp 临时根），但那是**例外**，不是常态。
+ */
+export function deriveHome(worktree: string, launchId: string, slot: number | string = 1): string {
+    return resolve(worktree, "build", launchId, String(slot), "home");
 }
 
 /** 数据根比较：`~/.diy` 与 `/Users/x/.diy` 视为同一个根（老记录可能带 `~`） */
@@ -341,8 +354,9 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                 const ref = { worktree: worktree.path, app: app.name, launch: launch.id };
                 // 先按三元组精确匹配；匹配不上再给老记录（launch=null）一次机会：
                 // 手工 `./sha.sh lab` / 旧版本自报的记录没有 launch，靠 build/<variant> 痕迹或「该 app 只有一条 launch」归属
-                const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
-                const homeRoot = homeRootOf(worktree.path, launch.home);
+                const declaredHome = launch.home !== undefined && launch.home !== "";
+                const home = declaredHome ? resolve(worktree.path, launch.home as string) : deriveHome(worktree.path, launch.id);
+                const homeRoot = homeRootOf(worktree.path, launch.id, launch.home);
                 // 一个 launch 可有多个实例（lab/1、lab/2…）：先收齐，再按启动时间排序
                 const matched = records.filter(
                     (rec) =>
@@ -361,20 +375,15 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
                 const record = matched[0];
                 const running = record !== undefined;
-                const homeDeclared = launch.home !== undefined && launch.home !== "";
+                const homeDeclared = declaredHome;
+                // 配置问题已退役（##518）：home 由槽位推导 ⇒ 不再有「缺声明 / 同根冲突」。
+                // 显式 home 只剩一个风险：同一 app 两条 launch 写死同一个根（会抢单实例锁）。
                 const configIssues: LaunchConfigIssue[] = [];
-                if (!homeDeclared) {
-                    configIssues.push({
-                        code: "home-missing",
-                        message: `app.yaml 未声明 home：启动器只能按缺省 ${DEFAULT_HOME} 显示数据根 / 实例 URI，与实际启动的数据根对不上时会误导排查`,
-                        fix: `在该 launch 下补一行 \`home: ${DEFAULT_HOME}\`（与本 app 的 sha.sh 实际用的数据根一致；多个 launch 共用同一根则各写不同的）`,
-                    });
-                }
-                if ((homeUse.get(home) ?? 0) > 1) {
+                if (declaredHome && (homeUse.get(home) ?? 0) > 1) {
                     configIssues.push({
                         code: "home-duplicate",
-                        message: `同一 app 有 ${String(homeUse.get(home))} 条 launch 共用数据根 ${home}：同时启动会抢单实例锁，后起的那条会静默退出`,
-                        fix: "给每条 launch 写不同的 `home:`（按变体 / 端口分根，如 `home: build/prod/home`）",
+                        message: `同一个 app 有 ${String(homeUse.get(home))} 条 launch 显式声明了同一个数据根 ${home}：同时启动会抢单实例锁`,
+                        fix: "删掉 `home:` 让它按槽位推导（build/<launch>/<slot>/home），或给各自写不同的根",
                     });
                 }
                 const nodeId = nodeIdOf(home);

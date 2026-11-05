@@ -22,7 +22,7 @@ const record = (patch: Partial<InstanceRecordLite> = {}): InstanceRecordLite => 
     launch: "lab",
     worktree: "/repo",
     port: null,
-    diyHome: "/repo/build/lab/home",
+    diyHome: "/repo/build/lab/1/home",
     variant: "lab",
     env: "development",
     argv: ["/electron", "build/lab/main/index.mjs"],
@@ -108,9 +108,9 @@ describe("匹配键 (worktree, app, launch)", () => {
 describe("数据根参与匹配（##518：真生产实例不许被当成 practice launch）", () => {
     it("三元组相同但 diyHome 不同 ⇒ 不匹配", () => {
         const ref = { worktree: "/repo", app: "chat", launch: "lab" };
-        expect(matchRecord(record({ diyHome: "/repo/build/lab/home" }), ref, "/repo/build/lab/home")).toBe(true);
+        expect(matchRecord(record({ diyHome: "/repo/build/lab/1/home" }), ref, "/repo/build/lab/1/home")).toBe(true);
         // 生产实例：cwd/worktree/launch 都对，数据根是 ~/.diy ⇒ 不算这条 launch 在跑
-        expect(matchRecord(record({ diyHome: "/Users/x/.diy" }), ref, "/repo/build/lab/home")).toBe(false);
+        expect(matchRecord(record({ diyHome: "/Users/x/.diy" }), ref, "/repo/build/lab/1/home")).toBe(false);
         // 老记录写 `~/` 形态也要认
         expect(sameHome("~/build/lab/home", `${homedir()}/build/lab/home`)).toBe(true);
     });
@@ -122,7 +122,7 @@ describe("数据根参与匹配（##518：真生产实例不许被当成 practic
             worktrees,
             appsOf: () => [chatApp()],
             records: [
-                record({ pid: 111, diyHome: "/repo/build/lab/home" }),
+                record({ pid: 111, diyHome: "/repo/build/lab/1/home" }),
                 record({ pid: 222, app: "diy-app", launch: null, worktree: null, diyHome: "/Users/x/.diy" }),
             ],
             starting: new Set(),
@@ -254,7 +254,7 @@ describe("withPort（配置端口 vs 实际端口）", () => {
 
 describe("displayPath / buildSnapshot", () => {
     it("仓库内显示相对路径，家目录缩 ~", () => {
-        expect(displayPath("/repo/build/lab/home", "/repo")).toBe("build/lab/home");
+        expect(displayPath("/repo/build/lab/1/home", "/repo")).toBe("build/lab/1/home");
         expect(displayPath(`${process.env["HOME"]}/.diy`, "/repo")).toMatch(/^~\/\.diy$/);
     });
 
@@ -291,7 +291,7 @@ describe("displayPath / buildSnapshot", () => {
         expect(first.worktreePath).toBe("/repo");
         expect(first.env).toEqual({});
         expect(first.yamlPath).toBe("/repo/apps/chat/app.yaml");
-        expect(first.home).toBe("/repo/build/lab/home");
+        expect(first.home).toBe("/repo/build/lab/1/home");
     });
 
     it("实例 URI：nodeId 从数据根读，没有 instance-id 就是 null", () => {
@@ -303,7 +303,7 @@ describe("displayPath / buildSnapshot", () => {
             records: [],
             starting: new Set(),
             builtOf: () => true,
-            nodeIdOf: (home) => (home === "/repo/build/lab/home" ? "diy-9c5cdc25" : null),
+            nodeIdOf: (home) => (home === "/repo/build/lab/1/home" ? "diy-9c5cdc25" : null),
         });
         expect(snapshot.launches[0]?.uri).toBe("diy://diy-9c5cdc25/chat.lab");
 
@@ -326,7 +326,7 @@ describe("displayPath / buildSnapshot", () => {
             worktrees,
             appsOf: () => [webApp()],
             records: [
-                record({ pid: 4321, app: "diy-web", launch: "web-8123", worktree: "/repo", port: 8124 }),
+                record({ pid: 4321, app: "diy-web", launch: "web-8123", worktree: "/repo", port: 8124, diyHome: "/repo/build/web-8123/1/home" }),
                 record({ pid: 9999, app: "diy-chat", launch: "lab", worktree: "/repo" }),
             ],
             starting: new Set(),
@@ -357,9 +357,10 @@ describe("displayPath / buildSnapshot", () => {
             builtOf: () => true,
         });
         const chat = snapshot.launches.find((item) => item.app === "chat")!;
+        // ##518：未声明 home ⇒ 按槽位推导 build/<launch>/<slot>/home，且不再报错
         expect(chat.homeDeclared).toBe(false);
-        expect(chat.configIssues.map((issue) => issue.code)).toEqual(["home-missing"]);
-        expect(chat.home).toBe("/repo/build/lab/home");
+        expect(chat.configIssues).toEqual([]);
+        expect(chat.home).toBe("/repo/build/lab/1/home");
     });
 
     it("手工跑的老记录（launch / worktree 都是 null）也能对上 ⇒ running", () => {
