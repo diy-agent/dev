@@ -16,7 +16,7 @@
 | `pkgs/dev-ref/` | `@diy-agent/dev-ref`：ref 能力库（add / sync / list / remove）。**##510 起没有 `bin/dev`**：`src/ref/**` 六文件原样被 `pkgs/dev-page` 的「外部仓库」页复用，开发期可 `./sha.sh dev ref …`（tsx 直跑源码） |
 | `pkgs/dev-core/` | `@diy-agent/dev-core`：dev 启动器业务层（静态发现 / 运行时对账 / 启停动作），无 UI 无 Electron |
 | `pkgs/dev-page/` | `@diy-agent/dev-page`：dev 启动器页面插件，出两页 —— 「应用」（主进程方法表 + 裸 DOM renderer）与「外部仓库」（ref 同步 / 添加 / 移除） |
-| `apps/dev/` | `@diy-agent/app-dev`：装配器（插件清单 + 窗口入口 + renderer 打包入口），≤100 行 |
+| `apps/dev/` | `@diy-agent/app-dev`：装配器（插件清单 + 窗口入口 + renderer 打包入口），≤100 行。命令：`./sha.sh build`（只出产物，固定 `build/app/`）、`./sha.sh run <launch> [--slot N]`（lab / staging；数据根 `build/<launch>/<slot>/home`）、`./sha.sh app list|new|stop`（多实例，自动分配槽位）、`./sha.sh -h` 看全部 |
 | `docs/` | 历史架构文档（Python 时代，只读参考） |
 | `skills/` | 项目级 skills（git-cleanup / win-file-unlock） |
 | `archive/` | Python 时代 CLI 归档，只读 |
