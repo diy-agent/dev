@@ -1,30 +1,18 @@
-// preload.ts — 唯一一座桥：把外壳的两个通道包成 window.workbench。
+// preload.ts — 唯一一座桥（2026-11-05 B2 起底部通道换成 @diy-agent/rpc）。
 //
-// contextIsolation + sandbox 打开时 renderer 拿不到 Node，只能走这里。
-// 通道名来自 @diy-agent/workbench/channels（与主进程同一份常量，别手写字符串）。
+// 两条通道各管一摊，互不干扰：
+//   · `workbench-rpc`：外壳自己的桥（页面清单 / page:invoke / 意图测试命令）——
+//     由 `@diy-agent/workbench/preload` 的 createPreloadBridge 装配，别再手写 ipcRenderer 调
+//     （B1 把旧的两个 IPC 常量换成了 rpc，手写 `page:invoke` 会撞 No handler registered）。
+//   · `dev-fs-rpc`：dev 自己的文件能力（fs.list/read/write），主进程侧 bindFsHandlers 绑这条。
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge } from "electron";
 import { createRendererTransport } from "@diy-agent/rpc/electron/renderer";
-import {
-    PAGE_INVOKE_CHANNEL,
-    PAGE_LIST_CHANNEL,
-    type PageInvokeRequest,
-    type WorkbenchBridge,
-} from "@diy-agent/workbench/channels";
+import { RPC_CHANNEL } from "@diy-agent/workbench";
+import { createPreloadBridge } from "@diy-agent/workbench/preload";
 
-const bridge: WorkbenchBridge = {
-    listPages: () => ipcRenderer.invoke(PAGE_LIST_CHANNEL),
-    invoke: (pageId, method, args) => {
-        const request: PageInvokeRequest = { pageId, method, args };
-        return ipcRenderer.invoke(PAGE_INVOKE_CHANNEL, request);
-    },
-};
+const workbench = createPreloadBridge(createRendererTransport(RPC_CHANNEL));
+contextBridge.exposeInMainWorld("workbench", workbench.bridge);
 
-contextBridge.exposeInMainWorld("workbench", bridge);
-
-// ── rpc 通道（##518）──
-// 文件读写走 @diy-agent/rpc 的 electron 传输（主仓已把子路径拆成 electron/main 与 electron/renderer）：preload 只把 EnvelopeTransport 递出去，
-// renderer 用 ChannelClientBinding + createTypedClient 就能拿到带 zod 校验的类型化方法。
-// 与 workbench 的 page:invoke 并存：页面方法表管「页面行为」，rpc 管「独立的能力域」。
-const transport = createRendererTransport();
-contextBridge.exposeInMainWorld("transport", transport);
+const FS_CHANNEL = "dev-fs-rpc";
+contextBridge.exposeInMainWorld("transport", createRendererTransport(FS_CHANNEL));

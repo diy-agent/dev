@@ -41,11 +41,11 @@ createWorkbench({
         // main 侧 transport 自己写（不用 @diy-agent/rpc/electron）：那个模块顶层同时 import 了
         // ipcRenderer，而主进程的 electron 没有这个导出 ⇒ 加载即 SyntaxError。
         // 语义与它一致：同名 channel、webContents.send 下行、ipcMain.on 上行、窗口销毁即 onClose。
-        const RPC_CHANNEL = "rpc";
+        const FS_CHANNEL = "dev-fs-rpc";
         const mainTransport: EnvelopeTransport = (() => {
             const handlers = new Set<(msg: unknown) => void>();
             const close = new Set<() => void>();
-            ipcMain.on(RPC_CHANNEL, (_event, payload: unknown) => {
+            ipcMain.on(FS_CHANNEL, (_event, payload: unknown) => {
                 for (const handler of handlers) handler(payload);
             });
             const contents = () => workbench.window()?.webContents;
@@ -55,7 +55,7 @@ createWorkbench({
             return {
                 send: (payload: unknown) => {
                     try {
-                        contents()?.send(RPC_CHANNEL, payload);
+                        contents()?.send(FS_CHANNEL, payload);
                     } catch {
                         for (const cb of close) cb();
                     }
