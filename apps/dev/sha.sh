@@ -37,53 +37,6 @@ _running() {
   ' "$reg" "$repo"
 }
 
-#: 多实例管理：app list / app new [variant] / app stop <slot|pid|all>
-#: 用法: ./sha.sh app list
-#: 槽位数据根 build/<变体>/<槽>/home，自动挑最小空闲槽。
-app() {
-  local action="${1:-list}"; shift || true
-  case "$action" in
-    list|ls)
-      echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
-      _running | while IFS=$'\t' read -r slot pid home; do
-        printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
-      done
-      ;;
-    new)
-      local variant="${1:-lab}"
-      # 自动挑最小的空闲整数 slot
-      local slot=1 used
-      used="$(_running | cut -f1)"
-      while printf '%s\n' "$used" | grep -qx "${variant}/${slot}"; do slot=$((slot + 1)); done
-      local log="$(_repo_root)/build/${variant}/${slot}.log"
-      run mkdir -p "$(_repo_root)/build/${variant}"
-      echo "${info}新实例：${variant}/${slot}（日志 ${log}）${reset}"
-      # 后台起：脱离终端（disown 效果），立刻回到提示符
-      nohup "$SCRIPT_DIR/sha.sh" "$variant" "$slot" > "$log" 2>&1 < /dev/null &
-      echo "  已后台启动 ${variant}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
-      ;;
-    stop)
-      local target="${1:-}"
-      [ -n "$target" ] || { echo "用法：./sha.sh app stop <slot|pid|all>" >&2; return 1; }
-      local rows; rows="$(_running)"
-      if [ "$target" = "all" ]; then
-        printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
-          [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
-        done
-        return 0
-      fi
-      local pid
-      pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$target" '$1==t || $1 ~ "/"t"$" {print $2; exit}')"
-      [ -n "$pid" ] || { echo "找不到目标：$target（用 app list 看看有什么）" >&2; return 1; }
-      kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-      echo "  已停 ${target}（pid ${pid}）"
-      ;;
-    *)
-      echo "用法：./sha.sh app <new [variant] | list | stop <slot|pid|all>>" >&2
-      return 1
-      ;;
-  esac
-}
 
 #
 # 产物按变体分根：build/<variant>/{main,preload,renderer}
@@ -279,52 +232,49 @@ _running() {
   ' "$reg" "$repo"
 }
 
-#: 多实例管理：app list / app new [variant] / app stop <slot|pid|all>
+#: 列出本 worktree 在跑的实例（槽位 / pid / 数据根）
 #: 用法: ./sha.sh app list
-#: 槽位数据根 build/<变体>/<槽>/home，自动挑最小空闲槽。
-app() {
-  local action="${1:-list}"; shift || true
-  case "$action" in
-    list|ls)
-      echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
-      _running | while IFS=$'\t' read -r slot pid home; do
-        printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
-      done
-      ;;
-    new)
-      local variant="${1:-lab}"
-      # 自动挑最小的空闲整数 slot
-      local slot=1 used
-      used="$(_running | cut -f1)"
-      while printf '%s\n' "$used" | grep -qx "${variant}/${slot}"; do slot=$((slot + 1)); done
-      local log="$(_repo_root)/build/${variant}/${slot}.log"
-      run mkdir -p "$(_repo_root)/build/${variant}"
-      echo "${info}新实例：${variant}/${slot}（日志 ${log}）${reset}"
-      # 后台起：脱离终端（disown 效果），立刻回到提示符
-      nohup "$SCRIPT_DIR/sha.sh" "$variant" "$slot" > "$log" 2>&1 < /dev/null &
-      echo "  已后台启动 ${variant}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
-      ;;
-    stop)
-      local target="${1:-}"
-      [ -n "$target" ] || { echo "用法：./sha.sh app stop <slot|pid|all>" >&2; return 1; }
-      local rows; rows="$(_running)"
-      if [ "$target" = "all" ]; then
-        printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
-          [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
-        done
-        return 0
-      fi
-      local pid
-      pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$target" '$1==t || $1 ~ "/"t"$" {print $2; exit}')"
-      [ -n "$pid" ] || { echo "找不到目标：$target（用 app list 看看有什么）" >&2; return 1; }
-      kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-      echo "  已停 ${target}（pid ${pid}）"
-      ;;
-    *)
-      echo "用法：./sha.sh app <new [variant] | list | stop <slot|pid|all>>" >&2
-      return 1
-      ;;
-  esac
+app.list() {
+  echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
+  _running | while IFS=$'\t' read -r slot pid home; do
+    printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
+  done
+}
+
+#: 起一份新实例：自动挑最小空闲槽位，后台跑（立刻回到提示符）
+#: 用法: ./sha.sh app new [--launch lab]
+sha.def "app.new" --opt "--launch:string=lab:入口（lab / staging）" --desc "起一份新实例"
+app.new() {
+  local launch
+  sha.parse "$@" || return $?
+  local slot=1 used
+  used="$(_running | cut -f1)"
+  while printf '%s\n' "$used" | grep -qx "${launch}/${slot}"; do slot=$((slot + 1)); done
+  local log="$(_repo_root)/build/${launch}/${slot}.log"
+  run mkdir -p "$(_repo_root)/build/${launch}"
+  echo "${info}新实例：${launch}/${slot}（日志 ${log}）${reset}"
+  nohup "$SCRIPT_DIR/sha.sh" run "$launch" --slot "$slot" > "$log" 2>&1 < /dev/null &
+  echo "  已后台启动 ${launch}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
+}
+
+#: 停一份实例：槽位名（lab/2 或 2）、pid、或 all
+#: 用法: ./sha.sh app stop <TARGET>
+sha.def "app.stop" --arg "TARGET!:槽位名 / pid / all" --desc "停实例"
+app.stop() {
+  local TARGET
+  sha.parse "$@" || return $?
+  local rows; rows="$(_running)"
+  if [ "$TARGET" = "all" ]; then
+    printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
+      [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
+    done
+    return 0
+  fi
+  local pid
+  pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$TARGET" '$1==t || $1 ~ "/"t"$" || $2==t {print $2; exit}')"
+  [ -n "$pid" ] || { echo "找不到目标：$TARGET（用 app list 看看有什么）" >&2; return 1; }
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  echo "  已停 ${TARGET}（pid ${pid}）"
 }
 
 sha "$@"
