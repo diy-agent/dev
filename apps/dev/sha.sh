@@ -6,7 +6,82 @@
 # 定义函数即为子命令：`foo() { ... }` → `./sha.sh foo`
 #
 # ── 执行链 ──────────────────────────────────────
-# sha.sh → source ../../sha.common.sh → source vendor/sha/sha.bash → sha "$@"
+# sha.sh → source ../../sha.common.sh → source vendor/sha/sha.bash → ####################################################################################
+# app —— 多实例管理（##518）：new / list / stop
+#
+# 为什么要有这一层：`lab`/`staging` 一次只起**一份**（前台，占着终端），而
+# 「再起一份做 remote A/B 测试」是日常需求。命令层负责**自动分配 slot**并让实例跑在后台，
+# 人只需要说「再来一个」。
+####################################################################################
+
+_reg_dir() { echo "${DIY_DEV_HOME:-$HOME/.diy/dev}/apps"; }
+
+# 本 worktree 的在跑实例：每行 `slot<TAB>pid<TAB>home`
+_running() {
+  local reg repo; reg="$(_reg_dir)"; repo="$(_repo_root)"
+  [ -d "$reg" ] || return 0
+  node -e '
+    const { readdirSync, readFileSync } = require("node:fs");
+    const [dir, repo] = process.argv.slice(1);
+    const out = [];
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      let rec;
+      try { rec = JSON.parse(readFileSync(`${dir}/${name}`, "utf-8")); } catch { continue; }
+      if (rec.app !== "diy-dev" || rec.worktree !== repo) continue;
+      try { process.kill(rec.pid, 0); } catch { continue; } // 死记录不算
+      out.push([String(rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
+    }
+    out.sort((a, b) => a[1].localeCompare(b[1]));
+    for (const row of out) console.log(row.join("\t"));
+  ' "$reg" "$repo"
+}
+
+app() {
+  local action="${1:-list}"; shift || true
+  case "$action" in
+    list|ls)
+      echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
+      _running | while IFS=$'\t' read -r slot pid home; do
+        printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
+      done
+      ;;
+    new)
+      local variant="${1:-lab}"
+      # 自动挑最小的空闲整数 slot
+      local slot=1 used
+      used="$(_running | cut -f1)"
+      while printf '%s\n' "$used" | grep -qx "${variant}/${slot}"; do slot=$((slot + 1)); done
+      local log="$(_repo_root)/build/${variant}/${slot}.log"
+      run mkdir -p "$(_repo_root)/build/${variant}"
+      echo "${info}新实例：${variant}/${slot}（日志 ${log}）${reset}"
+      # 后台起：脱离终端（disown 效果），立刻回到提示符
+      nohup "$SCRIPT_DIR/sha.sh" "$variant" "$slot" > "$log" 2>&1 < /dev/null &
+      echo "  已后台启动 ${variant}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
+      ;;
+    stop)
+      local target="${1:-}"
+      [ -n "$target" ] || { echo "用法：./sha.sh app stop <slot|pid|all>" >&2; return 1; }
+      local rows; rows="$(_running)"
+      if [ "$target" = "all" ]; then
+        printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
+          [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
+        done
+        return 0
+      fi
+      local pid
+      pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$target" '$1==t || $1 ~ "/"t"$" {print $2; exit}')"
+      [ -n "$pid" ] || { echo "找不到目标：$target（用 app list 看看有什么）" >&2; return 1; }
+      kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      echo "  已停 ${target}（pid ${pid}）"
+      ;;
+    *)
+      echo "用法：./sha.sh app <new [variant] | list | stop <slot|pid|all>>" >&2
+      return 1
+      ;;
+  esac
+}
+
 #
 # 产物按变体分根：build/<variant>/{main,preload,renderer}
 # 数据根在**仓库根** build/<variant>/home（与主仓 pkgs.ts 各包同一约定）
@@ -138,5 +213,81 @@ lint() { run npx oxlint .; }
 lint-fix() { run npx oxlint --fix .; }
 fmt() { run npx oxfmt --check .; }
 fmt-fix() { run npx oxfmt --write .; }
+
+####################################################################################
+# app —— 多实例管理（##518）：new / list / stop
+#
+# 为什么要有这一层：`lab`/`staging` 一次只起**一份**（前台，占着终端），而
+# 「再起一份做 remote A/B 测试」是日常需求。命令层负责**自动分配 slot**并让实例跑在后台，
+# 人只需要说「再来一个」。
+####################################################################################
+
+_reg_dir() { echo "${DIY_DEV_HOME:-$HOME/.diy/dev}/apps"; }
+
+# 本 worktree 的在跑实例：每行 `slot<TAB>pid<TAB>home`
+_running() {
+  local reg repo; reg="$(_reg_dir)"; repo="$(_repo_root)"
+  [ -d "$reg" ] || return 0
+  node -e '
+    const { readdirSync, readFileSync } = require("node:fs");
+    const [dir, repo] = process.argv.slice(1);
+    const out = [];
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      let rec;
+      try { rec = JSON.parse(readFileSync(`${dir}/${name}`, "utf-8")); } catch { continue; }
+      if (rec.app !== "diy-dev" || rec.worktree !== repo) continue;
+      try { process.kill(rec.pid, 0); } catch { continue; } // 死记录不算
+      out.push([String(rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
+    }
+    out.sort((a, b) => a[1].localeCompare(b[1]));
+    for (const row of out) console.log(row.join("\t"));
+  ' "$reg" "$repo"
+}
+
+app() {
+  local action="${1:-list}"; shift || true
+  case "$action" in
+    list|ls)
+      echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
+      _running | while IFS=$'\t' read -r slot pid home; do
+        printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
+      done
+      ;;
+    new)
+      local variant="${1:-lab}"
+      # 自动挑最小的空闲整数 slot
+      local slot=1 used
+      used="$(_running | cut -f1)"
+      while printf '%s\n' "$used" | grep -qx "${variant}/${slot}"; do slot=$((slot + 1)); done
+      local log="$(_repo_root)/build/${variant}/${slot}.log"
+      run mkdir -p "$(_repo_root)/build/${variant}"
+      echo "${info}新实例：${variant}/${slot}（日志 ${log}）${reset}"
+      # 后台起：脱离终端（disown 效果），立刻回到提示符
+      nohup "$SCRIPT_DIR/sha.sh" "$variant" "$slot" > "$log" 2>&1 < /dev/null &
+      echo "  已后台启动 ${variant}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
+      ;;
+    stop)
+      local target="${1:-}"
+      [ -n "$target" ] || { echo "用法：./sha.sh app stop <slot|pid|all>" >&2; return 1; }
+      local rows; rows="$(_running)"
+      if [ "$target" = "all" ]; then
+        printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
+          [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
+        done
+        return 0
+      fi
+      local pid
+      pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$target" '$1==t || $1 ~ "/"t"$" {print $2; exit}')"
+      [ -n "$pid" ] || { echo "找不到目标：$target（用 app list 看看有什么）" >&2; return 1; }
+      kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      echo "  已停 ${target}（pid ${pid}）"
+      ;;
+    *)
+      echo "用法：./sha.sh app <new [variant] | list | stop <slot|pid|all>>" >&2
+      return 1
+      ;;
+  esac
+}
 
 sha "$@"

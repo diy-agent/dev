@@ -18,6 +18,12 @@
 ./sha.sh lab        # 构建 + 起 lab 实例（development、CDP 9223、副屏）
 ./sha.sh staging    # 构建 + 起 staging（production 环境 + 隔离数据根）
 ./bin/dev app staging  # 同上但 staging；bin/dev 只执行 app.yaml 里那条 command，不自己拼
+
+# 多实例（自动分配 slot，后台跑）
+./sha.sh app new lab   # 自动挑最小空闲 slot → build/lab/<slot>/home，后台启动
+./sha.sh app list      # 本 worktree 在跑的实例（slot / pid / 数据根）
+./sha.sh app stop 2    # 停某一份（也可写 pid）
+./sha.sh app stop all  # 全停
 ./sha.sh check      # 类型 + lint
 cd ../../pkgs/dev-core && ./sha.sh test   # 纯逻辑单测（不拉 Electron）
 ```
