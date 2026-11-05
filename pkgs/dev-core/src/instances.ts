@@ -10,9 +10,18 @@
 
 import { readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, relative, isAbsolute, resolve } from "node:path";
+import { basename, join, relative, isAbsolute, resolve, sep } from "node:path";
 import { registryDir as registryDirOf } from "@diy-agent/dev-paths";
-import type { AppSpec, DevSnapshot, EntryStatus, LaunchConfigIssue, LaunchRuntime, LaunchStatus, WorktreeInfo } from "./shared.js";
+import type {
+    AppSpec,
+    DevSnapshot,
+    EntryStatus,
+    LaunchConfigIssue,
+    LaunchInstance,
+    LaunchRuntime,
+    LaunchStatus,
+    WorktreeInfo,
+} from "./shared.js";
 
 /** 注册表目录：**唯一真源在 `@diy-agent/dev-paths`**（`~/.diy/dev/apps`），这里只转发 */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -129,6 +138,24 @@ export function samePath(a: string | null, b: string): boolean {
     return resolve(a) === resolve(b);
 }
 
+/** 已知的入口变体名（`build/<variant>/...` 里的那一段） */
+const KNOWN_VARIANTS = new Set(["lab", "test", "staging", "prod"]);
+
+/**
+ * 一条 launch 的**数据根族**：同一入口的所有 slot 都落在它下面。
+ *
+ * `build/lab/1/home` → `<worktree>/build/lab`；`build/lab/home`（老写法）→ 同样归一。
+ * 多实例匹配靠它：`lab/1` 与 `lab/2` 是同一个 launch，只是数据根不同。
+ */
+export function homeRootOf(worktree: string, home: string | undefined): string {
+    const abs = resolve(worktree, home ?? DEFAULT_HOME);
+    const parts = abs.split(sep);
+    if (parts[parts.length - 1] === "home") parts.pop();
+    const last = parts[parts.length - 1] ?? "";
+    if (last !== "" && !KNOWN_VARIANTS.has(last)) parts.pop(); // 去掉 slot 段
+    return parts.join(sep) || sep;
+}
+
 /** 数据根比较：`~/.diy` 与 `/Users/x/.diy` 视为同一个根（老记录可能带 `~`） */
 export function sameHome(a: string | null, b: string | null): boolean {
     if (a === null || b === null || a === "" || b === "") return false;
@@ -143,6 +170,20 @@ export interface LaunchRefLike {
     readonly worktree: string;
     readonly app: string;
     readonly launch: string;
+}
+
+/**
+ * 这条记录是否属于这个 launch 的某个实例（##518：一个入口可以有多份 `lab/1`、`lab/2`）。
+ *
+ * 判据：worktree + app 相同、launch 名相同（允许 `<id>/<slot>` 后缀）、数据根落在该 launch 的
+ * 数据根族里。族外一律不认 —— 真生产 `~/.diy` 因此永远不会被当成 worktree 的 launch。
+ */
+export function matchInstance(record: InstanceRecordLite, ref: LaunchRefLike & { readonly homeRoot: string }): boolean {
+    if (!samePath(record.worktree, ref.worktree) || !sameApp(record.app, ref.app)) return false;
+    const launch = record.launch ?? "";
+    if (launch !== ref.launch && !launch.startsWith(`${ref.launch}/`)) return false;
+    const home = resolve(record.diyHome === "" ? "." : record.diyHome);
+    return home === ref.homeRoot || home.startsWith(`${ref.homeRoot}${sep}`);
 }
 
 /**
@@ -301,14 +342,25 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                 // 先按三元组精确匹配；匹配不上再给老记录（launch=null）一次机会：
                 // 手工 `./sha.sh lab` / 旧版本自报的记录没有 launch，靠 build/<variant> 痕迹或「该 app 只有一条 launch」归属
                 const home = resolve(worktree.path, launch.home ?? DEFAULT_HOME);
-                const record =
-                    records.find((rec) => matchRecord(rec, ref, home)) ??
-                    records.find(
-                        (rec) =>
-                            matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }) && sameHome(rec.diyHome, home),
-                    );
+                const homeRoot = homeRootOf(worktree.path, launch.home);
+                // 一个 launch 可有多个实例（lab/1、lab/2…）：先收齐，再按启动时间排序
+                const matched = records.filter(
+                    (rec) =>
+                        matchInstance(rec, { ...ref, homeRoot }) ||
+                        (matchLegacy(rec, ref, { uniqueLaunch: app.launches.length === 1 }) && sameHome(rec.diyHome, home)),
+                );
+                for (const rec of matched) claimed.add(rec.pid);
+                const instances: LaunchInstance[] = matched
+                    .map((rec) => ({
+                        pid: rec.pid,
+                        launch: rec.launch ?? launch.id,
+                        diyHome: rec.diyHome,
+                        startedAt: rec.startedAt,
+                        port: rec.port,
+                    }))
+                    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+                const record = matched[0];
                 const running = record !== undefined;
-                if (record !== undefined) claimed.add(record.pid);
                 const homeDeclared = launch.home !== undefined && launch.home !== "";
                 const configIssues: LaunchConfigIssue[] = [];
                 if (!homeDeclared) {
@@ -380,6 +432,7 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                     running,
                     starting: !running && inputs.starting.has(key),
                     entries,
+                    instances,
                     runtime,
                 });
             }

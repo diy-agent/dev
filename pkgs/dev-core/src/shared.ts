@@ -79,6 +79,16 @@ export interface LaunchRuntime {
     readonly diyHome: string;
 }
 
+/** 一个在跑的实例（同一 launch 可以有多个：`lab/1`、`lab/2`…，靠数据根区分） */
+export interface LaunchInstance {
+    readonly pid: number;
+    /** 注册表里的 launch 全名（可能带 slot：`lab/2`） */
+    readonly launch: string;
+    readonly diyHome: string;
+    readonly startedAt: string;
+    readonly port: number | null;
+}
+
 export interface LaunchStatus {
     /** `(worktree, app, launch)` 的稳定 key（UI 选中 / 定位用） */
     readonly key: string;
@@ -123,6 +133,9 @@ export interface LaunchStatus {
     /** 已拉起但还没写注册表（构建 / 启动中） */
     readonly starting: boolean;
     readonly entries: readonly EntryStatus[];
+    /** 该 launch 的**所有**在跑实例（##518：同一入口可起多份 `lab/1`、`lab/2`）；空 = 未启动 */
+    readonly instances: readonly LaunchInstance[];
+    /** 最近启动的那一份（兼容旧字段：`runtime !== null` ≡ 至少一份在跑） */
     readonly runtime: LaunchRuntime | null;
 }
 

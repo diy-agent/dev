@@ -135,6 +135,35 @@ describe("数据根参与匹配（##518：真生产实例不许被当成 practic
     });
 });
 
+describe("多实例（lab/1、lab/2 同属一条 launch）", () => {
+    it("数据根族内的记录全部归到该 launch，instances 按启动时间排序", () => {
+        const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+        const app: AppSpec = {
+            name: "chat",
+            title: "chat",
+            dir: "/repo/apps/chat",
+            launches: [{ id: "lab", command: "./sha.sh lab", home: "build/lab/1/home", entries: [] }],
+        };
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [app],
+            records: [
+                record({ pid: 2, launch: "lab/2", diyHome: "/repo/build/lab/2/home", startedAt: "2026-11-05T02:00:00.000+0800" }),
+                record({ pid: 1, launch: "lab/1", diyHome: "/repo/build/lab/1/home", startedAt: "2026-11-05T01:00:00.000+0800" }),
+                // 族外（生产）不计
+                record({ pid: 9, launch: "lab", diyHome: "/Users/x/.diy" }),
+            ],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const launch = snapshot.launches[0]!;
+        expect(launch.running).toBe(true);
+        expect(launch.instances.map((item) => item.pid)).toEqual([1, 2]);
+        expect(snapshot.externals.map((item) => item.pid)).toEqual([9]);
+    });
+});
+
 describe("老记录兜底（手工 ./sha.sh lab：launch = null）", () => {
     const ref = { worktree: "/repo", app: "chat", launch: "lab" };
 
