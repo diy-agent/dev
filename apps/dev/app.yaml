@@ -9,7 +9,7 @@ title: dev 启动器
 launches:
   - id: lab
     title: 开发（lab）
-    command: ./sha.sh lab
+    command: ./sha.sh run lab
     # 数据根必须显式声明（缺了就是配置错误：UI 显示的数据根 / 实例 URI 可能和实际启动的对不上）
     home: build/lab/1/home
     entries:
@@ -18,7 +18,7 @@ launches:
 
   - id: staging
     title: 预生产（prod 构建 + 隔离数据）
-    command: ./sha.sh staging
+    command: ./sha.sh run staging
     # 与 lab 同一份 build/app 产物，只是运行参数不同（production + 自己的数据根）
     home: build/staging/1/home
     entries:

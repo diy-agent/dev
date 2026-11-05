@@ -37,6 +37,9 @@ _running() {
   ' "$reg" "$repo"
 }
 
+#: 多实例管理：app list / app new [variant] / app stop <slot|pid|all>
+#: 用法: ./sha.sh app list
+#: 槽位数据根 build/<变体>/<槽>/home，自动挑最小空闲槽。
 app() {
   local action="${1:-list}"; shift || true
   case "$action" in
@@ -96,6 +99,8 @@ shopt -s globstar extglob
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "../../sha.common.sh"
+# 选项/位置参数解析（sha.parse / sha.def）在新版里单独成文件
+if ! declare -F sha.parse >/dev/null; then source "$SCRIPT_DIR/../../vendor/sha/sha_opt.bash"; fi
 
 # ── 产物 vs 变体：两件事，别绑一起 ─────────────────────────
 # 产物（tsc + esbuild）只跟**源码**有关：一份，落在 `build/app/`，与变体无关。
@@ -113,9 +118,12 @@ _repo_root() { ( cd "$SCRIPT_DIR/../.." && pwd ); }
 _main_repo() { ( cd "$SCRIPT_DIR/../../../diy" && pwd ); }
 
 clean() { run rm -rf ./build ./dist ./lib; }
+#: 同步依赖（本包无依赖，空实现）
 sync() { :; }
+#: 类型 + lint
 check() { typecheck; lint; }
 fix() { fmt-fix; lint-fix; }
+#: 跑测试（本包无单测，空实现）
 test() { :; }
 test-unit() { :; }
 
@@ -128,7 +136,7 @@ _ensure_electron() {
 
 # 依赖包先编 lib：主进程按包名 import、renderer 打包读 exports，都指向 lib/*.js
 # 顺序 = 依赖顺序：dev-page → dev-core；主仓的 workbench / ui-workbench 由主仓自己编。
-build-deps() {
+_build_deps() {
   ( cd "$SCRIPT_DIR/../../pkgs/dev-ref" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-core" && ./sha.sh build )
   ( cd "$SCRIPT_DIR/../../pkgs/dev-fs" && ./sha.sh build )
@@ -137,29 +145,32 @@ build-deps() {
   ( cd "$(_main_repo)/pkgs.ts/ui/workbench-ui" && ./sha.sh build )
 }
 
+#: 构建全部产物（tsc + 依赖包 lib + main/preload/renderer）
+#: 用法: ./sha.sh build
+#: 产物固定 build/app，与变体无关。
 build() {
   run npx tsc -p tsconfig.build.json
-  build-deps
-  build-main
-  build-preload
-  build-renderer
+  _build_deps
+  _build_main
+  _build_preload
+  _build_renderer
 }
 
-build-main() {
+_build_main() {
   local d; d="$(_build_dir)"
   # @diy-agent/* 保持外部：运行时按包名解析（真插件边界）
   run npx esbuild main.ts --bundle --platform=node --format=esm --target=node22 \
     --external:electron "--external:@diy-agent/*" --outfile="$d/main/index.mjs"
 }
 
-build-preload() {
+_build_preload() {
   local d; d="$(_build_dir)"
   # sandbox 下的 preload 只能是 CJS；只外置 electron
   run npx esbuild preload.ts --bundle --platform=node --format=cjs --target=node22 \
     --external:electron --outfile="$d/preload/index.cjs"
 }
 
-build-renderer() {
+_build_renderer() {
   local d; d="$(_build_dir)"
   run mkdir -p "$d/renderer"
   run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
@@ -184,8 +195,9 @@ _take_slot() {
 }
 
 # 起实例：产物固定 build/app，变体只换运行参数，slot 决定数据根
-_run_app() {
-  local variant="$1" env="$2" slot="${3:-1}"; shift 3
+_run_variant() {
+  local variant="$1" env="$2" slot="${3:-}"
+  slot="${slot:-${DIY_DEV_LAUNCH_SLOT:-1}}"
   _ensure_electron
   build
   local d; d="$(_build_dir)"
@@ -198,16 +210,38 @@ _run_app() {
   # DIY_LAUNCH = 这条 launch 的身份：注册表匹配键 + 窗口标题里的实例 URI（diy://<node>/…）
   # 一律注入 ⇒ 手工跑与 dev 面板拉起在注册表里长得一模一样，没有「另一个 lance」这回事
   local launch="${variant}/${slot}"
-  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$launch" npx electron "$d/main/index.mjs" "${_REST[@]}"
+  # DIY_DEV_LAUNCH_SLOT：让 app 自己也能知道是第几份（注册表 / 标题 / URI 用）
+  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$launch" \
+    DIY_DEV_LAUNCH_SLOT="$slot" npx electron "$d/main/index.mjs" "${_REST[@]}"
 }
 
-# 试验变体：开发环境 + CDP + 副屏。可起多份：`./sha.sh lab 2` ⇒ build/lab/2/home
-lab() { _take_slot "$@"; _run_app "${DIY_VARIANT:-lab}" development "$SLOT"; }
+#: 跑 lab（试验）实例：development + CDP + 副屏
+#: 用法: ./sha.sh run.lab [--slot N]
+#: 产物固定 build/app；数据根 build/lab/<slot>/home；slot 缺省 1，也可由 DIY_DEV_LAUNCH_SLOT 给。
+#: 槽位 = 第几份实例：再起一份做 remote A/B 测试时用它，两份数据互不干扰。
+sha.def "run.lab" --opt "--slot:string=1:实例槽位（第几份）" --desc "跑 lab 实例"
+run.lab() {
+  local slot
+  sha.parse "$@" || return $?
+  _run_variant lab development "$slot"
+}
 
-# 预生产（staging）：prod 构建 + 隔离数据根。多份：`./sha.sh staging b` ⇒ build/staging/b/home
-# `prod` 这个词只留给真正的生产（~/.diy），worktree 里不再有叫 prod 的 launch。
-staging() { _take_slot "$@"; _run_app "${DIY_VARIANT:-staging}" production "$SLOT"; }
+#: 跑 staging（预生产）实例：prod 构建 + 隔离数据根
+#: 用法: ./sha.sh run.staging [--slot N]
+#: `prod` 一词只留给真正的生产（~/.diy）；这里跑的是 prod 产物 + build/staging/<slot>/home。
+sha.def "run.staging" --opt "--slot:string=1:实例槽位（第几份）" --desc "跑 staging 实例"
+run.staging() {
+  local slot
+  sha.parse "$@" || return $?
+  _run_variant staging production "$slot"
+}
 
+#: 弃用：等价于 `run lab`，请改用 ./sha.sh run lab [--slot N]
+lab() { _take_slot "$@"; _run_variant lab development "$SLOT"; }
+#: 弃用：等价于 `run staging`，请改用 ./sha.sh run staging [--slot N]
+staging() { _take_slot "$@"; _run_variant staging production "$SLOT"; }
+
+#: 只类型检查
 typecheck() { run npx tsc -p tsconfig.json; }
 lint() { run npx oxlint .; }
 lint-fix() { run npx oxlint --fix .; }
@@ -245,6 +279,9 @@ _running() {
   ' "$reg" "$repo"
 }
 
+#: 多实例管理：app list / app new [variant] / app stop <slot|pid|all>
+#: 用法: ./sha.sh app list
+#: 槽位数据根 build/<变体>/<槽>/home，自动挑最小空闲槽。
 app() {
   local action="${1:-list}"; shift || true
   case "$action" in
