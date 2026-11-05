@@ -295,6 +295,8 @@ function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
     }${launch.configIssues.length > 0 ? `\n⚠ ${launch.configIssues.map((item) => item.message).join("\n⚠ ")}` : ""}\n点击看详情`;
     chip.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
     chip.append(el("span", "chip-nm", launch.launch));
+    // 多实例：`lab/1`、`lab/2` 同属一条 launch，chip 上标份数
+    if (launch.instances.length > 1) chip.append(el("span", "chip-n", `×${String(launch.instances.length)}`));
     chip.addEventListener("click", (event) => {
         event.stopPropagation();
         selectedKey = launch.key;
@@ -856,6 +858,28 @@ function renderExternalDetail(pid: number): void {
     body.append(box);
 }
 
+/** 实例清单（多份时才有意义）：每份的 pid / 数据根 / 停止按钮 */
+function renderInstancesCard(launch: LaunchStatus): HTMLElement | null {
+    if (launch.instances.length === 0) return null;
+    const box = card("在跑的实例", el("span", "hint", `${String(launch.instances.length)} 份`));
+    const list = el("div", "wt-launches");
+    for (const item of launch.instances) {
+        const row = el("div", "wt-launch");
+        row.append(el("span", "dot on"));
+        row.append(el("span", "wt-launch-nm", item.launch));
+        row.append(el("span", "wt-launch-cmd", `pid ${String(item.pid)}`));
+        row.append(el("span", "wt-launch-uri", item.diyHome));
+        row.append(
+            button("停止", "small stop", () => {
+                void invoke(DEV_METHODS.stop, { ...refOf(launch), pid: item.pid }).then(() => refresh());
+            }),
+        );
+        list.append(row);
+    }
+    box.append(list);
+    return box;
+}
+
 function renderDetail(): void {
     body.replaceChildren();
     if (snapshot === null) return;
@@ -883,6 +907,8 @@ function renderDetail(): void {
     if (config !== null) body.append(config);
     const entries = renderEntriesCard(launch);
     if (entries !== null) body.append(entries);
+    const instances = renderInstancesCard(launch);
+    if (instances !== null) body.append(instances);
     body.append(
         renderUriCard(launch),
         renderParamsCard(launch),

@@ -136,11 +136,16 @@ export function startLaunch(ref: LaunchRef): { ok: boolean; pid: number | null; 
     };
 }
 
-export async function stopLaunch(ref: LaunchRef): Promise<{ ok: boolean; killed: number[]; forced: boolean; reason: string }> {
+export async function stopLaunch(ref: LaunchRef & { pid?: number }): Promise<{ ok: boolean; killed: number[]; forced: boolean; reason: string }> {
     const resolved = resolveLaunch(ref);
     if (resolved === null) return { ok: false, killed: [], forced: false, reason: `没有这个 launch：${ref.app}.${ref.launch}` };
     const key = launchKey(ref.worktree, ref.app, ref.launch);
-    const record = recordOf(ref);
+    // 多实例（lab/1、lab/2）：带上 pid 就精确杀那一份；不带就按 launch 找第一份
+    const records = readRecords(registryDir());
+    const record =
+        typeof ref.pid === "number"
+            ? (records.find((item) => item.pid === ref.pid) ?? null)
+            : recordOf(ref);
     if (record === null && !runner.starting().has(key)) {
         return { ok: false, killed: [], forced: false, reason: "该 launch 没有在运行" };
     }

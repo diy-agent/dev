@@ -28,7 +28,12 @@ source "../../sha.common.sh"
 #   lab  = 试验（development、CDP、副屏、watch 重启会打断轮次）
 #   prod = 生产（production、真数据根；改 src 不重启）
 _build_dir() { echo "build/app"; }
-_home_dir() { echo "$(_repo_root)/build/${1:-lab}/home"; }
+# 数据根：`build/<variant>/<slot>/home` —— 变体 = 哪类入口，slot = 第几份实例。
+# 不兼容旧路径 `build/<variant>/home`：都是开发环境数据，重来即可（用户裁：简单一致）。
+_home_dir() {
+  local variant="${1:-lab}" slot="${2:-1}"
+  echo "$(_repo_root)/build/$variant/$slot/home"
+}
 _repo_root() { ( cd "$SCRIPT_DIR/../.." && pwd ); }
 _main_repo() { ( cd "$SCRIPT_DIR/../../../diy" && pwd ); }
 
@@ -87,30 +92,46 @@ build-renderer() {
   run cp index.html "$d/renderer/index.html"
 }
 
-# 开发实例：构建后直接起（lab 变体自带 CDP 9223）
-# 起实例：产物固定 build/app，变体只换运行参数
+# 第一个非 `-` 开头的位置参数 = slot（第几份实例），其余原样透传给 electron
+_REST=()
+SLOT=1
+# ⚠️ 不能用 `$(...)` 取返回值：命令替换跑在子 shell 里，`_REST` 会丢。
+# 一律写全局：SLOT = 第几份实例，_REST = 透传给 electron 的其余参数。
+_take_slot() {
+  local first="${1:-}"
+  if [ -n "$first" ] && [ "${first#-}" = "$first" ]; then
+    SLOT="$first"
+    _REST=("${@:2}")
+  else
+    SLOT=1
+    _REST=("$@")
+  fi
+}
+
+# 起实例：产物固定 build/app，变体只换运行参数，slot 决定数据根
 _run_app() {
-  local variant="$1" env="$2"; shift 2
+  local variant="$1" env="$2" slot="${3:-1}"; shift 3
   _ensure_electron
   build
   local d; d="$(_build_dir)"
   # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
   # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_home_dir "$variant")}"
+  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_home_dir "$variant" "$slot")}"
   run mkdir -p "$home"
-  echo "${info}产物：$d（与变体无关）${reset}"
-  echo "${info}数据根：$home（变体 $variant）${reset}"
+  echo "${info}产物：${d}（与变体无关）${reset}"
+  echo "${info}数据根：${home}（变体 ${variant}，slot ${slot}）${reset}"
   # DIY_LAUNCH = 这条 launch 的身份：注册表匹配键 + 窗口标题里的实例 URI（diy://<node>/…）
   # 一律注入 ⇒ 手工跑与 dev 面板拉起在注册表里长得一模一样，没有「另一个 lance」这回事
-  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$variant" npx electron "$d/main/index.mjs" "$@"
+  local launch="${variant}/${slot}"
+  run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$launch" npx electron "$d/main/index.mjs" "${_REST[@]}"
 }
 
-# 试验变体：开发环境 + CDP + 副屏
-lab() { _run_app "${DIY_VARIANT:-lab}" development "$@"; }
+# 试验变体：开发环境 + CDP + 副屏。可起多份：`./sha.sh lab 2` ⇒ build/lab/2/home
+lab() { _take_slot "$@"; _run_app "${DIY_VARIANT:-lab}" development "$SLOT"; }
 
-# 预生产变体（staging）：prod 构建 + 隔离数据根 `build/staging/home`。
+# 预生产（staging）：prod 构建 + 隔离数据根。多份：`./sha.sh staging b` ⇒ build/staging/b/home
 # `prod` 这个词只留给真正的生产（~/.diy），worktree 里不再有叫 prod 的 launch。
-staging() { _run_app "${DIY_VARIANT:-staging}" production "$@"; }
+staging() { _take_slot "$@"; _run_app "${DIY_VARIANT:-staging}" production "$SLOT"; }
 
 typecheck() { run npx tsc -p tsconfig.json; }
 lint() { run npx oxlint .; }
