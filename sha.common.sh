@@ -129,6 +129,7 @@ _test_colors() {
 # 在vscode中，按住macbook的cmd键,点终端上输出的‘./sake:106’, 可以让编辑器跳转到对应的脚本行，很方便
 # 获取调用栈的原理：
 #   `caller 0`输出为`22 foo ./sake`，即调用run函数的调用栈信息：行号、函数,脚本
+#: 内部命令：带彩色日志执行一条外部命令（`run ls -l`）
 run() {
   local caller_script=$(caller 0 | awk '{print $3}')
     # shellcheck disable=SC2001
@@ -166,4 +167,6 @@ if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/v
   run git submodule update --init --recursive
 fi
 source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
+# 选项/位置参数解析（sha.def / sha.parse）在独立文件里；缺了它 `sha.parse` 就是 command not found
+[ -f "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash" ] && source "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash"
 shopt -s expand_aliases  # bash默认不开启alias 扩展
