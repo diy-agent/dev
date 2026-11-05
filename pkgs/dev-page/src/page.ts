@@ -24,6 +24,7 @@ import {
     isOpenMode,
     launchKey,
     listWorktrees,
+    deriveHome,
     matchRecord,
     memoryOf,
     openPath,
@@ -118,15 +119,24 @@ function recordOf(ref: LaunchRef) {
     return readRecords(registryDir()).find((rec) => matchRecord(rec, ref)) ?? null;
 }
 
-export function startLaunch(ref: LaunchRef): { ok: boolean; pid: number | null; logFile: string; reason: string } {
+export function startLaunch(ref: LaunchRef & { slot?: number | string }): {
+    ok: boolean;
+    pid: number | null;
+    logFile: string;
+    reason: string;
+} {
     const resolved = resolveLaunch(ref);
     if (resolved === null) return { ok: false, pid: null, logFile: "", reason: `没有这个 launch：${ref.app}.${ref.launch}` };
     const started = runner.start({
         key: launchKey(ref.worktree, ref.app, ref.launch),
         appDir: resolved.app.dir,
         launch: resolved.launch,
-        // 声明的数据根必须真的生效（否则 UI 按声明显示、进程按自己的缺省根跑，两边分叉）
-        home: resolve(ref.worktree, resolved.launch.home ?? DEFAULT_HOME),
+        // 数据根：显式声明优先（例外），否则按槽位推导 build/<launch>/<slot>/home。
+        // 槽位来源：页面参数 → DIY_DEV_LAUNCH_SLOT → 1。
+        home:
+            resolved.launch.home !== undefined && resolved.launch.home !== ""
+                ? resolve(ref.worktree, resolved.launch.home)
+                : deriveHome(ref.worktree, resolved.launch.id, ref.slot ?? process.env["DIY_DEV_LAUNCH_SLOT"] ?? "1"),
     });
     return {
         ok: started.pid !== null,
