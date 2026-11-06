@@ -6,7 +6,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { ServerBinding } from "@diy-agent/rpc";
-import { fsApi, type FsEntryValue } from "./api.js";
+import { devFsService, type FsEntryValue } from "./api.js";
 
 /** 不往界面上列的东西（`.git` 内部结构对编辑器没有意义） */
 const HIDDEN = new Set([".git"]);
@@ -96,7 +96,12 @@ export function writeText(worktree: string, path: string, text: string): { ok: b
 
 /** 把 fs 的三个方法绑到 binding（Electron IPC / mem / http 都行，与传输无关） */
 export function bindFsHandlers(binding: ServerBinding): void {
-    binding.on(fsApi.fs.list, ({ input }) => listDir(input.worktree, input.path));
-    binding.on(fsApi.fs.read, ({ input }) => readText(input.worktree, input.path));
-    binding.on(fsApi.fs.write, ({ input }) => writeText(input.worktree, input.path, input.text));
+    // 用 service 绑定：handler 形状与 api 树同构 ⇒ 少写/写错一个方法都是编译期错误
+    devFsService.bind(binding, {
+        fs: {
+            list: ({ input }) => listDir(input.worktree, input.path),
+            read: ({ input }) => readText(input.worktree, input.path),
+            write: ({ input }) => writeText(input.worktree, input.path, input.text),
+        },
+    });
 }

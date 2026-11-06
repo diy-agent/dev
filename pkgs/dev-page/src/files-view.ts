@@ -9,9 +9,9 @@
 // 编辑器是 CodeMirror 6（纯浏览器包，esbuild 直接打进去；不需要 VS Code / Monaco 那套 worker）。
 
 import { GenApp, html } from "@diy-agent/ui/browser";
-import { ChannelClientBinding, createTypedClient, type EnvelopeTransport } from "@diy-agent/rpc";
+import { ChannelClientBinding, type EnvelopeTransport } from "@diy-agent/rpc";
 // 只取 schema（`/api` 子入口）：index 会带进 node:fs，渲染侧打包器不认
-import { fsApi } from "@diy-agent/dev-fs/api";
+import { devFsService } from "@diy-agent/dev-fs/api";
 import { EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
@@ -42,7 +42,8 @@ function langFor(path: string) {
 export function createFilesPane(options: FilesPaneOptions, host: { body: HTMLElement; headTitle: HTMLElement; headBadge: HTMLElement; headMeta: HTMLElement }): FilesPane {
     const transport = (window as unknown as { transport?: EnvelopeTransport }).transport;
     if (transport === undefined) throw new Error("preload 没递出 window.transport（rpc 通道缺失）");
-    const fs = createTypedClient(new ChannelClientBinding(transport), fsApi).fs;
+    // 模块化 API 单元：拿到的只有 dev-fs 这一块（不含全仓的 rpc 树）
+    const fs = devFsService.use(new ChannelClientBinding(transport)).fs;
 
     const box = document.createElement("div");
     box.className = "filespane";

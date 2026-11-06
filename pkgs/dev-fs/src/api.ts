@@ -4,7 +4,7 @@
 // `worktree` 必填且第一参数：路径 jail 的根，**渲染侧永远给不了绝对路径**（只能给相对 worktree 的 path）。
 
 import { z } from "zod";
-import { RpcSchema } from "@diy-agent/rpc";
+import { RpcSchema, defineService } from "@diy-agent/rpc";
 
 const Worktree = z.string().min(1).describe("worktree 根（绝对路径；路径 jail 的边界）");
 const RelPath = z.string().describe("相对 worktree 根（`''` = 根；不接受绝对路径 / `..`）");
@@ -31,25 +31,32 @@ export const ReadOutput = z.object({
     binary: z.boolean(),
 });
 
+// 用 router 而不是 group：`defineService` 的 handlers 形状按 router 树推导
+// （group 是给 CLI 的命令组，混进 service 的 api 会让 HandlersOf 推成 never）。
+// 组描述改为方法级 desc —— 本包没有 CLI，不需要命令组。
 export const fsApi = RpcSchema.router({
-    fs: RpcSchema.group({
-        desc: "dev 工具的文件读写（jail 在指定 worktree 内）",
-        children: {
-            list: RpcSchema.unary({
-                desc: "列目录（不递归）；目录在前，按名字排序",
-                input: { worktree: Worktree, path: RelPath },
-                output: z.array(FsEntry),
-            }),
-            read: RpcSchema.unary({
-                desc: "读一个文本文件（>1 MB 截断，二进制只回 binary 标记）",
-                input: { worktree: Worktree, path: RelPath },
-                output: ReadOutput,
-            }),
-            write: RpcSchema.unary({
-                desc: "写回文本（整文件覆盖）",
-                input: { worktree: Worktree, path: RelPath, text: z.string() },
-                output: z.object({ ok: z.boolean(), size: z.number() }),
-            }),
-        },
+    fs: RpcSchema.router({
+        list: RpcSchema.unary({
+            desc: "列目录（不递归）；目录在前，按名字排序",
+            input: { worktree: Worktree, path: RelPath },
+            output: z.array(FsEntry),
+        }),
+        read: RpcSchema.unary({
+            desc: "读一个文本文件（>1 MB 截断，二进制只回 binary 标记）",
+            input: { worktree: Worktree, path: RelPath },
+            output: ReadOutput,
+        }),
+        write: RpcSchema.unary({
+            desc: "写回文本（整文件覆盖）",
+            input: { worktree: Worktree, path: RelPath, text: z.string() },
+            output: z.object({ ok: z.boolean(), size: z.number() }),
+        }),
     }),
 });
+
+/**
+ * **模块化的 API 单元**（rpc 2026-11-05）：两端用同一个值。
+ * 服务端 `devFsService.bind(binding, { fs: {…} })`；客户端 `devFsService.use(client).fs.list()`。
+ * 模块名是跨进程契约，改名 = 老客户端全挂。
+ */
+export const devFsService = defineService({ name: "diy.dev.fs", api: fsApi });

@@ -13,8 +13,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair, createTypedClient } from "@diy-agent/rpc";
-import { bindRefHandlers, readRuntimeConfig, refApi, type RefEntry } from "@diy-agent/dev-ref";
+import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair } from "@diy-agent/rpc";
+import { bindRefHandlers, readRuntimeConfig, refService, type RefEntry } from "@diy-agent/dev-ref";
 import { openPath } from "@diy-agent/dev-core";
 import { REF_METHODS, type RefOverview, type RefRepo, type RefSyncState, type RefSyncSummary } from "@diy-agent/dev-core/shared";
 import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
@@ -42,7 +42,7 @@ function refClient(worktree: string) {
     const { home, cwd } = scope(worktree);
     const { serverTx, clientTx } = createMemTransportPair();
     bindRefHandlers(new ChannelServerBinding(serverTx), { home, cwd });
-    return createTypedClient(new ChannelClientBinding(clientTx), refApi).ref;
+    return refService.use(new ChannelClientBinding(clientTx)).ref;
 }
 
 /** 本地落后多少个提交：读不到（未 clone / tag 固定 / 无 upstream）返回 null，不当错误 */

@@ -11,7 +11,7 @@
  *   - list 读 cwd/.diy/ref.lock.yaml，对齐本地目录存在性（缺失提示 sync）+ 最后 sync 时间
  */
 
-import { RpcSchema } from "@diy-agent/rpc";
+import { RpcSchema, defineService } from "@diy-agent/rpc";
 import { z } from "zod";
 
 /** list 单条输出：lock 条目 + 本地目录实时对齐 */
@@ -107,3 +107,9 @@ export const refApi = RpcSchema.router({
         },
     }),
 });
+
+/**
+ * **模块化的 API 单元**：两端用同一个值（模块名 = 跨进程契约）。
+ * 服务端 `refService.bind(binding, { ref: {...} })`；客户端 `refService.use(client).ref.list()`。
+ */
+export const refService = defineService({ name: "diy.dev.ref", api: refApi });

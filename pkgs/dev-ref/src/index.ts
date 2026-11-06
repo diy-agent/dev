@@ -10,7 +10,7 @@
 // 为什么走 RPC 而不是直接调函数：ref/ 六个文件是「handler + schema」形态，一行不改地复用，
 // 才保证 UI 与旧 CLI 走的是同一份编排（##510 判据 3）。
 
-export { refApi, RefEntrySchema } from "./ref/api.js";
+export { refApi, refService, RefEntrySchema } from "./ref/api.js";
 export type { RefEntry } from "./ref/api.js";
 export { bindRefHandlers } from "./ref/impl.js";
 export type { RefRuntime } from "./ref/impl.js";
