@@ -13,7 +13,7 @@ import { resolve } from "node:path";
  */
 export default defineConfig({
     build: {
-        outDir: "lib",
+        outDir: "dist",
         emptyOutDir: true,
         ssr: true,
         lib: {
