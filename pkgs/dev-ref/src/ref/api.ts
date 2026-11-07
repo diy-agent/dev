@@ -31,7 +31,10 @@ export const RefEntrySchema = z.object({
 });
 export type RefEntry = z.infer<typeof RefEntrySchema>;
 
-export const refApi = RpcSchema.router({
+// `RpcSchema.router` 已退休（diy 仓 9f8e7e12）：根位置换成 group，模块名 `ref` 不变。
+export const refApi = RpcSchema.group({
+    desc: "dev ref — 本地源码镜像",
+    children: {
     ref: RpcSchema.group({
         desc: `
     dev ref — 本地源码镜像管理（简化版）
@@ -106,6 +109,7 @@ export const refApi = RpcSchema.router({
             }),
         },
     }),
+    },
 });
 
 /**

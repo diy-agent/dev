@@ -31,11 +31,15 @@ export const ReadOutput = z.object({
     binary: z.boolean(),
 });
 
-// 用 router 而不是 group：`defineService` 的 handlers 形状按 router 树推导
-// （group 是给 CLI 的命令组，混进 service 的 api 会让 HandlersOf 推成 never）。
-// 组描述改为方法级 desc —— 本包没有 CLI，不需要命令组。
-export const fsApi = RpcSchema.router({
-    fs: RpcSchema.router({
+// 用 group（rpc 2026-11-05 起 `RpcSchema.router` 退休 —— 见 diy 仓 9f8e7e12）：
+// group 可当根、也可嵌在 service 的 api 里，handlers 形状照样能从它推出来。
+// 外层 group 只顶替原来 router 的「根」位置，模块名 `fs` 保持不变（跨进程契约）。
+export const fsApi = RpcSchema.group({
+    desc: "dev fs — 工作区文件读写（路径 jail 在 worktree 内）",
+    children: {
+    fs: RpcSchema.group({
+        desc: "工作区文件",
+        children: {
         list: RpcSchema.unary({
             desc: "列目录（不递归）；目录在前，按名字排序",
             input: { worktree: Worktree, path: RelPath },
@@ -51,7 +55,9 @@ export const fsApi = RpcSchema.router({
             input: { worktree: Worktree, path: RelPath, text: z.string() },
             output: z.object({ ok: z.boolean(), size: z.number() }),
         }),
+        },
     }),
+    },
 });
 
 /**
