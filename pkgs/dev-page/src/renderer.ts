@@ -255,37 +255,34 @@ function groupByWorktree(launches: readonly LaunchStatus[]): WorktreeGroup[] {
 
 /** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
 /**
- * 一个 launch 的 chip = **启动 / 停止的快捷按钮**（##518 用户口径，2026-11-09 改）。
+ * 一个 launch 的 chip = **启动 / 停止的快捷按钮**（##518）。
  *
- * 为什么改回来了：悬停才出现的「启动」按钮会让人在格子里摸索、鼠标一动布局就抖（chip 挪位），
- * 而且它把「这一个 launch 是起还是停」藏在两级交互后面。现在：
- *   · 未启动 → 单击**启动**；运行中 → 单击**停止**（title 一并写明，破坏性动作有文字提示）；
- *   · 详情不靠这里进 —— 工作区行上的分支名可以进 worktree 详情，里面每个 launch 一行。
+ * ##518 2026-11-09 用户裁：控件一律用 **@material/web**（M3），不再手写 <button> 与配色。
+ *   · 未启动 → `md-outlined-button`；运行中 → `md-filled-tonal-button`（M3 语义：切换态用 tonal）；
+ *   · 启动中 → `md-filled-button` + `md-circular-progress`（不可重复点）；
+ *   · 多实例的 `×N` 用 `md-assist-chip` 挂在按钮后面，不挤在按钮文字里。
+ * 颜色不再是硬编码 hsl：chip 的 --h（分支色相）只作为**强调色**传给按钮的 --md-*-container。
  */
 function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
-    const cls = [
-        "chip",
-        launch.running ? "on" : "",
-        launch.starting ? "wait" : "",
-        launch.built ? "" : "unbuilt",
-        launch.configIssues.length > 0 ? "warn" : "",
-        launch.key === selectedKey ? "sel" : "",
-    ]
-        .filter((s) => s !== "")
-        .join(" ");
-    const chip = el("button", cls);
-    chip.type = "button";
-    chip.dataset["key"] = launch.key;
-    chip.style.setProperty("--h", String(hue));
+    const wrap = el("span", "cx-launch");
+    const tagName = launch.starting
+        ? "md-filled-button"
+        : launch.running
+          ? "md-filled-tonal-button"
+          : "md-outlined-button";
+    const btn = document.createElement(tagName) as HTMLElement & { dataset: DOMStringMap };
+    btn.dataset["key"] = launch.key;
+    btn.className = "launch-btn";
+    // 分支色相 → M3 强调色（同一 worktree 的所有 launch 同色，横向对位）
+    btn.style.setProperty("--md-sys-color-secondary-container", `hsl(${String(hue)}, 38%, 78%)`);
+    btn.style.setProperty("--md-sys-color-on-secondary-container", `hsl(${String(hue)}, 45%, 18%)`);
     const state = launch.starting ? "启动中…" : launch.running ? "运行中" : "未启动";
-    chip.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${state}${
+    btn.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${state}${
         launch.configIssues.length > 0 ? `\n⚠ ${launch.configIssues.map((item) => item.message).join("\n⚠ ")}` : ""
     }\n${launch.running ? "点击停止" : launch.starting ? "（启动中，等它进注册表）" : "点击启动"}`;
-    chip.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
-    chip.append(el("span", "chip-nm", launch.launch));
-    // 多实例：`lab/1`、`lab/2` 同属一条 launch，chip 上标份数
-    if (launch.instances.length > 1) chip.append(el("span", "chip-n", `×${String(launch.instances.length)}`));
-    chip.addEventListener("click", (event) => {
+    btn.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
+    btn.append(el("span", "chip-nm", launch.launch));
+    btn.addEventListener("click", (event) => {
         event.stopPropagation();
         if (launch.starting) return; // 启动中：点了也只会重复 spawn，等它自报
         if (launch.running) {
@@ -300,14 +297,20 @@ function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
         panel = "app";
         void startLaunch(launch);
     });
-    return chip;
+    wrap.append(btn);
+    // 多实例（同一条 launch 起了几份）：单独一枚 assist chip，不挤进按钮文字
+    if (launch.instances.length > 1) {
+        const more = document.createElement("md-assist-chip") as HTMLElement;
+        more.setAttribute("label", `×${String(launch.instances.length)}`);
+        more.title = launch.instances.map((i) => `${i.displayName}（pid ${String(i.pid)}）`).join("\n");
+        wrap.append(more);
+    }
+    return wrap;
 }
 
-/** 单元格 = 一个 chip（chip 本身就是启停按钮，见 launchChip） */
+/** 单元格 = chip（chip 本身就是启停按钮，见 launchChip；它自带外层 span） */
 function launchCell(launch: LaunchStatus, hue: number): HTMLElement {
-    const wrap = el("span", "cx-launch");
-    wrap.append(launchChip(launch, hue));
-    return wrap;
+    return launchChip(launch, hue);
 }
 
 function renderTree(): void {

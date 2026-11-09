@@ -14,7 +14,8 @@
         "@diy-agent/dev-fs": "file:../../pkgs/dev-fs",
         "@diy-agent/dev-page": "file:../../pkgs/dev-page",
         "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
-        "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench"
+        "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
+        "@material/web": "^2.5.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.1",

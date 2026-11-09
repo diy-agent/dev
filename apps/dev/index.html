@@ -4,6 +4,8 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>dev 启动器</title>
+        <!-- Material Web 的设计令牌（M3，light-dark 自动明暗）；由 renderer 的 CSS import 产出 -->
+        <link rel="stylesheet" href="./index.css" />
         <style>
             :root {
                 --fg: #1a1a1a;
@@ -406,6 +408,59 @@
             .cx .cx-br-btn:hover {
                 border-bottom-color: currentColor;
             }
+            /* ── Material Web 控件（##518：全面接受 @material/web）───────────────
+               表格里要的是**紧凑密度**：M3 缺省 40px 高，一行里塞不下多个 launch。
+               用组件自带的 CSS 变量压高度与字阶，不覆盖内部结构。 */
+            .cx-launch {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+            md-outlined-button,
+            md-filled-tonal-button,
+            md-filled-button {
+                --md-outlined-button-container-height: 26px;
+                --md-filled-tonal-button-container-height: 26px;
+                --md-filled-button-container-height: 26px;
+                --md-outlined-button-label-text-size: 11px;
+                --md-filled-tonal-button-label-text-size: 11px;
+                --md-filled-button-label-text-size: 11px;
+                --md-outlined-button-label-text-weight: 500;
+                --md-filled-tonal-button-label-text-weight: 500;
+                --md-outlined-button-leading-space: 8px;
+                --md-outlined-button-trailing-space: 8px;
+                --md-filled-tonal-button-leading-space: 8px;
+                --md-filled-tonal-button-trailing-space: 8px;
+                --md-outlined-button-outline-width: 1px;
+                --md-sys-shape-corner-full: 6px;
+            }
+            md-assist-chip {
+                --md-assist-chip-container-height: 24px;
+                --md-assist-chip-label-text-size: 10px;
+            }
+            .launch-btn .chip-nm {
+                margin-left: 2px;
+                letter-spacing: 0.02em;
+            }
+            .launch-btn .dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: var(--md-sys-color-outline);
+            }
+            .launch-btn .dot.on {
+                background: var(--md-sys-color-primary);
+            }
+            .launch-btn .dot.wait {
+                background: var(--md-sys-color-tertiary);
+                animation: pulse 1.2s ease-in-out infinite;
+            }
+            @keyframes pulse {
+                50% {
+                    opacity: 0.35;
+                }
+            }
+
             /* 该工作区在跑的实例（名字 · 多个则并排）；点不到也不影响下面的 launch 单元格 */
             .cx .cx-inst {
                 display: flex;
