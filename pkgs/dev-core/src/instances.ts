@@ -37,6 +37,10 @@ export interface InstanceRecordLite {
     readonly launch: string | null;
     /** 启动它的 git worktree 根；老记录 = null */
     readonly worktree: string | null;
+    /** 实例自报名字（##518）；老记录 = null */
+    readonly name: string | null;
+    /** 有没有 source（source|packaged）；老记录 = null ⇒ 当 source 算 */
+    readonly mode: "source" | "packaged" | null;
     readonly port: number | null;
     readonly diyHome: string;
     readonly variant: string;
@@ -66,6 +70,8 @@ export function parseRecord(raw: unknown): InstanceRecordLite | null {
         app: nullableStr(o["app"]),
         launch: nullableStr(o["launch"]),
         worktree: nullableStr(o["worktree"]),
+        name: nullableStr(o["name"]),
+        mode: o["mode"] === "source" || o["mode"] === "packaged" ? o["mode"] : null,
         port: num(o["port"]),
         diyHome: str(o["diyHome"]),
         variant: str(o["variant"]),
@@ -138,35 +144,31 @@ export function samePath(a: string | null, b: string): boolean {
     return resolve(a) === resolve(b);
 }
 
-/** 已知的入口变体名（`build/<variant>/...` 里的那一段） */
-const KNOWN_VARIANTS = new Set(["lab", "test", "staging", "prod"]);
-
 /**
- * 一条 launch 的**数据根族**：同一入口的所有 slot 都落在它下面。
+ * 一条 launch 的**数据根族**（属于它的实例，数据根必须落在这里）。
  *
- * `build/lab/1/home` → `<worktree>/build/lab`；`build/lab/home`（老写法）→ 同样归一。
- * 多实例匹配靠它：`lab/1` 与 `lab/2` 是同一个 launch，只是数据根不同。
+ * 没声明 `home:` ⇒ `build/<launch>`；声明了就取它的父目录（`…/x/home` → `…/x`）。
+ *
+ * ##518 用户裁：**slot 取消** —— 一个 launch 一个缺省数据根，不再有 `lab/1`、`lab/2`。
+ * 同一 worktree 想跑同一条 launch 的多份实例，就是给不同数据根（显式 `home:` / `--home`），
+ * 而不是让启动器按编号猜「第几份」。编号不是身份，实例自己报名字（见 diy-app 的注册表 name）。
  */
 export function homeRootOf(worktree: string, launchId: string, home?: string): string {
-    // 没显式声明 ⇒ 数据根族就是 `build/<launch>`（洞位在它下面）
     if (home === undefined || home === "") return resolve(worktree, "build", launchId);
     const abs = resolve(worktree, home);
     const parts = abs.split(sep);
     if (parts[parts.length - 1] === "home") parts.pop();
-    const last = parts[parts.length - 1] ?? "";
-    if (last !== "" && !KNOWN_VARIANTS.has(last)) parts.pop(); // 去掉 slot 段
     return parts.join(sep) || sep;
 }
 
 /**
- * 一条 launch 的**缺省数据根**：`build/<launch>/<slot>/home`。
+ * 一条 launch 的**缺省数据根**：`build/<launch>/home`（无 slot，##518 用户裁）。
  *
- * 为什么由槽位推导而不是在 app.yaml 声明（##518 用户裁）：声明与实际常常对不上，
- * 而「一个入口 N 份实例」意味着数据根本来就得随槽位变 —— 声明一份固定值天生错。
- * 显式 `home:` 仍支持（旧数据 / /tmp 临时根），但那是**例外**，不是常态。
+ * 为什么由推导而不是在 app.yaml 声明：声明与实际常常对不上（##519 之前踩过）。
+ * 显式 `home:` 仍是**例外**（旧数据 / 同 launch 多份 / /tmp 临时根）。
  */
-export function deriveHome(worktree: string, launchId: string, slot: number | string = 1): string {
-    return resolve(worktree, "build", launchId, String(slot), "home");
+export function deriveHome(worktree: string, launchId: string): string {
+    return resolve(worktree, "build", launchId, "home");
 }
 
 /** 数据根比较：`~/.diy` 与 `/Users/x/.diy` 视为同一个根（老记录可能带 `~`） */
@@ -188,13 +190,14 @@ export interface LaunchRefLike {
 /**
  * 这条记录是否属于这个 launch 的某个实例（##518：一个入口可以有多份 `lab/1`、`lab/2`）。
  *
- * 判据：worktree + app 相同、launch 名相同（允许 `<id>/<slot>` 后缀）、数据根落在该 launch 的
- * 数据根族里。族外一律不认 —— 真生产 `~/.diy` 因此永远不会被当成 worktree 的 launch。
+ * 判据：worktree + app 相同、launch 名相同、数据根落在该 launch 的数据根族里。
+ * 族外一律不认 —— 真生产 `~/.diy` 因此永远不会被当成 worktree 的 launch。
+ * ⚠️ slot 取消后不再接受 `<id>/<slot>` 后缀（##518）：那是配置模版编号，不是身份。
  */
 export function matchInstance(record: InstanceRecordLite, ref: LaunchRefLike & { readonly homeRoot: string }): boolean {
     if (!samePath(record.worktree, ref.worktree) || !sameApp(record.app, ref.app)) return false;
     const launch = record.launch ?? "";
-    if (launch !== ref.launch && !launch.startsWith(`${ref.launch}/`)) return false;
+    if (launch !== ref.launch) return false;
     const home = resolve(record.diyHome === "" ? "." : record.diyHome);
     return home === ref.homeRoot || home.startsWith(`${ref.homeRoot}${sep}`);
 }
@@ -318,6 +321,24 @@ export function readNodeId(home: string): string | null {
     }
 }
 
+/**
+ * 注册表一条记录 → 一个「在跑的实例」视图（##518：名字由实例自己给，没有就 `<app>#<pid>`）。
+ * 名字规则与 diy-app 的 `shared/instance-row.ts::displayNameOf` 必须一致 —— 两处都只是展示。
+ */
+export function instanceOf(rec: InstanceRecordLite, app: string): LaunchInstance {
+    const name = rec.name ?? "";
+    const appName = app.trim() || rec.app?.trim() || "diy";
+    return {
+        pid: rec.pid,
+        launch: rec.launch ?? "",
+        name,
+        displayName: name !== "" ? name : `${appName}#${rec.pid}`,
+        diyHome: rec.diyHome,
+        startedAt: rec.startedAt,
+        port: rec.port,
+    };
+}
+
 export function launchKey(worktree: string, app: string, launch: string): string {
     return `${resolve(worktree)}\u0000${app}\u0000${launch}`;
 }
@@ -365,25 +386,19 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
                 );
                 for (const rec of matched) claimed.add(rec.pid);
                 const instances: LaunchInstance[] = matched
-                    .map((rec) => ({
-                        pid: rec.pid,
-                        launch: rec.launch ?? launch.id,
-                        diyHome: rec.diyHome,
-                        startedAt: rec.startedAt,
-                        port: rec.port,
-                    }))
+                    .map((rec) => instanceOf(rec, app.name))
                     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
                 const record = matched[0];
                 const running = record !== undefined;
                 const homeDeclared = declaredHome;
-                // 配置问题已退役（##518）：home 由槽位推导 ⇒ 不再有「缺声明 / 同根冲突」。
+                // 配置问题已退役（##518）：home 由 launch 推导 ⇒ 不再有「缺声明 / 同根冲突」。
                 // 显式 home 只剩一个风险：同一 app 两条 launch 写死同一个根（会抢单实例锁）。
                 const configIssues: LaunchConfigIssue[] = [];
                 if (declaredHome && (homeUse.get(home) ?? 0) > 1) {
                     configIssues.push({
                         code: "home-duplicate",
                         message: `同一个 app 有 ${String(homeUse.get(home))} 条 launch 显式声明了同一个数据根 ${home}：同时启动会抢单实例锁`,
-                        fix: "删掉 `home:` 让它按槽位推导（build/<launch>/<slot>/home），或给各自写不同的根",
+                        fix: "删掉 `home:` 让它按 launch 推导（build/<launch>/home），或给各自写不同的根",
                     });
                 }
                 const nodeId = nodeIdOf(home);
@@ -447,6 +462,16 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
             }
         }
     }
+    // 按 worktree 归拢的动态实例（##518）：只要 worktree 相同就挂上，不要求 launch 对得上。
+    // 打包态（无 source）没有 worktree，不进这里 —— 它们只能在 externals 里被观测。
+    const worktreeInstances: Record<string, readonly LaunchInstance[]> = {};
+    for (const worktree of targets) {
+        worktreeInstances[resolve(worktree.path)] = records
+            .filter((rec) => rec.mode !== "packaged" && samePath(rec.worktree, worktree.path))
+            .map((rec) => instanceOf(rec, rec.app ?? ""))
+            .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    }
+
     // 仓库名 / 主分支：第一个 worktree（git worktree list 的首行 = 主工作树）
     const main = targets[0];
     return {
@@ -454,6 +479,7 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
         repoName: main === undefined ? basename(inputs.repoRoot) : basename(main.path),
         repoBranch: main?.branch ?? null,
         registryDir: inputs.registry ?? registryDir(),
+        worktreeInstances,
         externals: records
             .filter((rec) => !claimed.has(rec.pid))
             .map((rec) => ({

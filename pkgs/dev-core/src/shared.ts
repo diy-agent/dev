@@ -79,11 +79,15 @@ export interface LaunchRuntime {
     readonly diyHome: string;
 }
 
-/** 一个在跑的实例（同一 launch 可以有多个：`lab/1`、`lab/2`…，靠数据根区分） */
+/** 一个在跑的实例（同一 launch 可以有多份 —— 靠**数据根**区分，不靠编号；名字由实例自报，##518） */
 export interface LaunchInstance {
     readonly pid: number;
-    /** 注册表里的 launch 全名（可能带 slot：`lab/2`） */
+    /** 注册表里的 launch 名（如 `lab`；slot 已取消，不再有 `lab/2` 这种后缀） */
     readonly launch: string;
+    /** 实例自报名字（`DIY_INSTANCE_NAME`）；没写 = 空串 */
+    readonly name: string;
+    /** 展示名：name 优先，否则 `<app>#<pid>` —— 任何活着的实例都有认得出的名字 */
+    readonly displayName: string;
     readonly diyHome: string;
     readonly startedAt: string;
     readonly port: number | null;
@@ -172,6 +176,14 @@ export interface DevSnapshot {
     readonly problems: readonly string[];
     /** 不属于任何 worktree launch 的实例（真生产 / 手工起的孤儿），只展示不接管 */
     readonly externals: readonly ExternalInstance[];
+    /**
+     * **按 worktree 归拢的动态实例**（##518）：key = worktree 绝对路径。
+     *
+     * 与 `launches[].instances` 的区别：那里要求 launch 也对得上，这里**只要 worktree 相同**就挂上 ——
+     * 于是「这个工作区此刻跑着什么」一眼可见，包括手工起的、launch 名对不上的那些。
+     * 纯展示归属，不写盘、不参与身份判定；没源的工作区（空数组 = 没跑东西）。
+     */
+    readonly worktreeInstances: Readonly<Record<string, readonly LaunchInstance[]>>;
     readonly launches: readonly LaunchStatus[];
 }
 

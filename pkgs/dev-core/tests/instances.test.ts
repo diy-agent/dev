@@ -21,8 +21,10 @@ const record = (patch: Partial<InstanceRecordLite> = {}): InstanceRecordLite => 
     app: "diy-chat",
     launch: "lab",
     worktree: "/repo",
+    name: null,
+    mode: "source",
     port: null,
-    diyHome: "/repo/build/lab/1/home",
+    diyHome: "/repo/build/lab/home",
     variant: "lab",
     env: "development",
     argv: ["/electron", "build/lab/main/index.mjs"],
@@ -108,9 +110,9 @@ describe("匹配键 (worktree, app, launch)", () => {
 describe("数据根参与匹配（##518：真生产实例不许被当成 practice launch）", () => {
     it("三元组相同但 diyHome 不同 ⇒ 不匹配", () => {
         const ref = { worktree: "/repo", app: "chat", launch: "lab" };
-        expect(matchRecord(record({ diyHome: "/repo/build/lab/1/home" }), ref, "/repo/build/lab/1/home")).toBe(true);
+        expect(matchRecord(record({ diyHome: "/repo/build/lab/home" }), ref, "/repo/build/lab/home")).toBe(true);
         // 生产实例：cwd/worktree/launch 都对，数据根是 ~/.diy ⇒ 不算这条 launch 在跑
-        expect(matchRecord(record({ diyHome: "/Users/x/.diy" }), ref, "/repo/build/lab/1/home")).toBe(false);
+        expect(matchRecord(record({ diyHome: "/Users/x/.diy" }), ref, "/repo/build/lab/home")).toBe(false);
         // 老记录写 `~/` 形态也要认
         expect(sameHome("~/build/lab/home", `${homedir()}/build/lab/home`)).toBe(true);
     });
@@ -122,7 +124,7 @@ describe("数据根参与匹配（##518：真生产实例不许被当成 practic
             worktrees,
             appsOf: () => [chatApp()],
             records: [
-                record({ pid: 111, diyHome: "/repo/build/lab/1/home" }),
+                record({ pid: 111, diyHome: "/repo/build/lab/home" }),
                 record({ pid: 222, app: "diy-app", launch: null, worktree: null, diyHome: "/Users/x/.diy" }),
             ],
             starting: new Set(),
@@ -135,22 +137,23 @@ describe("数据根参与匹配（##518：真生产实例不许被当成 practic
     });
 });
 
-describe("多实例（lab/1、lab/2 同属一条 launch）", () => {
+describe("同一条 launch 跑多份（##518：靠数据根区分，不再有 lab/1、lab/2 编号）", () => {
     it("数据根族内的记录全部归到该 launch，instances 按启动时间排序", () => {
         const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
         const app: AppSpec = {
             name: "chat",
             title: "chat",
             dir: "/repo/apps/chat",
-            launches: [{ id: "lab", command: "./sha.sh lab", home: "build/lab/1/home", entries: [] }],
+            launches: [{ id: "lab", command: "./sha.sh lab", home: "build/lab/home", entries: [] }],
         };
         const snapshot = buildSnapshot(worktrees, {
             repoRoot: "/repo",
             worktrees,
             appsOf: () => [app],
             records: [
-                record({ pid: 2, launch: "lab/2", diyHome: "/repo/build/lab/2/home", startedAt: "2026-11-05T02:00:00.000+0800" }),
-                record({ pid: 1, launch: "lab/1", diyHome: "/repo/build/lab/1/home", startedAt: "2026-11-05T01:00:00.000+0800" }),
+                // 两份实例都自报 launch=lab，只有数据根不同（显式第二个根，而不是编号槽位）
+                record({ pid: 2, launch: "lab", diyHome: "/repo/build/lab/alt/home", startedAt: "2026-11-05T02:00:00.000+0800" }),
+                record({ pid: 1, launch: "lab", diyHome: "/repo/build/lab/home", startedAt: "2026-11-05T01:00:00.000+0800" }),
                 // 族外（生产）不计
                 record({ pid: 9, launch: "lab", diyHome: "/Users/x/.diy" }),
             ],
@@ -254,7 +257,7 @@ describe("withPort（配置端口 vs 实际端口）", () => {
 
 describe("displayPath / buildSnapshot", () => {
     it("仓库内显示相对路径，家目录缩 ~", () => {
-        expect(displayPath("/repo/build/lab/1/home", "/repo")).toBe("build/lab/1/home");
+        expect(displayPath("/repo/build/lab/home", "/repo")).toBe("build/lab/home");
         expect(displayPath(`${process.env["HOME"]}/.diy`, "/repo")).toMatch(/^~\/\.diy$/);
     });
 
@@ -291,7 +294,7 @@ describe("displayPath / buildSnapshot", () => {
         expect(first.worktreePath).toBe("/repo");
         expect(first.env).toEqual({});
         expect(first.yamlPath).toBe("/repo/apps/chat/app.yaml");
-        expect(first.home).toBe("/repo/build/lab/1/home");
+        expect(first.home).toBe("/repo/build/lab/home");
     });
 
     it("实例 URI：nodeId 从数据根读，没有 instance-id 就是 null", () => {
@@ -303,7 +306,7 @@ describe("displayPath / buildSnapshot", () => {
             records: [],
             starting: new Set(),
             builtOf: () => true,
-            nodeIdOf: (home) => (home === "/repo/build/lab/1/home" ? "diy-9c5cdc25" : null),
+            nodeIdOf: (home) => (home === "/repo/build/lab/home" ? "diy-9c5cdc25" : null),
         });
         expect(snapshot.launches[0]?.uri).toBe("diy://diy-9c5cdc25/chat.lab");
 
@@ -357,10 +360,10 @@ describe("displayPath / buildSnapshot", () => {
             builtOf: () => true,
         });
         const chat = snapshot.launches.find((item) => item.app === "chat")!;
-        // ##518：未声明 home ⇒ 按槽位推导 build/<launch>/<slot>/home，且不再报错
+        // ##518：未声明 home ⇒ 按 launch 推导 build/<launch>/home（slot 已取消），且不再报错
         expect(chat.homeDeclared).toBe(false);
         expect(chat.configIssues).toEqual([]);
-        expect(chat.home).toBe("/repo/build/lab/1/home");
+        expect(chat.home).toBe("/repo/build/lab/home");
     });
 
     it("手工跑的老记录（launch / worktree 都是 null）也能对上 ⇒ running", () => {
@@ -395,5 +398,56 @@ describe("displayPath / buildSnapshot", () => {
         expect(snapshot.launches[0]?.starting).toBe(true);
         expect(snapshot.launches[0]?.running).toBe(false);
         expect(snapshot.launches[0]?.built).toBe(false);
+    });
+});
+
+describe("按 worktree 归拢动态实例（##518：静态清单与动态实例同一行显示）", () => {
+    const worktrees: WorktreeInfo[] = [{ path: "/repo", branch: null }];
+
+    it("worktree 相同就挂上 —— launch 名对不上也算（手工起的实例不该消失）", () => {
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [
+                record({ pid: 1, launch: "lab", diyHome: "/repo/build/lab/home" }),        // 对上 launch
+                record({ pid: 2, launch: "手写的名", diyHome: "/repo/build/lab/alt/home" }), // 对不上
+            ],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const rows = snapshot.worktreeInstances["/repo"] ?? [];
+        expect(rows.map((r) => r.pid)).toEqual([1, 2]);
+    });
+
+    it("打包态（没有 source）没有 worktree ⇒ 不挂到任何工作区（只进 externals 被观测）", () => {
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [record({ pid: 3, mode: "packaged", worktree: null, diyHome: "/Users/x/.diy" })],
+            starting: new Set(),
+            builtOf: () => true,
+            prodHome: "/Users/x/.diy",
+        });
+        expect(snapshot.worktreeInstances["/repo"]).toEqual([]);
+        expect(snapshot.externals.map((item) => item.pid)).toEqual([3]);
+    });
+
+    it("展示名：自报名字优先，没有就 `<app>#<pid>`", () => {
+        const snapshot = buildSnapshot(worktrees, {
+            repoRoot: "/repo",
+            worktrees,
+            appsOf: () => [chatApp()],
+            records: [
+                record({ pid: 4, name: "ab 测试", launch: "lab" }),
+                record({ pid: 5, name: null, launch: "lab" }),
+            ],
+            starting: new Set(),
+            builtOf: () => true,
+        });
+        const rows = snapshot.worktreeInstances["/repo"] ?? [];
+        expect(rows.map((r) => r.displayName)).toEqual(["ab 测试", "diy-chat#5"]);
+        expect(rows.map((r) => r.name)).toEqual(["ab 测试", ""]);
     });
 });

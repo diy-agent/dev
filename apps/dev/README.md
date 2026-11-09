@@ -16,16 +16,16 @@
 ```bash
 ./sha.sh build                 # 只构建：产物一份，落在 build/app/（与变体无关）
 ./sha.sh run lab               # 构建 + 起 lab 实例（development、CDP 9223、副屏）
-./sha.sh run lab --slot 2      # 第 2 份 lab：数据根 build/lab/2/home
+./sha.sh run lab --home build/lab/alt/home --name ab   # 再起一份：显式数据根 + 名字（没有 slot）
 ./sha.sh run staging           # 预生产（production + build/staging/1/home）
 ./sha.sh app list              # 本 worktree 在跑的实例（槽位 / pid / 数据根）
 ./sha.sh app new lab           # 自动挑最小空闲槽位、后台起一份
 ./sha.sh app stop 2            # 停某槽（也可写 pid）；`app stop all` 全停
 ./bin/dev app staging          # 同上但 staging；bin/dev 只执行 app.yaml 里那条 command，不自己拼
 
-# 多实例（自动分配 slot，后台跑）
-./sha.sh app new lab   # 自动挑最小空闲 slot → build/lab/<slot>/home，后台启动
-./sha.sh app list      # 本 worktree 在跑的实例（slot / pid / 数据根）
+# 多实例（后台跑；数据根 + 名字由人给，不自动编号）
+./sha.sh app new --launch lab --home build/lab/alt/home --name ab   # 后台起一份
+./sha.sh app list      # 本 worktree 在跑的实例（名字 / pid / 数据根）
 ./sha.sh app stop 2    # 停某一份（也可写 pid）
 ./sha.sh app stop all  # 全停
 
@@ -33,7 +33,7 @@
 
 sha.sh 的机制（vendor/sha）：
 - **紧贴函数上方的 `#:` 注释块就是帮助**：首行进列表，`#: 用法:` 行进 usage，其余进 detail。
-- 选项 / 位置参数用 `sha.def "cmd" --opt "--slot:string=1:说明" --arg "FILE!:说明" --desc "…"` 注册，
+- 选项 / 位置参数用 `sha.def "cmd" --opt "--home:string::说明" --arg "FILE!:说明" --desc "…"` 注册，
   函数体内 `sha.parse "$@" || return $?` 解析（写回同名 `local`，少声明会当场报错）。
 - `.` 是父子命令：`run.lab()` 既可用 `./sha.sh run.lab` 也可用 `./sha.sh run lab`。
 - `_` 开头的函数是内部实现，不进帮助列表。
