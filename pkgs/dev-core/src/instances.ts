@@ -466,7 +466,7 @@ export function buildSnapshot(targets: readonly WorktreeInfo[], inputs: Snapshot
     // 打包态（无 source）没有 worktree，不进这里 —— 它们只能在 externals 里被观测。
     const worktreeInstances: Record<string, readonly LaunchInstance[]> = {};
     for (const worktree of targets) {
-        worktreeInstances[resolve(worktree.path)] = records
+        worktreeInstances[worktree.path] = records
             .filter((rec) => rec.mode !== "packaged" && samePath(rec.worktree, worktree.path))
             .map((rec) => instanceOf(rec, rec.app ?? ""))
             .sort((a, b) => a.startedAt.localeCompare(b.startedAt));

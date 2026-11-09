@@ -411,6 +411,20 @@ function renderTreeCross(groups: readonly WorktreeGroup[]): void {
                     render();
                 });
                 branchCell.append(branchBtn);
+                // ##518：**这个工作区此刻跑着什么** —— 动态实例与静态清单同一行显示。
+                // 归属只按 worktree（不要求 launch 名对上），于是手工起的、名字自报的都在这里出现；
+                // 打包态（无 source）不会出现在 worktree 下，它们只在底部 externals 里被观测。
+                const mine = snapshot?.worktreeInstances[group.sample.worktree] ?? [];
+                if (mine.length > 0) {
+                    const line = el("div", "cx-inst");
+                    line.title = mine
+                        .map((inst) => `${inst.displayName}\n  pid ${String(inst.pid)}\n  ${inst.diyHome}`)
+                        .join("\n\n");
+                    for (const inst of mine) {
+                        line.append(el("span", "cx-inst-nm", inst.displayName));
+                    }
+                    branchCell.append(line);
+                }
                 row.append(branchCell);
                 columns.forEach((col, i) => {
                     const cell = row.insertCell();
