@@ -9,14 +9,16 @@
 # sha.sh → source ../../sha.common.sh → source vendor/sha/sha.bash → ####################################################################################
 # app —— 多实例管理（##518）：new / list / stop
 #
-# 为什么要有这一层：`lab`/`staging` 一次只起**一份**（前台，占着终端），而
-# 「再起一份做 remote A/B 测试」是日常需求。命令层负责**自动分配 slot**并让实例跑在后台，
-# 人只需要说「再来一个」。
+# 为什么要有这一层：`run.lab` 在前台占着终端，而「再起一份做 A/B 测试」是日常需求。
+# 这一层只管**后台起 / 列 / 停**。
+#
+# ##518 用户裁：**没有槽位**。多份实例 = 多个数据根 + 各自的名字，都由人显式给
+# （`app new --home <新根> --name <名字>`）；缺省根的实例在跑就拒绝，不自动编号。
 ####################################################################################
 
 _reg_dir() { echo "${DIY_DEV_HOME:-$HOME/.diy/dev}/apps"; }
 
-# 本 worktree 的在跑实例：每行 `slot<TAB>pid<TAB>home`
+# 本 worktree 的在跑实例：每行 `name<TAB>pid<TAB>home`（name 取实例自报，没名字就 pid）
 _running() {
   local reg repo; reg="$(_reg_dir)"; repo="$(_repo_root)"
   [ -d "$reg" ] || return 0
@@ -30,7 +32,7 @@ _running() {
       try { rec = JSON.parse(readFileSync(`${dir}/${name}`, "utf-8")); } catch { continue; }
       if (rec.app !== "diy-dev" || rec.worktree !== repo) continue;
       try { process.kill(rec.pid, 0); } catch { continue; } // 死记录不算
-      out.push([String(rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
+      out.push([String(rec.name ?? rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
     }
     out.sort((a, b) => a[1].localeCompare(b[1]));
     for (const row of out) console.log(row.join("\t"));
@@ -61,11 +63,13 @@ if ! declare -F sha.parse >/dev/null; then source "$SCRIPT_DIR/../../vendor/sha/
 #   lab  = 试验（development、CDP、副屏、watch 重启会打断轮次）
 #   prod = 生产（production、真数据根；改 src 不重启）
 _build_dir() { echo "build/app"; }
-# 数据根：`build/<variant>/<slot>/home` —— 变体 = 哪类入口，slot = 第几份实例。
-# 不兼容旧路径 `build/<variant>/home`：都是开发环境数据，重来即可（用户裁：简单一致）。
+# 数据根：`build/<variant>/home` —— 变体 = 哪类入口（lab / staging）。
+#
+# ##518 用户裁：**slot 取消**。一个变体一个缺省根；「再起一份」不再靠编号猜，
+# 而是显式给 `--home <新根>`（数据根就是身份的一部分），实例名字自己报（--name）。
 _home_dir() {
-  local variant="${1:-lab}" slot="${2:-1}"
-  echo "$(_repo_root)/build/$variant/$slot/home"
+  local variant="${1:-lab}"
+  echo "$(_repo_root)/build/$variant/home"
 }
 _repo_root() { ( cd "$SCRIPT_DIR/../.." && pwd ); }
 _main_repo() { ( cd "$SCRIPT_DIR/../../../diy" && pwd ); }
@@ -131,68 +135,55 @@ _build_renderer() {
   run cp index.html "$d/renderer/index.html"
 }
 
-# 第一个非 `-` 开头的位置参数 = slot（第几份实例），其余原样透传给 electron
+# electron 的其余参数（`--` 之后原样透传）
 _REST=()
-SLOT=1
-# ⚠️ 不能用 `$(...)` 取返回值：命令替换跑在子 shell 里，`_REST` 会丢。
-# 一律写全局：SLOT = 第几份实例，_REST = 透传给 electron 的其余参数。
-_take_slot() {
-  local first="${1:-}"
-  if [ -n "$first" ] && [ "${first#-}" = "$first" ]; then
-    SLOT="$first"
-    _REST=("${@:2}")
-  else
-    SLOT=1
-    _REST=("$@")
-  fi
-}
 
-# 起实例：产物固定 build/app，变体只换运行参数，slot 决定数据根
+# 起实例：产物固定 build/app，变体决定运行参数与缺省数据根。
+#   $1 = 变体（lab / staging）  $2 = 环境（development / production）
+#   DIY_DEV_HOME / DIY_DEV_NAME 由 run.* 的 --home / --name 传全局（见下）
 _run_variant() {
-  local variant="$1" env="$2" slot="${3:-}"
-  slot="${slot:-${DIY_DEV_LAUNCH_SLOT:-1}}"
+  local variant="$1" env="$2"
   _ensure_electron
   build
   local d; d="$(_build_dir)"
-  # 数据根：**只有 dev 启动器拉起时**才认注入的 DIY_HOME（它带了 DIY_LAUNCH）；
-  # 手工跑时 shell 里残留的 DIY_HOME（如生产 ~/.diy）绝不能把人带进生产数据根
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$(_home_dir "$variant" "$slot")}"
+  # 数据根：--home 显式优先；否则缺省 build/<variant>/home
+  local home="${DIY_DEV_HOME:-}"
+  home="${home:-$(_home_dir "$variant")}"
   run mkdir -p "$home"
   echo "${info}产物：${d}（与变体无关）${reset}"
-  echo "${info}数据根：${home}（变体 ${variant}，slot ${slot}）${reset}"
-  # DIY_LAUNCH = 这条 launch 的身份：注册表匹配键 + 窗口标题里的实例 URI（diy://<node>/…）
-  # 一律注入 ⇒ 手工跑与 dev 面板拉起在注册表里长得一模一样，没有「另一个 lance」这回事
-  local launch="${variant}/${slot}"
-  # DIY_DEV_LAUNCH_SLOT：让 app 自己也能知道是第几份（注册表 / 标题 / URI 用）
+  echo "${info}数据根：${home}（变体 ${variant}）${reset}"
+  # DIY_LAUNCH = 这条启动命令的 id（注册表里的元数据 + 窗口标题的实例 URI）。
+  # ##518：**不再有 `<variant>/<slot>`** —— launch 就是 app.yaml 里的条目名，slot 取消。
+  local launch="$variant"
+  # DIY_INSTANCE_NAME = 实例自报名字（人认得出的那个）；没给就让 diy-app 退化成 <app>#<pid>。
   run env DIY_HOME="$home" DIY_VARIANT="$variant" DIY_ENV="$env" DIY_LAUNCH="$launch" \
-    DIY_DEV_LAUNCH_SLOT="$slot" npx electron "$d/main/index.mjs" "${_REST[@]}"
+    ${DIY_DEV_NAME:+DIY_INSTANCE_NAME="$DIY_DEV_NAME"} npx electron "$d/main/index.mjs" "${_REST[@]}"
 }
 
 #: 跑 lab（试验）实例：development + CDP + 副屏
-#: 用法: ./sha.sh run.lab [--slot N]
-#: 产物固定 build/app；数据根 build/lab/<slot>/home；slot 缺省 1，也可由 DIY_DEV_LAUNCH_SLOT 给。
-#: 槽位 = 第几份实例：再起一份做 remote A/B 测试时用它，两份数据互不干扰。
-sha.def "run.lab" --opt "--slot:string=1:实例槽位（第几份）" --desc "跑 lab 实例"
+#: 用法: ./sha.sh run.lab [--home <数据根>] [--name <实例名>]
+#: 产物固定 build/app；数据根缺省 build/lab/home。再起一份就显式给 --home（新根）+ --name。
+sha.def "run.lab" --opt "--home:string::数据根（缺省 build/lab/home）" --opt "--name:string::实例自报名字" --desc "跑 lab 实例"
 run.lab() {
-  local slot
+  local home name
   sha.parse "$@" || return $?
-  _run_variant lab development "$slot"
+  DIY_DEV_HOME="$home" DIY_DEV_NAME="$name" _run_variant lab development
 }
 
 #: 跑 staging（预生产）实例：prod 构建 + 隔离数据根
-#: 用法: ./sha.sh run.staging [--slot N]
-#: `prod` 一词只留给真正的生产（~/.diy）；这里跑的是 prod 产物 + build/staging/<slot>/home。
-sha.def "run.staging" --opt "--slot:string=1:实例槽位（第几份）" --desc "跑 staging 实例"
+#: 用法: ./sha.sh run.staging [--home <数据根>] [--name <实例名>]
+#: `prod` 一词只留给真正的生产（~/.diy）；这里跑的是 prod 产物 + build/staging/home。
+sha.def "run.staging" --opt "--home:string::数据根（缺省 build/staging/home）" --opt "--name:string::实例自报名字" --desc "跑 staging 实例"
 run.staging() {
-  local slot
+  local home name
   sha.parse "$@" || return $?
-  _run_variant staging production "$slot"
+  DIY_DEV_HOME="$home" DIY_DEV_NAME="$name" _run_variant staging production
 }
 
-#: 弃用：等价于 `run lab`，请改用 ./sha.sh run lab [--slot N]
-lab() { _take_slot "$@"; _run_variant lab development "$SLOT"; }
-#: 弃用：等价于 `run staging`，请改用 ./sha.sh run staging [--slot N]
-staging() { _take_slot "$@"; _run_variant staging production "$SLOT"; }
+#: 弃用：等价于 `run lab`
+lab() { run.lab "$@"; }
+#: 弃用：等价于 `run staging`
+staging() { run.staging "$@"; }
 
 #: 只类型检查
 typecheck() { run npx tsc -p tsconfig.json; }
@@ -204,14 +195,16 @@ fmt-fix() { run npx oxfmt --write .; }
 ####################################################################################
 # app —— 多实例管理（##518）：new / list / stop
 #
-# 为什么要有这一层：`lab`/`staging` 一次只起**一份**（前台，占着终端），而
-# 「再起一份做 remote A/B 测试」是日常需求。命令层负责**自动分配 slot**并让实例跑在后台，
-# 人只需要说「再来一个」。
+# 为什么要有这一层：`run.lab` 在前台占着终端，而「再起一份做 A/B 测试」是日常需求。
+# 这一层只管**后台起 / 列 / 停**。
+#
+# ##518 用户裁：**没有槽位**。多份实例 = 多个数据根 + 各自的名字，都由人显式给
+# （`app new --home <新根> --name <名字>`）；缺省根的实例在跑就拒绝，不自动编号。
 ####################################################################################
 
 _reg_dir() { echo "${DIY_DEV_HOME:-$HOME/.diy/dev}/apps"; }
 
-# 本 worktree 的在跑实例：每行 `slot<TAB>pid<TAB>home`
+# 本 worktree 的在跑实例：每行 `name<TAB>pid<TAB>home`（name 取实例自报，没名字就 pid）
 _running() {
   local reg repo; reg="$(_reg_dir)"; repo="$(_repo_root)"
   [ -d "$reg" ] || return 0
@@ -225,39 +218,47 @@ _running() {
       try { rec = JSON.parse(readFileSync(`${dir}/${name}`, "utf-8")); } catch { continue; }
       if (rec.app !== "diy-dev" || rec.worktree !== repo) continue;
       try { process.kill(rec.pid, 0); } catch { continue; } // 死记录不算
-      out.push([String(rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
+      out.push([String(rec.name ?? rec.launch ?? ""), String(rec.pid), String(rec.diyHome ?? "")]);
     }
     out.sort((a, b) => a[1].localeCompare(b[1]));
     for (const row of out) console.log(row.join("\t"));
   ' "$reg" "$repo"
 }
 
-#: 列出本 worktree 在跑的实例（槽位 / pid / 数据根）
+#: 列出本 worktree 在跑的实例（名字 / pid / 数据根）
 #: 用法: ./sha.sh app list
 app.list() {
   echo "${info}在跑的实例（worktree: $(_repo_root)）${reset}"
-  _running | while IFS=$'\t' read -r slot pid home; do
-    printf '  %-10s pid %-8s %s\n' "$slot" "$pid" "$home"
+  _running | while IFS=$'\t' read -r name pid home; do
+    printf '  %-16s pid %-8s %s\n' "${name:-pid $pid}" "$pid" "$home"
   done
 }
 
-#: 起一份新实例：自动挑最小空闲槽位，后台跑（立刻回到提示符）
-#: 用法: ./sha.sh app new [--launch lab]
-sha.def "app.new" --opt "--launch:string=lab:入口（lab / staging）" --desc "起一份新实例"
+#: 起一份新实例：后台跑（立刻回到提示符）
+#: 用法: ./sha.sh app new [--launch lab] [--home <数据根>] [--name <实例名>]
+#: 缺省数据根上已有实例在跑 ⇒ 拒绝（不自动编号）：再起一份请显式给 --home + --name。
+sha.def "app.new" --opt "--launch:string=lab:入口（lab / staging）" --opt "--home:string::数据根（缺省 build/<launch>/home）" --opt "--name:string::实例自报名字" --desc "起一份新实例"
 app.new() {
-  local launch
+  local launch home name
   sha.parse "$@" || return $?
-  local slot=1 used
-  used="$(_running | cut -f1)"
-  while printf '%s\n' "$used" | grep -qx "${launch}/${slot}"; do slot=$((slot + 1)); done
-  local log="$(_repo_root)/build/${launch}/${slot}.log"
-  run mkdir -p "$(_repo_root)/build/${launch}"
-  echo "${info}新实例：${launch}/${slot}（日志 ${log}）${reset}"
-  nohup "$SCRIPT_DIR/sha.sh" run "$launch" --slot "$slot" > "$log" 2>&1 < /dev/null &
-  echo "  已后台启动 ${launch}/${slot}（pid $!）→ ./sha.sh app list 看状态，app stop ${slot} 停它"
+  local root; root="$(_repo_root)"
+  local target; target="${home:-$(_home_dir "$launch")}"
+  if _running | cut -f3 | grep -qxF "$target"; then
+    echo "该数据根已有实例在跑：$target" >&2
+    echo "  再起一份请显式给不同数据根：./sha.sh app new --launch $launch --home $root/build/$launch/alt/home --name <名字>" >&2
+    return 1
+  fi
+  local slug; slug="$(basename "$target")"
+  local log="$root/build/${launch}/${slug}.log"
+  run mkdir -p "$root/build/${launch}" "$target"
+  echo "${info}新实例：${launch} @ ${target}（日志 ${log}）${reset}"
+  local args=(run "$launch" --home "$target")
+  [ -n "$name" ] && args+=(--name "$name")
+  nohup "$SCRIPT_DIR/sha.sh" "${args[@]}" > "$log" 2>&1 < /dev/null &
+  echo "  已后台启动（pid $!）→ ./sha.sh app list 看状态，app stop <名字|pid> 停它"
 }
 
-#: 停一份实例：槽位名（lab/2 或 2）、pid、或 all
+#: 停一份实例：实例名 / pid / all
 #: 用法: ./sha.sh app stop <TARGET>
 sha.def "app.stop" --arg "TARGET!:槽位名 / pid / all" --desc "停实例"
 app.stop() {
@@ -265,13 +266,13 @@ app.stop() {
   sha.parse "$@" || return $?
   local rows; rows="$(_running)"
   if [ "$TARGET" = "all" ]; then
-    printf '%s\n' "$rows" | while IFS=$'\t' read -r slot pid home; do
-      [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${slot} (pid ${pid})"; }
+    printf '%s\n' "$rows" | while IFS=$'\t' read -r name pid home; do
+      [ -n "$pid" ] && { kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; echo "  已停 ${name:-pid $pid} (pid ${pid})"; }
     done
     return 0
   fi
   local pid
-  pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$TARGET" '$1==t || $1 ~ "/"t"$" || $2==t {print $2; exit}')"
+  pid="$(printf '%s\n' "$rows" | awk -F'\t' -v t="$TARGET" '$1==t || $2==t {print $2; exit}')"
   [ -n "$pid" ] || { echo "找不到目标：$TARGET（用 app list 看看有什么）" >&2; return 1; }
   kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
   echo "  已停 ${TARGET}（pid ${pid}）"

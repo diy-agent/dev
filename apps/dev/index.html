@@ -406,6 +406,20 @@
             .cx .cx-br-btn:hover {
                 border-bottom-color: currentColor;
             }
+            /* 该工作区在跑的实例（名字 · 多个则并排）；点不到也不影响下面的 launch 单元格 */
+            .cx .cx-inst {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 2px 6px;
+                margin-top: 2px;
+                font-size: 11px;
+                opacity: 0.85;
+            }
+            .cx .cx-inst-nm {
+                padding: 0 4px;
+                border-radius: 3px;
+                background: hsl(var(--h, 214), 45%, 26%);
+            }
             .cx .cx-br.sel {
                 box-shadow: inset 0 0 0 2px hsl(var(--h, 214), 60%, 52%);
             }

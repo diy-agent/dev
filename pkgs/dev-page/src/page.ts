@@ -119,7 +119,7 @@ function recordOf(ref: LaunchRef) {
     return readRecords(registryDir()).find((rec) => matchRecord(rec, ref)) ?? null;
 }
 
-export function startLaunch(ref: LaunchRef & { slot?: number | string }): {
+export function startLaunch(ref: LaunchRef): {
     ok: boolean;
     pid: number | null;
     logFile: string;
@@ -131,12 +131,11 @@ export function startLaunch(ref: LaunchRef & { slot?: number | string }): {
         key: launchKey(ref.worktree, ref.app, ref.launch),
         appDir: resolved.app.dir,
         launch: resolved.launch,
-        // 数据根：显式声明优先（例外），否则按槽位推导 build/<launch>/<slot>/home。
-        // 槽位来源：页面参数 → DIY_DEV_LAUNCH_SLOT → 1。
+        // 数据根：显式声明优先（例外），否则按 launch 推导 build/<launch>/home（##518：slot 取消）。
         home:
             resolved.launch.home !== undefined && resolved.launch.home !== ""
                 ? resolve(ref.worktree, resolved.launch.home)
-                : deriveHome(ref.worktree, resolved.launch.id, ref.slot ?? process.env["DIY_DEV_LAUNCH_SLOT"] ?? "1"),
+                : deriveHome(ref.worktree, resolved.launch.id),
     });
     return {
         ok: started.pid !== null,

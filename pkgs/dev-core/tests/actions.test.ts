@@ -42,6 +42,8 @@ describe("killPlan", () => {
         app: "diy-chat",
         launch: "lab",
         worktree: "/repo",
+        name: null,
+        mode: "source",
         port: null,
         diyHome: "/h",
         variant: "lab",
