@@ -15,6 +15,7 @@
         "@diy-agent/dev-page": "file:../../pkgs/dev-page",
         "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
         "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
+        "@material/material-color-utilities": "^0.4.0",
         "@material/web": "^2.5.0"
     },
     "devDependencies": {

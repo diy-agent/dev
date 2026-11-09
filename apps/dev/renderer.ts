@@ -16,13 +16,9 @@ import "@material/web/chips/filter-chip.js";
 import "@material/web/progress/circular-progress.js";
 import "@material/web/divider/divider.js";
 
-// M3 设计令牌（diy 自家 `pkgs.ts/ui/design`，尚未发 npm）：@material/web 全靠 `--md-sys-color-*` 取色，
-// 没有这套令牌就退回组件内置灰。dev 作为先行者直接吃源码 —— 等 design 发成包再换 import 路径。
-import "../../../diy/pkgs.ts/ui/design/src/m3-palette.css";
-import "../../../diy/pkgs.ts/ui/design/src/m3-color-full.css";
-import "../../../diy/pkgs.ts/ui/design/src/m3-shape.css";
-import "../../../diy/pkgs.ts/ui/design/src/m3-motion.css";
-import "../../../diy/pkgs.ts/ui/design/src/m3-typography.css";
-import "../../../diy/pkgs.ts/ui/design/src/m3-elevation.css";
+// M3 设计令牌（diy 自家 `pkgs.ts/ui/design`，尚未发 npm）：@material/web 全靠 `--md-sys-color-*` 取色。
+// 那个包的令牌现在是**生成物**（scripts/gen.mts 从 seed 算），入口只 import 一个 index.css；
+// 等 @diy-agent/ui-design 发到 npm，这行换成 `import "@diy-agent/ui-design"` 即可。
+import "../../../diy/pkgs.ts/ui/design/src/index.css";
 
 import "@diy-agent/dev-page/renderer";
