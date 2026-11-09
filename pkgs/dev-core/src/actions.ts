@@ -7,7 +7,7 @@
 //   · **输出进内存 + 文件**：UI 只读尾部；完事后日志还在 `<数据根>/log/dev/` 里可查。
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
+import { closeSync, createWriteStream, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandSession, LaunchSpec } from "./shared.js";
@@ -107,6 +107,8 @@ export class DevRunner {
     private readonly children = new Map<string, ChildProcess>();
     private session: MutableSession | null = null;
     private seq = 0;
+    /** 正在 tail 的启动日志（同一时刻只 tail 一条，与「一条命令一个会话」同口径） */
+    private tail: { timer: NodeJS.Timeout; logFile: string; offset: number; key: string } | null = null;
 
     constructor(
         private readonly logDir: string = devLogDir(),
@@ -199,9 +201,95 @@ export class DevRunner {
         return { killed, forced };
     }
 
+    /**
+     * 把一条**启动日志**接进「命令输出」面板（##518 用户口径：启动也要像 build 一样看得见输出）。
+     *
+     * 启动由 `start()` 拉起独立进程组，输出写的是文件（不占本进程管道）—— 这里只读文件：
+     * 逐次 stat 取增量、按行推进 session。实例退出（children 里那条已退）且文件不再增长 ⇒ 会话结束。
+     * 只保留尾巴 SESSION_LIMIT 行，与 `run()` 同一套规则。
+     */
+    watchLog(key: string, logFile: string, commandLine: string): CommandSession {
+        this.endSession();
+        const session: MutableSession = {
+            id: ++this.seq,
+            key,
+            command: "log",
+            commandLine,
+            running: true,
+            startedAt: new Date().toISOString(),
+            lines: [],
+            child: null,
+        };
+        this.session = session;
+        const push = (text: string): void => {
+            for (const line of stripAnsi(text).split(/\r?\n/)) {
+                if (line === "") continue;
+                session.lines.push(line);
+                if (session.lines.length > SESSION_LIMIT) {
+                    session.lines.splice(0, session.lines.length - SESSION_LIMIT);
+                }
+            }
+        };
+        let offset = 0;
+        // 首屏：文件里已有的一次读完（首次 tail 时日志可能已经有内容）
+        try {
+            const existing = readFileSync(logFile, "utf-8");
+            push(existing);
+            offset = Buffer.byteLength(existing);
+        } catch {
+            /* 还没写 */
+        }
+        const pump = (): void => {
+            let size: number;
+            try {
+                size = statSync(logFile).size;
+            } catch {
+                return;
+            }
+            if (size <= offset) return;
+            try {
+                const fd = openSync(logFile, "r");
+                const buf = Buffer.alloc(size - offset);
+                readSync(fd, buf, 0, buf.length, offset);
+                closeSync(fd);
+                offset = size;
+                push(buf.toString("utf-8"));
+            } catch {
+                /* 读失败就当这一轮没新内容 */
+            }
+        };
+        const timer = setInterval(() => {
+            pump();
+            const child = this.children.get(key);
+            const alive = child !== undefined && child.exitCode === null && child.signalCode === null;
+            if (!alive) {
+                // 再泵一次，把退出前最后几行读干净
+                pump();
+                session.running = false;
+                this.stopTail();
+            }
+        }, 300);
+        timer.unref?.();
+        this.tail = { timer, logFile, offset, key };
+        return sessionSnapshotOf(session);
+    }
+
+    /** 结束当前会话（切到另一条日志 / 跑构建前先收掉 tail，避免两个来源往同一个会话里写） */
+    private endSession(): void {
+        this.stopTail();
+        if (this.session?.running) this.session.child?.kill("SIGTERM");
+    }
+
+    private stopTail(): void {
+        if (this.tail !== null) {
+            clearInterval(this.tail.timer);
+            this.tail = null;
+        }
+    }
+
     /** 跑构建 / 检查命令（白名单在调用方校验）；输出逐行进 session */
     run(key: string, appDir: string, command: string): CommandSession {
-        if (this.session?.running) this.session.child?.kill("SIGTERM");
+        this.endSession();
         const session: MutableSession = {
             id: ++this.seq,
             key,
@@ -238,10 +326,12 @@ export class DevRunner {
     }
 
     clearSession(): void {
+        this.stopTail();
         this.session = null;
     }
 
     dispose(): void {
+        this.stopTail();
         for (const child of this.children.values()) {
             if (child.exitCode === null && child.pid !== undefined) {
                 try {

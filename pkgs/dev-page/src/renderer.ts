@@ -223,21 +223,6 @@ function openDir(launch: LaunchStatus, which: "app" | "worktree" | "home" | "yam
 
 // ── 左侧树 ───────────────────────────────────────────────────
 
-function hoverActions(launch: LaunchStatus): HTMLElement {
-    const acts = el("div", "acts");
-    if (launch.running) {
-        acts.append(
-            button("聚焦", "", () => void focusLaunch(launch)),
-            button("关闭", "stop", () => void stopLaunch(launch)),
-        );
-    } else if (launch.starting) {
-        acts.append(el("span", "hint", "启动中…"));
-    } else {
-        acts.append(button("启动", "", () => void startLaunch(launch)));
-    }
-    return acts;
-}
-
 interface WorktreeGroup {
     readonly worktree: string;
     readonly sample: LaunchStatus;
@@ -270,10 +255,12 @@ function groupByWorktree(launches: readonly LaunchStatus[]): WorktreeGroup[] {
 
 /** 该 app 列的色相（同一 app 在表头与所有单元格里用同一个色相，方便横向对位） */
 /**
- * 一个 launch 的 chip：**单击只选中**（看详情），启停交给悬停出现的按钮。
+ * 一个 launch 的 chip = **启动 / 停止的快捷按钮**（##518 用户口径，2026-11-09 改）。
  *
- * 为什么不再「单击即启停」（##518）：chip 同时是选中入口，想读详情的人一按就把 app 起来/杀掉，
- * 误操作代价太大；启停是破坏性动作，必须落在明确的按钮上。
+ * 为什么改回来了：悬停才出现的「启动」按钮会让人在格子里摸索、鼠标一动布局就抖（chip 挪位），
+ * 而且它把「这一个 launch 是起还是停」藏在两级交互后面。现在：
+ *   · 未启动 → 单击**启动**；运行中 → 单击**停止**（title 一并写明，破坏性动作有文字提示）；
+ *   · 详情不靠这里进 —— 工作区行上的分支名可以进 worktree 详情，里面每个 launch 一行。
  */
 function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
     const cls = [
@@ -290,29 +277,36 @@ function launchChip(launch: LaunchStatus, hue: number): HTMLElement {
     chip.type = "button";
     chip.dataset["key"] = launch.key;
     chip.style.setProperty("--h", String(hue));
-    chip.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${
-        launch.starting ? "启动中…" : launch.running ? "运行中" : "未启动"
-    }${launch.configIssues.length > 0 ? `\n⚠ ${launch.configIssues.map((item) => item.message).join("\n⚠ ")}` : ""}\n点击看详情`;
+    const state = launch.starting ? "启动中…" : launch.running ? "运行中" : "未启动";
+    chip.title = `${launch.worktree} · apps/${launch.app} · ${launch.launch}\n${launch.command}\n${state}${
+        launch.configIssues.length > 0 ? `\n⚠ ${launch.configIssues.map((item) => item.message).join("\n⚠ ")}` : ""
+    }\n${launch.running ? "点击停止" : launch.starting ? "（启动中，等它进注册表）" : "点击启动"}`;
     chip.append(el("span", `dot ${launch.running ? "on" : launch.starting ? "wait" : "off"}`));
     chip.append(el("span", "chip-nm", launch.launch));
     // 多实例：`lab/1`、`lab/2` 同属一条 launch，chip 上标份数
     if (launch.instances.length > 1) chip.append(el("span", "chip-n", `×${String(launch.instances.length)}`));
     chip.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (launch.starting) return; // 启动中：点了也只会重复 spawn，等它自报
+        if (launch.running) {
+            void stopLaunch(launch);
+            return;
+        }
+        // 启动后把右侧切到该 launch 详情：**它的输出就在那张卡里**（##518 用户口径：
+        // 启动的日志要像 build 一样看得见）。不切的话，点了启动只看到 chip 变灰，日志无从发现。
         selectedKey = launch.key;
         selectedWorktree = null;
-        panel = "app";
         selectedExternal = null;
-        render();
+        panel = "app";
+        void startLaunch(launch);
     });
     return chip;
 }
 
-/** 单元格 = chip + 悬停才出现的启停按钮（破坏性动作不藏在单击里） */
+/** 单元格 = 一个 chip（chip 本身就是启停按钮，见 launchChip） */
 function launchCell(launch: LaunchStatus, hue: number): HTMLElement {
     const wrap = el("span", "cx-launch");
     wrap.append(launchChip(launch, hue));
-    wrap.append(hoverActions(launch));
     return wrap;
 }
 

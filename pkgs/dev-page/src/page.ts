@@ -137,6 +137,11 @@ export function startLaunch(ref: LaunchRef): {
                 ? resolve(ref.worktree, resolved.launch.home)
                 : deriveHome(ref.worktree, resolved.launch.id),
     });
+    // ##518 用户口径：启动的输出也要像 build 等命令一样进「命令输出」面板 ——
+    // 否则点了启动只看到「启动中…」，构建失败 / 端口被占全在日志文件里，谁也看不见。
+    if (started.pid !== null) {
+        runner.watchLog(launchKey(ref.worktree, ref.app, ref.launch), started.logFile, `启动 ${ref.app}.${ref.launch}`);
+    }
     return {
         ok: started.pid !== null,
         pid: started.pid,

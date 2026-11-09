@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { cdpUrl, killPlan, launchEnv, logFileName, stripAnsi } from "../src/actions.js";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DevRunner, cdpUrl, killPlan, launchEnv, logFileName, stripAnsi } from "../src/actions.js";
 import type { InstanceRecordLite } from "../src/instances.js";
 import { isBuildCommand, type LaunchSpec } from "../src/shared.js";
 
@@ -97,5 +100,38 @@ describe("stripAnsi / cdpUrl / 日志名 / 命令白名单", () => {
         }
         expect(isBuildCommand("rm -rf /")).toBe(false);
         expect(isBuildCommand(undefined)).toBe(false);
+    });
+});
+
+describe("DevRunner.watchLog：启动日志接进命令输出面板（##518）", () => {
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+    it("已有内容 + 后续追加都会进 session（tail 而不是一次性读）", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "dev-log-"));
+        const file = join(dir, "lab.log");
+        writeFileSync(file, "启动前的一行\n");
+        const runner = new DevRunner(dir);
+        const s1 = runner.watchLog("k", file, "启动 chat.lab");
+        expect(s1.lines).toEqual(["启动前的一行"]);
+        appendFileSync(file, "构建中…\n端口 18888\n");
+        await sleep(700);
+        const s2 = runner.sessionSnapshot();
+        expect(s2?.lines).toContain("端口 18888");
+        runner.dispose();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("实例不在跑（没有子进程）⇒ 会话标结束，但已读到的行保留", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "dev-log-"));
+        const file = join(dir, "lab.log");
+        writeFileSync(file, "只有这一行\n");
+        const runner = new DevRunner(dir);
+        runner.watchLog("k", file, "启动 chat.lab");
+        await sleep(500);
+        const s = runner.sessionSnapshot();
+        expect(s?.running).toBe(false);
+        expect(s?.lines).toContain("只有这一行");
+        runner.dispose();
+        rmSync(dir, { recursive: true, force: true });
     });
 });
