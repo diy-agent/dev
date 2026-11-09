@@ -10,6 +10,7 @@
     ],
     "type": "module",
     "dependencies": {
+        "@awesome.me/webawesome": "^3.14.0",
         "@diy-agent/dev-core": "file:../../pkgs/dev-core",
         "@diy-agent/dev-fs": "file:../../pkgs/dev-fs",
         "@diy-agent/dev-page": "file:../../pkgs/dev-page",

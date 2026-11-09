@@ -1,0 +1,29 @@
+/* wa-bridge.css —— Web Awesome ↔ M3 令牌桥（##518）
+ *
+ * 为什么要桥：@material/web 读 `--md-sys-color-*`，Web Awesome 读 `--wa-color-*`；
+ * 不桥的话同一个界面里两套配色，看起来像两家拼的。
+ * 只映射**用到的**语义位（surface / text / border / brand），不做全量对齐。
+ */
+:root {
+    --wa-color-surface-default: var(--md-sys-color-surface-container-lowest);
+    --wa-color-surface-raised: var(--md-sys-color-surface-container-low);
+    --wa-color-surface-lowered: var(--md-sys-color-surface-container);
+    --wa-color-surface-border: var(--md-sys-color-outline-variant);
+    --wa-color-text-normal: var(--md-sys-color-on-surface);
+    --wa-color-text-quiet: var(--md-sys-color-on-surface-variant);
+    --wa-color-text-link: var(--md-sys-color-primary);
+    --wa-color-brand-fill-loud: var(--md-sys-color-primary);
+    --wa-color-neutral-fill-quiet: var(--md-sys-color-surface-container-high);
+    --wa-border-radius-l: var(--md-sys-shape-corner-md);
+    --wa-border-radius-m: var(--md-sys-shape-corner-sm);
+}
+
+/* wa-card 的默认内边距对开发工具的密度来说太松 */
+wa-card::part(body) {
+    padding: 8px 12px 10px;
+}
+wa-card {
+    margin-bottom: 8px;
+    background: var(--md-sys-color-surface-container-low);
+    border-color: var(--md-sys-color-outline-variant);
+}

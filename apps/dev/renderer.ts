@@ -21,4 +21,11 @@ import "@material/web/divider/divider.js";
 // 等 @diy-agent/ui-design 发到 npm，这行换成 `import "@diy-agent/ui-design"` 即可。
 import "../../../diy/pkgs.ts/ui/design/src/index.css";
 
+// Web Awesome（##518：@material/web 缺的组件从这里补 —— card / tree / split-panel / details）。
+// 只 import 用到的组件；主题用它的 default，再把 --wa-color-* 桥到 M3 令牌（见 wa-bridge.css），
+// 这样两套组件库在同一张脸上，不会一半 Material、一半 Shoelace。
+import "@awesome.me/webawesome/dist/components/card/card.js";
+import "@awesome.me/webawesome/dist/styles/themes/default.css";
+import "./wa-bridge.css";
+
 import "@diy-agent/dev-page/renderer";

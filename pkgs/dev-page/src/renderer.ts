@@ -128,9 +128,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?
     return node;
 }
 
-function button(label: string, className: string, onclick: () => void): HTMLButtonElement {
-    const node = el("button", className, label);
-    node.type = "button";
+/**
+ * 按钮 = **@material/web 的 md-text-button**（##518 用户裁：控件一律 Material）。
+ *
+ * 为什么保留这个助手而不是到处写 createElement：调用点太多，且这里统一处理
+ * 「点按钮不要冒泡到行的选中」这条交互约定。
+ */
+function button(label: string, className: string, onclick: () => void): HTMLElement {
+    const node = document.createElement("md-text-button") as HTMLElement & { innerText: string };
+    if (className !== "") node.className = className;
+    node.textContent = label;
     node.addEventListener("click", (event) => {
         event.stopPropagation();
         onclick();
@@ -513,9 +520,17 @@ function openButtons(launch: LaunchStatus, which: "app" | "worktree" | "home" | 
     return wrap;
 }
 
+/**
+ * 一张卡 = **Web Awesome 的 wa-card**（##518：@material/web 没有 card，缺件选型 Web Awesome）。
+ *
+ * 为什么把「卡片」这一个点换掉就能改观：详情面板 8 张卡都从这里出（配置/入口/URI/参数/运行时/
+ * 构建/日志/实例），换这一处 = 整片区域换成组件化外观，且圆角、边线、内边距随之统一。
+ */
 function card(title: string, extra?: Node): HTMLElement {
-    const box = el("div", "card");
-    const head = el("h2", "", title);
+    const box = document.createElement("wa-card") as HTMLElement;
+    box.className = "card";
+    box.setAttribute("appearance", "outlined");
+    const head = el("h2", "card-head", title);
     if (extra !== undefined) {
         const right = el("span", "r");
         right.append(extra);
