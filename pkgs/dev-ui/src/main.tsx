@@ -13,7 +13,8 @@ import { createDevClient, type PageBridge } from "./client.js";
 import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
 import { App, useStoreSlice, type UiContext, type Selection } from "./app.js";
-import { StatusBar, TitleBar, useNotices, usePages, type PageInfo } from "./chrome.js";
+import { StatusBar, TitleBar, useNotices, type PageInfo } from "./chrome.js";
+import { RepoPage } from "./repo.js";
 
 interface WorkbenchBridge extends PageBridge {
     listPages(): Promise<PageInfo[]>;
@@ -85,11 +86,14 @@ const selectSessionAll = (s: CommandSession | null): CommandSession | null => s;
 function Shell(props: { bridge: WorkbenchBridge }) {
     // ⚠️ hook 必须在组件里：之前把这行写在模块顶层，React 直接报 dispatcher 为 null（白屏）
     const notices = useNotices();
-    // ⚠️ loader 必须稳定：内联箭头每次渲染都是新引用 ⇒ usePages 的 effect 反复重跑
-    // → setPages → 重渲染 → 无限循环（表现为 React 报 dispatcher 为 null / 白屏）。
-    const loadPages = useCallback(() => props.bridge.listPages(), [props.bridge]);
-    const pages = usePages(loadPages);
-    const [active, setActive] = useState("dev");
+    // 页面导航（##518）：目前是 dev-ui 自己的两个页面。
+    // workbench 的 `page.list` 也接得上（多插件页时直接并进来），但单个插件内多页
+    // 由插件自己管更直接 —— 外部仓库页将来若独立成插件，这里会自动多一项。
+    const pages: readonly PageInfo[] = [
+        { id: "app", title: "应用" },
+        { id: "repo", title: "仓库" },
+    ];
+    const [active, setActive] = useState("app");
     // 稳定选择器（模块级常量）：内联箭头函数每次渲染都是新引用 ⇒ 订阅反复重建
     const snapshot = useStoreSlice(ctx.store, selectSnapshotAll);
     const session = useStoreSlice(ctx.session, selectSessionAll);
@@ -99,11 +103,26 @@ function Shell(props: { bridge: WorkbenchBridge }) {
                 pages={pages.length === 0 ? [{ id: "dev", title: "应用" }] : pages}
                 active={active}
                 onPick={setActive}
-                instanceName={snapshot?.repoName ?? ""}
+                instanceName={snapshot === null ? "" : `${snapshot.repoName} · ${String(snapshot.runningCount)} 在跑`}
                 notices={notices.notices}
                 onClearNotices={notices.clear}
             />
             <div className="min-h-0 flex-1">
+                {active === "repo" ? (
+                    <RepoPage
+                        client={client}
+                        onOpenPath={(path) => {
+                            void client.openPath(path).then((res) => {
+                                if (!res.ok) notices.push(`打开失败：${res.reason}`);
+                            });
+                        }}
+                        onOpenWorktree={(path) => {
+                            selection = { kind: "worktree", path };
+                            setActive("app");
+                            render();
+                        }}
+                    />
+                ) : (
                 <App
                     ctx={ctx}
                     selection={selection}
@@ -122,6 +141,7 @@ function Shell(props: { bridge: WorkbenchBridge }) {
                         }, 4000);
                     }}
                 />
+                )}
             </div>
             <StatusBar
                 running={snapshot?.runningCount ?? 0}

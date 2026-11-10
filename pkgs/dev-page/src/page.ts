@@ -11,10 +11,12 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
 import { refMethods } from "./ref-page.js";
+import { repoOverview } from "./repo-page.js";
 import {
     DevRunner,
     DEFAULT_HOME,
     DEV_METHODS,
+    REPO_METHODS,
     buildSnapshot,
     cdpUrl,
     devLogDir,
@@ -266,6 +268,17 @@ export const page: PageContribution = {
             return { ok: true, reason: "日志已清空" };
         },
         [DEV_METHODS.revealCdp]: (args) => revealCdp(args as LaunchRef),
+        /**
+         * 仓库页（##518）：本仓 + 快照里出现过的其它仓库根。
+         *
+         * 为什么要带「其它仓库」：dev 的交叉表本来就跨仓（`_diy` 与 `diy` 各自有 worktree），
+         * 只报本仓的话，另一个仓的 worktree 脏不脏还得换目录去看。
+         */
+        [REPO_METHODS.overview]: () => {
+            const roots = new Set<string>([REPO_ROOT]);
+            for (const launch of snapshot().launches) roots.add(launch.repo);
+            return repoOverview([...roots]);
+        },
     },
 };
 
