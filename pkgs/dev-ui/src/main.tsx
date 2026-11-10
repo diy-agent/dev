@@ -14,7 +14,7 @@ import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
 import { App, useStoreSlice, type UiContext, type Selection } from "./app.js";
 import { StatusBar, TitleBar, useNotices, type PageInfo } from "./chrome.js";
-import { RepoPage } from "./repo.js";
+import { WorktreesPage } from "./worktrees.js";
 
 interface WorkbenchBridge extends PageBridge {
     listPages(): Promise<PageInfo[]>;
@@ -91,7 +91,7 @@ function Shell(props: { bridge: WorkbenchBridge }) {
     // 由插件自己管更直接 —— 外部仓库页将来若独立成插件，这里会自动多一项。
     const pages: readonly PageInfo[] = [
         { id: "app", title: "应用" },
-        { id: "repo", title: "仓库" },
+        { id: "files", title: "文件" },
     ];
     const [active, setActive] = useState("app");
     // 稳定选择器（模块级常量）：内联箭头函数每次渲染都是新引用 ⇒ 订阅反复重建
@@ -108,20 +108,8 @@ function Shell(props: { bridge: WorkbenchBridge }) {
                 onClearNotices={notices.clear}
             />
             <div className="min-h-0 flex-1">
-                {active === "repo" ? (
-                    <RepoPage
-                        client={client}
-                        onOpenPath={(path) => {
-                            void client.openPath(path).then((res) => {
-                                if (!res.ok) notices.push(`打开失败：${res.reason}`);
-                            });
-                        }}
-                        onOpenWorktree={(path) => {
-                            selection = { kind: "worktree", path };
-                            setActive("app");
-                            render();
-                        }}
-                    />
+                {active === "files" ? (
+                    <WorktreesPage ctx={ctx} />
                 ) : (
                 <App
                     ctx={ctx}

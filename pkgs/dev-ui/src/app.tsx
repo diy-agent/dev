@@ -48,7 +48,7 @@ export function useSlice<T>(ctx: UiContext, selector: (s: DevSnapshot | null) =>
     return useStoreSlice(ctx.store, selector);
 }
 
-const selectSnapshot = (s: DevSnapshot | null): DevSnapshot | null => s;
+export const selectSnapshot = (s: DevSnapshot | null): DevSnapshot | null => s;
 
 /** ⚠️ 空数组必须是**同一个常量**：`?? []` 每次都新建 ⇒ useSyncExternalStore 认为快照变了
  *  → 无限重渲染（React error #185，实测踩到过）。 */

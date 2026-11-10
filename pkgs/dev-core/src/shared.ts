@@ -211,42 +211,6 @@ export const DEV_METHODS = {
     revealCdp: "revealCdp",
 } as const;
 
-// ── 仓库页（##518：像 VS Code 那样浏览 git 仓库） ────────────
-
-export const REPO_METHODS = {
-    overview: "repoOverview",
-} as const;
-
-/** 一个 worktree 的 git 状态 */
-export interface WorktreeStatus {
-    readonly path: string;
-    readonly name: string;
-    /** 分支短名；detached = null */
-    readonly branch: string | null;
-    /** 是否是主工作树（`git worktree list` 的第一条） */
-    readonly main: boolean;
-    /** `git status --porcelain` 的行（最多 200 条，够看；超了给 truncated） */
-    readonly changes: readonly string[];
-    readonly truncated: boolean;
-    /** 相对 upstream 领先/落后；没有 upstream = null */
-    readonly ahead: number | null;
-    readonly behind: number | null;
-    /** 最近一次提交：`<短 sha> <标题>`；读不到 = null */
-    readonly head: string | null;
-}
-
-/** 一个 git 仓库（主工作树 + 它的 worktree） */
-export interface RepoStatus {
-    /** 仓库根（主工作树路径） */
-    readonly root: string;
-    readonly name: string;
-    readonly worktrees: readonly WorktreeStatus[];
-}
-
-export interface RepoOverview {
-    readonly repos: readonly RepoStatus[];
-}
-
 // ── 外部仓库（##510：dev-ref 的 UI 面） ──────────────────────
 
 /** 一条已注册的 source（diy.yaml）的对齐结果 */

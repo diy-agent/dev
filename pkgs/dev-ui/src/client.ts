@@ -15,7 +15,6 @@
 
 import type {
     BuildCommand,
-    RepoOverview,
     CommandSession,
     DevSnapshot,
     LaunchRef,
@@ -23,7 +22,7 @@ import type {
     RefOverview,
     RefSyncState,
 } from "@diy-agent/dev-core/shared";
-import { DEV_METHODS, REF_METHODS, REPO_METHODS } from "@diy-agent/dev-core/shared";
+import { DEV_METHODS, REF_METHODS } from "@diy-agent/dev-core/shared";
 
 /** 页面桥（workbench 宿主注入）：`pageId` = 本页插件 id */
 export interface PageBridge {
@@ -53,12 +52,6 @@ export interface DevClient {
     clearSession(): Promise<void>;
     openDir(target: OpenTarget): Promise<{ ok: boolean; reason: string }>;
     openUrl(url: string): Promise<{ ok: boolean; reason: string }>;
-    /** 在系统文件管理器里打开一个本地路径（仓库页的「打开」用） */
-    openPath(path: string): Promise<{ ok: boolean; reason: string }>;
-    /** 仓库页（git 只读视图） */
-    readonly repo: {
-        overview(): Promise<RepoOverview>;
-    };
     /** 外部仓库域（diy.yaml 跟着 worktree 走） */
     readonly ref: {
         overview(worktree: string): Promise<RefOverview>;
@@ -95,10 +88,6 @@ export function createDevClient(bridge: PageBridge, pageId = "dev"): DevClient {
         },
         openDir: (target) => call<{ ok: boolean; reason: string }>(DEV_METHODS.open, target),
         openUrl: (url) => call<{ ok: boolean; reason: string }>(DEV_METHODS.open, { url }),
-        openPath: (path) => call<{ ok: boolean; reason: string }>(DEV_METHODS.open, { url: path }),
-        repo: {
-            overview: () => call<RepoOverview>(REPO_METHODS.overview),
-        },
         ref: {
             overview: (worktree) => call<RefOverview>(REF_METHODS.overview, { worktree }),
             add: (worktree, url) => call(REF_METHODS.add, { worktree, url }),
