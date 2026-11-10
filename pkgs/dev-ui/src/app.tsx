@@ -37,14 +37,14 @@ export interface UiContext {
     readonly client: DevClient;
 }
 
-/** 唯一的 React ↔ store 桥（对任意 `SnapshotStore` 通用） */
-function useStoreSlice<T, S>(store: SnapshotStore<T>, selector: (s: T) => S): S {
+/** 唯一的 React ↔ store 桥（对任意 `SnapshotStore` 通用；外壳也用它） */
+export function useStoreSlice<T, S>(store: SnapshotStore<T>, selector: (s: T) => S): S {
     const subscribe = useCallback((onChange: () => void) => store.subscribe(selector, onChange), [store, selector]);
     const getSnapshot = useCallback(() => store.read(selector), [store, selector]);
     return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-function useSlice<T>(ctx: UiContext, selector: (s: DevSnapshot | null) => T): T {
+export function useSlice<T>(ctx: UiContext, selector: (s: DevSnapshot | null) => T): T {
     return useStoreSlice(ctx.store, selector);
 }
 

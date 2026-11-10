@@ -6,14 +6,18 @@
  *   2. **轮询在 store 外面**：每秒拉一次 snapshot 塞进 store，store 自己按切片去重通知；
  *   3. 注册第一个 Slot 贡献（`detail/runtime`）—— 证明「加一块 UI 不用改 app.tsx」。
  */
+import { useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
 import { createDevClient, type PageBridge } from "./client.js";
 import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
-import { App, type UiContext, type Selection } from "./app.js";
+import { App, useStoreSlice, type UiContext, type Selection } from "./app.js";
+import { StatusBar, TitleBar, useNotices, usePages, type PageInfo } from "./chrome.js";
 
-type WorkbenchBridge = PageBridge;
+interface WorkbenchBridge extends PageBridge {
+    listPages(): Promise<PageInfo[]>;
+}
 
 const bridge = (window as unknown as { workbench?: WorkbenchBridge }).workbench;
 if (bridge === undefined) throw new Error("preload 桥没注入 window.workbench");
@@ -75,42 +79,63 @@ const container = document.getElementById("root");
 if (container === null) throw new Error("index.html 缺 #root");
 const root = createRoot(container);
 
-/** 状态栏：有 toast 就显示 toast，否则显示命令输出的最后一行 */
-function paintStatus(): void {
-    const bar = document.getElementById("ui-status");
-    if (bar === null) return;
-    const last = ctx.session.read((s) => s?.lines.at(-1) ?? "");
-    bar.textContent = toastText === "" ? last : toastText;
+const selectSnapshotAll = (s: DevSnapshot | null): DevSnapshot | null => s;
+const selectSessionAll = (s: CommandSession | null): CommandSession | null => s;
+
+function Shell(props: { bridge: WorkbenchBridge }) {
+    // ⚠️ hook 必须在组件里：之前把这行写在模块顶层，React 直接报 dispatcher 为 null（白屏）
+    const notices = useNotices();
+    // ⚠️ loader 必须稳定：内联箭头每次渲染都是新引用 ⇒ usePages 的 effect 反复重跑
+    // → setPages → 重渲染 → 无限循环（表现为 React 报 dispatcher 为 null / 白屏）。
+    const loadPages = useCallback(() => props.bridge.listPages(), [props.bridge]);
+    const pages = usePages(loadPages);
+    const [active, setActive] = useState("dev");
+    // 稳定选择器（模块级常量）：内联箭头函数每次渲染都是新引用 ⇒ 订阅反复重建
+    const snapshot = useStoreSlice(ctx.store, selectSnapshotAll);
+    const session = useStoreSlice(ctx.session, selectSessionAll);
+    return (
+        <div className="flex h-full flex-col">
+            <TitleBar
+                pages={pages.length === 0 ? [{ id: "dev", title: "应用" }] : pages}
+                active={active}
+                onPick={setActive}
+                instanceName={snapshot?.repoName ?? ""}
+                notices={notices.notices}
+                onClearNotices={notices.clear}
+            />
+            <div className="min-h-0 flex-1">
+                <App
+                    ctx={ctx}
+                    selection={selection}
+                    onSelect={(sel) => {
+                        selection = sel;
+                        render();
+                    }}
+                    notify={(text) => {
+                        notices.push(text);
+                        toastText = text;
+                        render();
+                        if (toastTimer !== null) clearTimeout(toastTimer);
+                        toastTimer = setTimeout(() => {
+                            toastText = "";
+                            render();
+                        }, 4000);
+                    }}
+                />
+            </div>
+            <StatusBar
+                running={snapshot?.runningCount ?? 0}
+                total={snapshot?.launches.length ?? 0}
+                externals={snapshot?.externals.length ?? 0}
+                sessionRunning={session?.running ?? false}
+                lastLine={session?.lines.at(-1) ?? ""}
+            />
+        </div>
+    );
 }
 
 function render(): void {
-    paintStatus();
-    root.render(
-        <App
-            ctx={ctx}
-            selection={selection}
-            onSelect={(sel) => {
-                selection = sel;
-                render();
-            }}
-            notify={(text) => {
-                toastText = text;
-                render();
-                if (toastTimer !== null) clearTimeout(toastTimer);
-                toastTimer = setTimeout(() => {
-                    toastText = "";
-                    render();
-                }, 4000);
-            }}
-        />,
-    );
+    root.render(<Shell bridge={bridge as WorkbenchBridge} />);
 }
 render();
 
-// 状态栏：只显示会话最后一行（不参与主界面重绘）
-setInterval(() => {
-    const bar = document.getElementById("ui-status");
-    if (bar === null) return;
-    const lines = ctx.session.read((s) => s?.lines ?? []);
-    bar.textContent = lines.at(-1) ?? "";
-}, 500);
