@@ -6,22 +6,34 @@
 import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createWorkbench } from "@diy-agent/workbench";
+import { cdpSwitchValue, createWorkbench, readDevToolsPort } from "@diy-agent/workbench";
 import { ChannelServerBinding, type EnvelopeTransport } from "@diy-agent/rpc";
 import { bindFsHandlers } from "@diy-agent/dev-fs";
 import { ipcMain } from "electron";
 import { ASSEMBLY } from "./index.js";
 
-// lab 变体开 CDP：agent 用 `curl 127.0.0.1:9223/json` / playwright 查 DOM。
-// 缺省 9223（9222 留给 diy-app lab，两者经常同时在跑）。必须在 app ready 之前 append。
+// lab 变体开 CDP。**端口不再写死**（##518）：写死 9223 时，第二个 dev 实例会
+// `bind() failed: Address already in use`，CDP 静默不可用（实例照常注册，人以为能 attach）。
+// 现在与 diy-app 同构：缺省 `0`（Chromium 自己挑空闲端口），实际端口从
+// `<userData>/DevToolsActivePort` 读（口径收在 @diy-agent/workbench 的 cdp.ts）。
+// 必须在 app ready 之前 append。
 const cdpFromArgv = process.argv.some((arg) => arg.startsWith("--remote-debugging-port"));
 if (process.env["DIY_VARIANT"] === "lab" && !cdpFromArgv) {
-    app.commandLine.appendSwitch("remote-debugging-port", process.env["DIY_CDP_PORT"] ?? "9223");
+    app.commandLine.appendSwitch("remote-debugging-port", cdpSwitchValue());
 }
 
 const here = dirname(fileURLToPath(import.meta.url)); // build/<variant>/main
 
 // ⚠️ 不要用顶层 await（Electron 的 ESM 入口里会让 app ready 永不触发，见 apps/chat 的同一条注释）
+app.whenReady().then(() => {
+    // Chromium 异步写 DevToolsActivePort：轮询几次再打，避免日志里出现空地址
+    void (async () => {
+        const { waitDevToolsPort } = await import("@diy-agent/workbench");
+        const port = await waitDevToolsPort(app.getPath("userData"));
+        console.log(port === null ? "[dev] CDP 未启用" : `[dev] CDP ws://127.0.0.1:${String(port)}/devtools/browser (实际端口见 DevToolsActivePort)`);
+    })();
+});
+
 createWorkbench({
     title: ASSEMBLY.title,
     // 实例注册表里的 app 短名：它自己也该出现在「谁活着」里
