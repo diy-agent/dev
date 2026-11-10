@@ -789,17 +789,65 @@ export interface AppProps {
     readonly notify: (text: string) => void;
 }
 
+/**
+ * 可拖拽分隔条 + 宽度持久化（老界面用 workbench-ui 的 createSplitPane + `dev.splitWidth`）。
+ *
+ * 为什么自己写这 20 行而不再引一个库：React 里它就是「pointerdown → window 上跟 mousemove → up 收尾」
+ * 三件事；引库反而要处理它的 DOM 结构与我们的 flex 布局打架。宽度只在松手时落盘，拖动中不写 localStorage。
+ */
+function useSplitWidth(): [number, (width: number, persist: boolean) => void] {
+    const [stored, setStored] = usePersisted<number>(
+        "dev.splitWidth",
+        300,
+        (raw) => {
+            const n = Number(raw);
+            return Number.isFinite(n) ? Math.min(560, Math.max(240, n)) : 300;
+        },
+        (value) => String(Math.round(value)),
+    );
+    const [width, setWidth] = useState(stored);
+    const update = useCallback(
+        (next: number, persist: boolean) => {
+            const clamped = Math.min(560, Math.max(240, next));
+            setWidth(clamped);
+            if (persist) setStored(clamped);
+        },
+        [setStored],
+    );
+    return [width, update];
+}
+
 export function App(props: AppProps) {
     const snapshot = useSlice(props.ctx, selectSnapshot);
+    const [sideWidth, setSideWidth] = useSplitWidth();
     // 外部实例每次快照可能换对象 ⇒ 按 pid 重新查，别把 selection 里的旧对象直接渲染（会显示过期数据）
     const externalPid = props.selection?.kind === "external" ? props.selection.pid : null;
     const external = externalPid === null ? null : (snapshot?.externals.find((item) => item.pid === externalPid) ?? null);
     return (
-        <div className="grid h-full grid-cols-[minmax(260px,340px)_1fr]">
-            <aside className="border-r border-outline">
+        <div className="flex h-full">
+            <aside className="shrink-0 overflow-hidden" style={{ width: `${String(sideWidth)}px` }}>
                 <Sidebar ctx={props.ctx} selection={props.selection} onSelect={props.onSelect} />
             </aside>
-            <main className="min-w-0">
+            <div
+                role="separator"
+                aria-orientation="vertical"
+                title="拖动调整宽度"
+                className="w-[5px] shrink-0 cursor-col-resize border-r border-outline hover:bg-primary/30"
+                onPointerDown={(event) => {
+                    event.preventDefault();
+                    const startX = event.clientX;
+                    const startWidth = sideWidth;
+                    const move = (e: PointerEvent): void => setSideWidth(startWidth + (e.clientX - startX), false);
+                    const up = (e: PointerEvent): void => {
+                        window.removeEventListener("pointermove", move);
+                        window.removeEventListener("pointerup", up);
+                        setSideWidth(startWidth + (e.clientX - startX), true);
+                    };
+                    window.addEventListener("pointermove", move);
+                    window.addEventListener("pointerup", up);
+                }}
+            />
+            <main className="min-w-0 flex-1">
                 {props.selection?.kind === "launch" ? (
                     <LaunchDetail ctx={props.ctx} launch={props.selection.launch} notify={props.notify} />
                 ) : props.selection?.kind === "worktree" ? (

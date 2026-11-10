@@ -29,178 +29,181 @@ type SyncError = { spec: string; message: string };
 /** 把 ref 全部 handler 绑定到给定 ServerBinding（本地 mem transport 场景）。 */
 export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
     const ref = refApi.ref;
-    // ⚠️ 注册路径必须带 service 前缀（`diy.dev.ref` + api 里的 `ref.<方法>`）：
-    // rpc 的 `defineService.bind` 就是按 `${name}.${flattenedPath}` 注册的，这里手写 `on` 得自己对齐，
-    // 否则客户端（`refService.use(c).ref.add()`）会报 "Unknown method"。
 
-
-    binding.on(`${refService.name}.ref.add`, ref.add, async ({ input }) => {
-        git.requireGit();
-        // 解析 URL（含 @版本），失败抛清晰错误
-        const p = store.parseSpec(input.url);
-        // 预检 URL 可达（git ls-remote），不可达不加注册
-        git.verifyRemoteUrl(p.url);
-        const spec = store.addSource(rt.cwd, input.url);
-        return {
-            status: "ok",
-            data: {
-                name: `${p.info.owner}/${p.info.repo}`,
-                spec,
+    // 用 service 绑定（**别用 `binding._on` 手写路径**）：handler 形状与 api 树同构 ⇒
+    // 少写一个方法 / 拼错路径都是编译期错误。上一版手写 `"ref.add"` 就漏了 service 前缀，
+    // 客户端请求 `diy.dev.ref.ref.add` 时服务端没有注册，运行期才报 "Unknown method"。
+    refService.bind(binding, {
+        ref: {
+        add: async ({ input }) => {
+            git.requireGit();
+            // 解析 URL（含 @版本），失败抛清晰错误
+            const p = store.parseSpec(input.url);
+            // 预检 URL 可达（git ls-remote），不可达不加注册
+            git.verifyRemoteUrl(p.url);
+            const spec = store.addSource(rt.cwd, input.url);
+            return {
+                status: "ok",
+                data: {
+                    name: `${p.info.owner}/${p.info.repo}`,
+                    spec,
+                },
+            };
             },
-        };
-    });
 
-    binding.on(`${refService.name}.ref.remove`, ref.remove, async ({ input }) => {
-        git.requireGit();
-        const removed = store.removeSource(rt.cwd, input.name);
-        if (!removed) {
-            const avail = store.listSpecs(rt.cwd);
-            const list = avail.length
-                ? `  现有 source:\n${avail.map((s) => `    ${s}`).join("\n")}`
-                : "  （diy.yaml 无 source 注册）";
-            throw new Error(`未找到匹配的 source: ${input.name}\n${list}`);
-        }
-        return {
-            status: "ok",
-            data: { removed },
-        };
-    });
-
-    binding.on(`${refService.name}.ref.sync`, ref.sync, async function* () {
-        git.requireGit();
-        const specs = store.listSpecs(rt.cwd);
-        const now = localISOString();
-        const sourceMap: Record<string, store.LockEntry> = {};
-        let cloned = 0;
-        let pulled = 0;
-        let tagSkipped = 0;
-        const errors: SyncError[] = [];
-
-        // 进度渲染到本地 stderr（190 修正 1：不进 RPC 协议，帧结构照旧机器消费）。
-        // 用进程级单例（F4）：与 git.ts 短命令 run() 内部取的是同一实例，curText/buf 状态不分裂
-        const prog = getDefaultRenderer();
-
-        for (let i = 0; i < specs.length; i++) {
-            const spec = specs[i]!;
-            // 兜底标签：parseSpec 失败时也能打出行号
-            let label = `[${i + 1}/${specs.length}] ${spec}`;
-            try {
-                const p = store.parseSpec(spec);
-                label = `[${i + 1}/${specs.length}] ${p.key}`;
-                // 不可变版本（tag / SHA，正则初判；非 semver tag clone 后按本地 refs 消歧，
-                // updateMirror 另有 detached HEAD 安全网）
-                const isTag = p.version != null && store.isPinnedVersion(p.version);
-                const norm = store.normalizeVersion(p.version);
-                const rel = store.mirrorRelDir(p.info, norm);
-                const dirAbs = join(rt.home, rel);
-
-                // lock 记录先于 done 收尾行：done 之后不再放可抛语句（review §二#3b），
-                // 避免「✓ 行已打、catch 又记失败」的理论矛盾
-                const lockEntry: store.LockEntry = {
-                    key: p.key,
-                    url: p.url,
-                    version: p.version,
-                    dir: rel,
-                    lastSync: now,
-                };
-
-                if (!existsSync(`${dirAbs}/.git`)) {
-                    // 首次 clone（含按 tag/分支检出），进度实时渲染
-                    prog.begin(label);
-                    await git.cloneMirror({ dir: dirAbs, url: p.url, version: p.version, prog });
-                    sourceMap[p.key] = lockEntry;
-                    prog.done({ ok: true });
-                    cloned++;
-                    yield { spec, action: "cloned" as const };
-                } else {
-                    // 增量：tag 不动、分支 pull
-                    prog.begin(label);
-                    const u = await git.updateMirror(dirAbs, isTag, prog);
-                    sourceMap[p.key] = lockEntry;
-                    if (u.updated) {
-                        prog.done({ ok: true });
-                        pulled++;
-                        yield { spec, action: "pulled" as const };
-                    } else {
-                        // F1：未执行任何 git 命令（tag 跳过）时不显示耗时列，标签头行仍由 begin 打过
-                        prog.done({ ok: true, note: u.note, noTiming: u.noTiming });
-                        tagSkipped++;
-                        yield { spec, action: "tagSkipped" as const, message: u.note };
-                    }
-                }
-            } catch (e) {
-                const message = e instanceof Error ? e.message : String(e);
-                prog.done({ ok: false, label, fail: message });
-                errors.push({ spec, message });
-                yield { spec, action: "error" as const, message };
+        remove: async ({ input }) => {
+            git.requireGit();
+            const removed = store.removeSource(rt.cwd, input.name);
+            if (!removed) {
+                const avail = store.listSpecs(rt.cwd);
+                const list = avail.length
+                    ? `  现有 source:\n${avail.map((s) => `    ${s}`).join("\n")}`
+                    : "  （diy.yaml 无 source 注册）";
+                throw new Error(`未找到匹配的 source: ${input.name}\n${list}`);
             }
-        }
-
-        // 仅保留本次 spec 对应的条目（被 remove 的 source 在此剔除）
-        store.saveRefLock(rt.cwd, { version: 1, generated: now, source: sourceMap });
-
-        // 人类可读收尾行（零条目时不打扰；协议帧 summary 不变）
-        if (specs.length > 0) {
-            const parts = [`更新 ${cloned + pulled}`];
-            if (tagSkipped > 0) parts.push(`跳过 ${tagSkipped}`);
-            if (errors.length > 0) parts.push(`失败 ${errors.length}`);
-            prog.info(`同步完成: ${parts.join(" / ")}（共 ${specs.length} 个 source）`);
-        }
-
-        // 汇总尾帧
-        yield {
-            spec: "",
-            action: "done" as const,
-            summary: {
-                synced: cloned + pulled,
-                tagSkipped,
-                total: specs.length,
-                errors,
+            return {
+                status: "ok",
+                data: { removed },
+            };
             },
-        };
-    });
 
-    binding.on(`${refService.name}.ref.list`, ref.list, async () => {
-        const lock = store.loadRefLock(rt.cwd);
-        const entries: RefEntry[] = [];
-        // lock 条目（已 sync 记录）
-        if (lock) {
-            for (const key of Object.keys(lock.source).sort()) {
-                const e = lock.source[key]!;
-                const absDir = join(rt.home, e.dir);
-                entries.push({
-                    key,
-                    url: e.url,
-                    version: e.version,
-                    dir: absDir,
-                    exists: existsSync(absDir),
-                    lastSync: e.lastSync,
-                });
-            }
-        }
-        // lock 为空（未 sync 过或 source 已变更）→ 从 diy.yaml 补「待同步」条目
-        const specs = store.listSpecs(rt.cwd);
-        if (specs.length > 0) {
-            const known = new Set(entries.map((e) => e.key));
-            for (const spec of specs) {
+        sync: async function* () {
+            git.requireGit();
+            const specs = store.listSpecs(rt.cwd);
+            const now = localISOString();
+            const sourceMap: Record<string, store.LockEntry> = {};
+            let cloned = 0;
+            let pulled = 0;
+            let tagSkipped = 0;
+            const errors: SyncError[] = [];
+
+            // 进度渲染到本地 stderr（190 修正 1：不进 RPC 协议，帧结构照旧机器消费）。
+            // 用进程级单例（F4）：与 git.ts 短命令 run() 内部取的是同一实例，curText/buf 状态不分裂
+            const prog = getDefaultRenderer();
+
+            for (let i = 0; i < specs.length; i++) {
+                const spec = specs[i]!;
+                // 兜底标签：parseSpec 失败时也能打出行号
+                let label = `[${i + 1}/${specs.length}] ${spec}`;
                 try {
                     const p = store.parseSpec(spec);
-                    if (known.has(p.key)) continue; // 已记录
-                    const rel = store.mirrorRelDir(p.info, store.normalizeVersion(p.version));
-                    entries.push({
+                    label = `[${i + 1}/${specs.length}] ${p.key}`;
+                    // 不可变版本（tag / SHA，正则初判；非 semver tag clone 后按本地 refs 消歧，
+                    // updateMirror 另有 detached HEAD 安全网）
+                    const isTag = p.version != null && store.isPinnedVersion(p.version);
+                    const norm = store.normalizeVersion(p.version);
+                    const rel = store.mirrorRelDir(p.info, norm);
+                    const dirAbs = join(rt.home, rel);
+
+                    // lock 记录先于 done 收尾行：done 之后不再放可抛语句（review §二#3b），
+                    // 避免「✓ 行已打、catch 又记失败」的理论矛盾
+                    const lockEntry: store.LockEntry = {
                         key: p.key,
                         url: p.url,
                         version: p.version,
-                        dir: join(rt.home, rel),
-                        exists: false,
-                        lastSync: null,
-                    });
-                } catch {
-                    /* 解析失败的 source 跳过 */
+                        dir: rel,
+                        lastSync: now,
+                    };
+
+                    if (!existsSync(`${dirAbs}/.git`)) {
+                        // 首次 clone（含按 tag/分支检出），进度实时渲染
+                        prog.begin(label);
+                        await git.cloneMirror({ dir: dirAbs, url: p.url, version: p.version, prog });
+                        sourceMap[p.key] = lockEntry;
+                        prog.done({ ok: true });
+                        cloned++;
+                        yield { spec, action: "cloned" as const };
+                    } else {
+                        // 增量：tag 不动、分支 pull
+                        prog.begin(label);
+                        const u = await git.updateMirror(dirAbs, isTag, prog);
+                        sourceMap[p.key] = lockEntry;
+                        if (u.updated) {
+                            prog.done({ ok: true });
+                            pulled++;
+                            yield { spec, action: "pulled" as const };
+                        } else {
+                            // F1：未执行任何 git 命令（tag 跳过）时不显示耗时列，标签头行仍由 begin 打过
+                            prog.done({ ok: true, note: u.note, noTiming: u.noTiming });
+                            tagSkipped++;
+                            yield { spec, action: "tagSkipped" as const, message: u.note };
+                        }
+                    }
+                } catch (e) {
+                    const message = e instanceof Error ? e.message : String(e);
+                    prog.done({ ok: false, label, fail: message });
+                    errors.push({ spec, message });
+                    yield { spec, action: "error" as const, message };
                 }
             }
-            entries.sort((a, b) => a.key.localeCompare(b.key));
-        }
-        return entries;
+
+            // 仅保留本次 spec 对应的条目（被 remove 的 source 在此剔除）
+            store.saveRefLock(rt.cwd, { version: 1, generated: now, source: sourceMap });
+
+            // 人类可读收尾行（零条目时不打扰；协议帧 summary 不变）
+            if (specs.length > 0) {
+                const parts = [`更新 ${cloned + pulled}`];
+                if (tagSkipped > 0) parts.push(`跳过 ${tagSkipped}`);
+                if (errors.length > 0) parts.push(`失败 ${errors.length}`);
+                prog.info(`同步完成: ${parts.join(" / ")}（共 ${specs.length} 个 source）`);
+            }
+
+            // 汇总尾帧
+            yield {
+                spec: "",
+                action: "done" as const,
+                summary: {
+                    synced: cloned + pulled,
+                    tagSkipped,
+                    total: specs.length,
+                    errors,
+                },
+            };
+            },
+
+        list: async () => {
+            const lock = store.loadRefLock(rt.cwd);
+            const entries: RefEntry[] = [];
+            // lock 条目（已 sync 记录）
+            if (lock) {
+                for (const key of Object.keys(lock.source).sort()) {
+                    const e = lock.source[key]!;
+                    const absDir = join(rt.home, e.dir);
+                    entries.push({
+                        key,
+                        url: e.url,
+                        version: e.version,
+                        dir: absDir,
+                        exists: existsSync(absDir),
+                        lastSync: e.lastSync,
+                    });
+                }
+            }
+            // lock 为空（未 sync 过或 source 已变更）→ 从 diy.yaml 补「待同步」条目
+            const specs = store.listSpecs(rt.cwd);
+            if (specs.length > 0) {
+                const known = new Set(entries.map((e) => e.key));
+                for (const spec of specs) {
+                    try {
+                        const p = store.parseSpec(spec);
+                        if (known.has(p.key)) continue; // 已记录
+                        const rel = store.mirrorRelDir(p.info, store.normalizeVersion(p.version));
+                        entries.push({
+                            key: p.key,
+                            url: p.url,
+                            version: p.version,
+                            dir: join(rt.home, rel),
+                            exists: false,
+                            lastSync: null,
+                        });
+                    } catch {
+                        /* 解析失败的 source 跳过 */
+                    }
+                }
+                entries.sort((a, b) => a.key.localeCompare(b.key));
+            }
+            return entries;
+        },
+        },
     });
 }
