@@ -4,5 +4,5 @@
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "renderer.ts"]
+  "include": ["index.ts", "title.ts", "main.ts", "preload.ts"]
 }

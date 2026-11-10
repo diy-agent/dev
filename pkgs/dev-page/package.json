@@ -1,49 +1,40 @@
 {
-  "name": "@diy-agent/dev-page",
-  "version": "0.1.0",
-  "private": true,
-  "description": "dev 启动器的页面插件：应用页（树列表 / 启停 / 过滤）+ 外部仓库页（ref 同步 / 添加 / 移除）",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
+    "name": "@diy-agent/dev-page",
+    "version": "0.1.0",
+    "private": true,
+    "description": "dev 启动器的页面插件：应用页（树列表 / 启停 / 过滤）+ 外部仓库页（ref 同步 / 添加 / 移除）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        },
+        "./page": {
+            "types": "./src/page.ts",
+            "default": "./dist/page.js"
+        }
     },
-    "./page": {
-      "types": "./src/page.ts",
-      "default": "./dist/page.js"
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
     },
-    "./renderer": {
-      "types": "./src/renderer.ts",
-      "default": "./dist/renderer.js"
+    "dependencies": {
+        "@diy-agent/dev-core": "*",
+        "@diy-agent/dev-fs": "file:../dev-fs",
+        "@diy-agent/dev-ref": "file:../dev-ref",
+        "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
+        "@diy-agent/ui": "file:../../../diy/pkgs.ts/ui/core",
+        "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
+        "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui/workbench-ui"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.1",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {
-    "@codemirror/commands": "^6.8.0",
-    "@codemirror/lang-javascript": "^6.2.3",
-    "@codemirror/lang-yaml": "^6.1.2",
-    "@codemirror/state": "^6.5.2",
-    "@codemirror/view": "^6.36.4",
-    "@diy-agent/dev-core": "*",
-    "@diy-agent/dev-fs": "file:../dev-fs",
-    "@diy-agent/dev-ref": "file:../dev-ref",
-    "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
-    "@diy-agent/ui": "file:../../../diy/pkgs.ts/ui/core",
-    "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
-    "@diy-agent/workbench-ui": "file:../../../diy/pkgs.ts/ui/workbench-ui"
-  },
-  "devDependencies": {
-    "@types/node": "^26.1.1",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2"
-  }
 }
