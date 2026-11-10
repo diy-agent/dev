@@ -30,7 +30,7 @@ type SyncError = { spec: string; message: string };
 export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
     const ref = refApi.ref;
 
-    binding.on(ref.add, async ({ input }) => {
+    binding.on("ref.add", ref.add, async ({ input }) => {
         git.requireGit();
         // 解析 URL（含 @版本），失败抛清晰错误
         const p = store.parseSpec(input.url);
@@ -46,7 +46,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on(ref.remove, async ({ input }) => {
+    binding.on("ref.remove", ref.remove, async ({ input }) => {
         git.requireGit();
         const removed = store.removeSource(rt.cwd, input.name);
         if (!removed) {
@@ -62,7 +62,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on(ref.sync, async function* () {
+    binding.on("ref.sync", ref.sync, async function* () {
         git.requireGit();
         const specs = store.listSpecs(rt.cwd);
         const now = localISOString();
@@ -156,7 +156,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on(ref.list, async () => {
+    binding.on("ref.list", ref.list, async () => {
         const lock = store.loadRefLock(rt.cwd);
         const entries: RefEntry[] = [];
         // lock 条目（已 sync 记录）

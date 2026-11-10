@@ -9,8 +9,9 @@
  *
  * ⚠️ 这是**并行原型**：老的 `renderer.ts` 仍是默认界面，等原型对齐后再切。
  */
-import { useCallback, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
+import { FilesPane } from "./files.js";
 import type { SnapshotStore } from "./store.js";
 import type { SlotRegistry } from "./slots.js";
 
@@ -60,14 +61,12 @@ function groupByWorktree(launches: readonly LaunchStatus[]): Map<string, LaunchS
 function LaunchChip(props: { ctx: UiContext; launch: LaunchStatus; selected: boolean; onSelect: () => void }) {
     const { launch } = props;
     const state = launch.starting ? "启动中" : launch.running ? "运行中" : "未启动";
+    // 点 chip **只选中**（右侧看详情/日志），启停交给详情里的显式按钮。
+    // 为什么不把 chip 做成启停开关（##518 实测踩到）：chip 就在自己那行，点错一下
+    // 就把正在跑的实例（包括 dev 自己）停掉了；启停是破坏性动作，必须落在明确的按钮上。
     const onClick = (event: ReactMouseEvent): void => {
         event.stopPropagation();
-        // 点 chip = 「选中 + 启停」：选中是为了让右侧详情（含命令输出）跟着切过来 ——
-        // 否则点了启动只看到圆点变绿，日志在右边的卡里没人知道（##518）。
         props.onSelect();
-        if (launch.starting) return;
-        if (launch.running) void props.ctx.invoke("stop", { worktree: launch.worktree, app: launch.app, launch: launch.launch });
-        else void props.ctx.invoke("start", { worktree: launch.worktree, app: launch.app, launch: launch.launch });
     };
     const ring = launch.running
         ? "bg-primary-container text-on-primary-container"
@@ -172,7 +171,38 @@ function LogPane(props: { ctx: UiContext }) {
 
 function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
     const { launch } = props;
+    // 页签是纯 UI 态：与选中项一起住在 React 侧，不进 store（它不是业务数据）
+    const [tab, setTab] = useState<"info" | "files">("info");
     if (launch === null) return <div className="p-3 text-on-surface-variant">选一个 launch 看详情</div>;
+    const tabBtn = (id: "info" | "files", label: string) => (
+        <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`border-b-2 px-3 py-1 text-[11px] ${
+                tab === id ? "border-primary text-on-surface" : "border-transparent text-on-surface-variant hover:text-on-surface"
+            }`}
+        >
+            {label}
+        </button>
+    );
+    const tabs = (
+        <div className="mb-1 flex items-center gap-1 border-b border-outline">
+            {tabBtn("info", "详情")}
+            {tabBtn("files", "文件")}
+            <span className="ml-auto truncate text-[10px] text-on-surface-variant">{launch.worktree}</span>
+        </div>
+    );
+    if (tab === "files") {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <FilesPane worktree={launch.worktree} />
+                </div>
+            </div>
+        );
+    }
     const rows: readonly (readonly [string, string])[] = [
         ["命令", launch.command],
         ["数据根", launch.home],
@@ -183,6 +213,7 @@ function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
     ];
     return (
         <div className="flex h-full flex-col gap-2 overflow-auto p-3">
+            {tabs}
             <h1 className="text-[14px] font-medium">
                 {launch.app}.{launch.launch}
             </h1>
