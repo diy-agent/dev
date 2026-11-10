@@ -6,7 +6,9 @@
 import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquireSingleInstance, cdpSwitchValue, configureUserData, createWorkbench } from "@diy-agent/workbench";
+import { acquireSingleInstance, cdpSwitchValue, configureUserData, createWorkbench, updateSelfRecord } from "@diy-agent/workbench";
+import { ensureIdentity } from "@diy-agent/remote/node";
+import { startPingServer } from "@diy-agent/remote/node";
 import { ChannelServerBinding, type EnvelopeTransport } from "@diy-agent/rpc";
 import { bindFsHandlers } from "@diy-agent/dev-fs";
 import { ipcMain } from "electron";
@@ -45,6 +47,20 @@ app.whenReady().then(() => {
         if (situation.kind !== "free") console.warn(`[dev] ${lockAdvice(situation, lockPath)}`);
     })();
     // Chromium 异步写 DevToolsActivePort：轮询几次再打，避免日志里出现空地址
+    // ── 对外 HTTP 面（##518 用户口径：后面 app 都要接 remote，HTTP 是必需的）────────
+    // 只开 /ping（无鉴权，缺省绑回环）：远程发现器靠它认出「这台机器上有个 diy-dev」。
+    // 拿到实际端口后**回填注册表** —— 否则 `instances ls` / 远程发现永远看不到它。
+    void startPingServer({
+        identity: ensureIdentity(home, { appName: "diy-dev" }).identity,
+        variant: process.env["DIY_VARIANT"] ?? "lab",
+        version: "0.1.0",
+    })
+        .then((server) => {
+            updateSelfRecord({ pingPort: server.port });
+            console.log(`[dev] /ping http://${server.host}:${String(server.port)}/ping（已回填注册表）`);
+        })
+        .catch((e: unknown) => console.warn("[dev] /ping 起不来（远程发现看不到本实例）：", e));
+
     void (async () => {
         const { waitDevToolsPort } = await import("@diy-agent/workbench");
         const port = await waitDevToolsPort(app.getPath("userData"));

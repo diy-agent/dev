@@ -24,7 +24,8 @@
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
         "tailwindcss": "^4.3.5",
-        "@diy-agent/dev-ui": "file:../../pkgs/dev-ui"
+        "@diy-agent/dev-ui": "file:../../pkgs/dev-ui",
+        "@diy-agent/remote": "file:../../../diy/pkgs.ts/remote/link"
     },
     "devDependencies": {
         "@types/node": "^26.1.1",
