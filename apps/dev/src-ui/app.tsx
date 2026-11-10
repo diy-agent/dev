@@ -12,6 +12,7 @@
 import { useCallback, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
 import { FilesPane } from "./files.js";
+import { RefPane } from "./ref.js";
 import type { SnapshotStore } from "./store.js";
 import type { SlotRegistry } from "./slots.js";
 
@@ -172,9 +173,9 @@ function LogPane(props: { ctx: UiContext }) {
 function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
     const { launch } = props;
     // 页签是纯 UI 态：与选中项一起住在 React 侧，不进 store（它不是业务数据）
-    const [tab, setTab] = useState<"info" | "files">("info");
+    const [tab, setTab] = useState<"info" | "files" | "ref">("info");
     if (launch === null) return <div className="p-3 text-on-surface-variant">选一个 launch 看详情</div>;
-    const tabBtn = (id: "info" | "files", label: string) => (
+    const tabBtn = (id: "info" | "files" | "ref", label: string) => (
         <button
             key={id}
             type="button"
@@ -190,6 +191,7 @@ function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
         <div className="mb-1 flex items-center gap-1 border-b border-outline">
             {tabBtn("info", "详情")}
             {tabBtn("files", "文件")}
+            {tabBtn("ref", "外部仓库")}
             <span className="ml-auto truncate text-[10px] text-on-surface-variant">{launch.worktree}</span>
         </div>
     );
@@ -199,6 +201,16 @@ function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
                 {tabs}
                 <div className="min-h-0 flex-1">
                     <FilesPane worktree={launch.worktree} />
+                </div>
+            </div>
+        );
+    }
+    if (tab === "ref") {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <RefPane worktree={launch.worktree} invoke={props.ctx.invoke} />
                 </div>
             </div>
         );

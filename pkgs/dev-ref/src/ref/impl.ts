@@ -11,7 +11,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerBinding } from "@diy-agent/rpc";
 import { localISOString } from "@diy-agent/time";
-import { refApi, type RefEntry } from "./api";
+import { refApi, refService, type RefEntry } from "./api";
 import * as store from "./store";
 import * as git from "./git";
 import { getDefaultRenderer } from "./render";
@@ -29,8 +29,12 @@ type SyncError = { spec: string; message: string };
 /** 把 ref 全部 handler 绑定到给定 ServerBinding（本地 mem transport 场景）。 */
 export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
     const ref = refApi.ref;
+    // ⚠️ 注册路径必须带 service 前缀（`diy.dev.ref` + api 里的 `ref.<方法>`）：
+    // rpc 的 `defineService.bind` 就是按 `${name}.${flattenedPath}` 注册的，这里手写 `on` 得自己对齐，
+    // 否则客户端（`refService.use(c).ref.add()`）会报 "Unknown method"。
 
-    binding.on("ref.add", ref.add, async ({ input }) => {
+
+    binding.on(`${refService.name}.ref.add`, ref.add, async ({ input }) => {
         git.requireGit();
         // 解析 URL（含 @版本），失败抛清晰错误
         const p = store.parseSpec(input.url);
@@ -46,7 +50,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on("ref.remove", ref.remove, async ({ input }) => {
+    binding.on(`${refService.name}.ref.remove`, ref.remove, async ({ input }) => {
         git.requireGit();
         const removed = store.removeSource(rt.cwd, input.name);
         if (!removed) {
@@ -62,7 +66,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on("ref.sync", ref.sync, async function* () {
+    binding.on(`${refService.name}.ref.sync`, ref.sync, async function* () {
         git.requireGit();
         const specs = store.listSpecs(rt.cwd);
         const now = localISOString();
@@ -156,7 +160,7 @@ export function bindRefHandlers(binding: ServerBinding, rt: RefRuntime): void {
         };
     });
 
-    binding.on("ref.list", ref.list, async () => {
+    binding.on(`${refService.name}.ref.list`, ref.list, async () => {
         const lock = store.loadRefLock(rt.cwd);
         const entries: RefEntry[] = [];
         // lock 条目（已 sync 记录）
