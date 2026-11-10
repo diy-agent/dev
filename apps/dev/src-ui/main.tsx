@@ -11,7 +11,7 @@ import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-c
 import { DEV_METHODS } from "@diy-agent/dev-core/shared";
 import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
-import { App, type UiContext } from "./app.js";
+import { App, type UiContext, type Selection } from "./app.js";
 
 interface WorkbenchBridge {
     invoke(pageId: string, method: string, args?: unknown): Promise<unknown>;
@@ -73,20 +73,41 @@ async function tick(): Promise<void> {
 void tick();
 setInterval(() => void tick(), 1000);
 
-// ── 选中态是 UI 态：留在 React 侧，不进 store ───────────────────────────────
-let selected: LaunchStatus | null = null;
+// ── 选中态与 toast 都是 UI 态：留在 React 侧，不进 store（它们不是业务数据） ──────
+let selection: Selection = null;
+let toastText = "";
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
 const container = document.getElementById("root");
-if (container === null) throw new Error("index-react.html 缺 #root");
+if (container === null) throw new Error("index.html 缺 #root");
 const root = createRoot(container);
 
+/** 状态栏：有 toast 就显示 toast，否则显示命令输出的最后一行 */
+function paintStatus(): void {
+    const bar = document.getElementById("ui-status");
+    if (bar === null) return;
+    const last = ctx.session.read((s) => s?.lines.at(-1) ?? "");
+    bar.textContent = toastText === "" ? last : toastText;
+}
+
 function render(): void {
+    paintStatus();
     root.render(
         <App
             ctx={ctx}
-            selected={selected}
-            onSelect={(launch) => {
-                selected = launch;
+            selection={selection}
+            onSelect={(sel) => {
+                selection = sel;
                 render();
+            }}
+            notify={(text) => {
+                toastText = text;
+                render();
+                if (toastTimer !== null) clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toastText = "";
+                    render();
+                }, 4000);
             }}
         />,
     );
