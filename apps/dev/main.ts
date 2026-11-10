@@ -6,7 +6,7 @@
 import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cdpSwitchValue, createWorkbench, readDevToolsPort } from "@diy-agent/workbench";
+import { acquireSingleInstance, cdpSwitchValue, configureUserData, createWorkbench } from "@diy-agent/workbench";
 import { ChannelServerBinding, type EnvelopeTransport } from "@diy-agent/rpc";
 import { bindFsHandlers } from "@diy-agent/dev-fs";
 import { ipcMain } from "electron";
@@ -23,6 +23,16 @@ if (process.env["DIY_VARIANT"] === "lab" && !cdpFromArgv) {
 }
 
 const here = dirname(fileURLToPath(import.meta.url)); // build/<variant>/main
+
+// ── 实例运行空间（##518 用户口径：独占的粒度 = 数据根）────────────────────────
+// 顺序不能变：先 setPath("userData") 再取锁。之前 dev 什么都没设，所有实例共用缺省 userData ⇒
+// 锁与 DevToolsActivePort 都是全局的（第二个实例既不真互斥、又可能读到别人的 CDP 端口）。
+const home = process.env["DIY_HOME"] ?? join(app.getPath("appData"), "diy-dev");
+configureUserData(app, home);
+if (!acquireSingleInstance(app)) {
+    // 拿不到锁：已经有一份在这个数据根上跑。诊断文案由 workbench 给（活实例 / 陈旧锁 / 跨机）。
+    app.quit();
+}
 
 // ⚠️ 不要用顶层 await（Electron 的 ESM 入口里会让 app ready 永不触发，见 apps/chat 的同一条注释）
 app.whenReady().then(() => {
