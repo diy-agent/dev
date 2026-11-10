@@ -31,7 +31,9 @@ createWorkbench({
     launch: process.env["DIY_LAUNCH"] ?? "lab",
     plugins: ASSEMBLY.plugins,
     preloadFile: join(here, "../preload/index.cjs"),
-    rendererFile: join(here, "../renderer/index.html"),
+    // ##518 试点：React 原型与老界面**并行存在**，用 `DIY_DEV_UI=react ./sha.sh run lab` 切换。
+    // 切过来跑一阵、行为对齐后，再把默认值改掉并删掉老入口。
+    rendererFile: join(here, "..", "renderer", process.env["DIY_DEV_UI"] === "react" ? "react.html" : "index.html"),
     width: 1180,
     height: 820,
 })

@@ -1,0 +1,55 @@
+/**
+ * index.css —— dev 的 React 原型样式入口（##518 试点）
+ *
+ * 三层：
+ *   1. **M3 令牌**：直接吃 diy 仓的 design 包（seed 生成物），@material/web 与 tailwind 共用；
+ *   2. **tailwind v4**：只用它的工具类做布局/间距；颜色一律走 `--md-sys-color-*` 的语义类；
+ *   3. 极少量本地规则（滚动条、密度）。
+ *
+ * ⚠️ `@source` 由使用方声明（库里的 @source 会按库文件位置解析，扫不到这里的组件）。
+ */
+@import "tailwindcss";
+
+@import "../../../../diy/pkgs.ts/ui/design/src/index.css";
+@import "../../../../diy/pkgs.ts/ui/design/src/diy/tailwind.css";
+
+@source "./";
+
+@theme inline {
+    /* 把 M3 语义位接进 tailwind 的工具类：bg-surface / text-on-surface / border-outline … */
+    --color-surface: var(--md-sys-color-surface);
+    --color-surface-low: var(--md-sys-color-surface-container-low);
+    --color-surface-high: var(--md-sys-color-surface-container-high);
+    --color-on-surface: var(--md-sys-color-on-surface);
+    --color-on-surface-variant: var(--md-sys-color-on-surface-variant);
+    --color-outline: var(--md-sys-color-outline-variant);
+    --color-primary: var(--md-sys-color-primary);
+    --color-on-primary: var(--md-sys-color-on-primary);
+    --color-primary-container: var(--md-sys-color-primary-container);
+    --color-on-primary-container: var(--md-sys-color-on-primary-container);
+    --color-error: var(--md-sys-color-error);
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    font: var(--diy-font-body) / 1.5 var(--md-ref-typeface-plain);
+    color: var(--md-sys-color-on-surface);
+    background: var(--md-sys-color-surface);
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+    background: var(--md-sys-color-outline-variant);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}

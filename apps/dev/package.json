@@ -11,16 +11,24 @@
     "type": "module",
     "dependencies": {
         "@awesome.me/webawesome": "^3.14.0",
+        "@base-ui/react": "^1.9.0",
         "@diy-agent/dev-core": "file:../../pkgs/dev-core",
         "@diy-agent/dev-fs": "file:../../pkgs/dev-fs",
         "@diy-agent/dev-page": "file:../../pkgs/dev-page",
         "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
         "@diy-agent/workbench": "file:../../../diy/pkgs.ts/ui/workbench",
         "@material/material-color-utilities": "^0.4.0",
-        "@material/web": "^2.5.0"
+        "@material/web": "^2.5.0",
+        "@tailwindcss/cli": "^4.3.5",
+        "clsx": "^2.1.1",
+        "react": "^19.3.1",
+        "react-dom": "^19.3.1",
+        "tailwindcss": "^4.3.5"
     },
     "devDependencies": {
         "@types/node": "^26.1.1",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
         "electron": "^43.0.0",
         "esbuild": "^0.28.1",
         "oxfmt": "^0.57.0",

@@ -8,7 +8,10 @@
     "moduleResolution": "bundler",
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "noEmit": true
+    "noEmit": true,
+    // React 原型（##518 试点）：tsx 用 React 19 的 automatic runtime
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
-  "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "renderer.ts", "css.d.ts"]
+  "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "renderer.ts", "css.d.ts", "src-ui/**/*.ts", "src-ui/**/*.tsx"]
 }

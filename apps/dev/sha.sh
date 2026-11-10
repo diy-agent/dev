@@ -133,6 +133,21 @@ _build_renderer() {
   run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
     --outfile="$d/renderer/index.js"
   run cp index.html "$d/renderer/index.html"
+  # React 原型（##518 试点）：与老界面并存，`DIY_DEV_UI=react` 切换
+  build-ui
+}
+
+#: 构建 React 原型界面（##518 试点）：tailwind 出 CSS + esbuild 打 JSX
+#: 产物 build/app/renderer/react.{js,css,html}（与老界面的 index.* 并存，互不覆盖）
+build-ui() {
+  local d; d="$(_build_dir)/renderer"
+  run mkdir -p "$d"
+  # 样式：tailwind v4 只能用它的 CLI（esbuild 不认 @import "tailwindcss" / @theme）
+  run npx @tailwindcss/cli -i src-ui/index.css -o "$d/react.css" --minify
+  # 脚本：esbuild 自动 JSX（React 19 automatic runtime）
+  run npx esbuild src-ui/main.tsx --bundle --platform=browser --format=iife --target=es2022 \
+    --jsx=automatic --define:process.env.NODE_ENV='"production"' --minify --outfile="$d/react.js"
+  run cp index-react.html "$d/react.html"
 }
 
 # electron 的其余参数（`--` 之后原样透传）
