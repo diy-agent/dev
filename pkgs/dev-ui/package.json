@@ -20,7 +20,8 @@
         "@codemirror/lang-javascript": "^6.2.3",
         "@codemirror/lang-yaml": "^6.1.2",
         "@codemirror/state": "^6.5.2",
-        "@codemirror/view": "^6.36.4"
+        "@codemirror/view": "^6.36.4",
+        "@diy-agent/devtools-traffic": "file:../../../diy/pkgs.ts/ui/devtools-traffic"
     },
     "peerDependencies": {
         "react": "^19.0.0",

@@ -52,6 +52,8 @@ export interface DevClient {
     clearSession(): Promise<void>;
     openDir(target: OpenTarget): Promise<{ ok: boolean; reason: string }>;
     openUrl(url: string): Promise<{ ok: boolean; reason: string }>;
+    /** devtools 插件代理：把插件要的方法名透传给目标实例的 rpc 端口 */
+    trafficCall<T>(target: { port: number; method: string; args?: unknown }): Promise<T>;
     /** 外部仓库域（diy.yaml 跟着 worktree 走） */
     readonly ref: {
         overview(worktree: string): Promise<RefOverview>;
@@ -88,6 +90,8 @@ export function createDevClient(bridge: PageBridge, pageId = "dev"): DevClient {
         },
         openDir: (target) => call<{ ok: boolean; reason: string }>(DEV_METHODS.open, target),
         openUrl: (url) => call<{ ok: boolean; reason: string }>(DEV_METHODS.open, { url }),
+        trafficCall: <T,>(target: { port: number; method: string; args?: unknown }): Promise<T> =>
+            call<T>("trafficCall", target),
         ref: {
             overview: (worktree) => call<RefOverview>(REF_METHODS.overview, { worktree }),
             add: (worktree, url) => call(REF_METHODS.add, { worktree, url }),

@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { repoRootOf, type PageContribution } from "@diy-agent/workbench";
 import { refMethods } from "./ref-page.js";
+import { trafficCall } from "./traffic-page.js";
 import {
     DevRunner,
     DEFAULT_HOME,
@@ -266,6 +267,8 @@ export const page: PageContribution = {
             return { ok: true, reason: "日志已清空" };
         },
         [DEV_METHODS.revealCdp]: (args) => revealCdp(args as LaunchRef),
+        /** devtools 插件代理（##518）：把插件要的方法名透传给目标实例的 rpc 端口 */
+        trafficCall: (args) => trafficCall(args as Parameters<typeof trafficCall>[0]),
     },
 };
 
