@@ -14,7 +14,7 @@ import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
 import { App, useStoreSlice, type UiContext, type Selection } from "./app.js";
 import { StatusBar, TitleBar, useNotices, type PageInfo } from "./chrome.js";
-import { WorktreesPage } from "./worktrees.js";
+import { FilesViewPage } from "./worktrees.js";
 
 interface WorkbenchBridge extends PageBridge {
     listPages(): Promise<PageInfo[]>;
@@ -109,7 +109,11 @@ function Shell(props: { bridge: WorkbenchBridge }) {
             />
             <div className="min-h-0 flex-1">
                 {active === "files" ? (
-                    <WorktreesPage ctx={ctx} />
+                    <FilesViewPage ctx={ctx} onOpenWorktree={(path) => {
+                        selection = { kind: "worktree", path };
+                        setActive("app");
+                        render();
+                    }} />
                 ) : (
                 <App
                     ctx={ctx}

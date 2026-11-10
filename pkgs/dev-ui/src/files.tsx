@@ -13,21 +13,8 @@ import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirro
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { yaml } from "@codemirror/lang-yaml";
-import { ChannelClientBinding, type EnvelopeTransport } from "@diy-agent/rpc";
-import { devFsService } from "@diy-agent/dev-fs/api";
+import { fsClient, type FsEntry } from "./fs.js";
 
-interface FsEntry {
-    name: string;
-    path: string;
-    kind: "file" | "dir";
-    size: number | null;
-}
-
-function fsClient() {
-    const transport = (window as unknown as { transport?: EnvelopeTransport }).transport;
-    if (transport === undefined) throw new Error("preload 没递出 window.transport（rpc 通道缺失）");
-    return devFsService.use(new ChannelClientBinding(transport)).fs;
-}
 
 /** 按扩展名选语言扩展（与老实现同口径） */
 function langFor(path: string) {
