@@ -13,5 +13,5 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react"
   },
-  "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "css.d.ts", "src-ui/**/*.ts", "src-ui/**/*.tsx"]
+  "include": ["index.ts", "title.ts", "main.ts", "preload.ts", "css.d.ts"]
 }

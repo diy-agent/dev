@@ -1,0 +1,29 @@
+{
+    "name": "@diy-agent/dev-ui",
+    "version": "0.1.0",
+    "private": true,
+    "description": "dev 启动器的界面包：React 渲染层 + 无框架 store / Slot 注册表 + 领域式 rpc 客户端（与 core 只通过 page:invoke 通信）",
+    "type": "module",
+    "main": "./src/app.tsx",
+    "types": "./src/app.tsx",
+    "exports": {
+        ".": "./src/app.tsx",
+        "./renderer": "./src/main.tsx",
+        "./client": "./src/client.ts",
+        "./renderer.css": "./src/index.css"
+    },
+    "dependencies": {
+        "@diy-agent/dev-core": "file:../dev-core",
+        "@diy-agent/dev-fs": "file:../dev-fs",
+        "@diy-agent/rpc": "file:../../../diy/pkgs.ts/core/rpc",
+        "@codemirror/commands": "^6.8.0",
+        "@codemirror/lang-javascript": "^6.2.3",
+        "@codemirror/lang-yaml": "^6.1.2",
+        "@codemirror/state": "^6.5.2",
+        "@codemirror/view": "^6.36.4"
+    },
+    "peerDependencies": {
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0"
+    }
+}

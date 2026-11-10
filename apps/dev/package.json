@@ -24,11 +24,7 @@
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
         "tailwindcss": "^4.3.5",
-        "@codemirror/view": "^6.0.0",
-        "@codemirror/commands": "^6.0.0",
-        "@codemirror/lang-javascript": "^6.0.0",
-        "@codemirror/lang-yaml": "^6.0.0",
-        "@codemirror/state": "^6.0.0"
+        "@diy-agent/dev-ui": "file:../../pkgs/dev-ui"
     },
     "devDependencies": {
         "@types/node": "^26.1.1",

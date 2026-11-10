@@ -8,21 +8,17 @@
  */
 import { createRoot } from "react-dom/client";
 import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
-import { DEV_METHODS } from "@diy-agent/dev-core/shared";
+import { createDevClient, type PageBridge } from "./client.js";
 import { SnapshotStore } from "./store.js";
 import { SlotRegistry } from "./slots.js";
 import { App, type UiContext, type Selection } from "./app.js";
 
-interface WorkbenchBridge {
-    invoke(pageId: string, method: string, args?: unknown): Promise<unknown>;
-}
+type WorkbenchBridge = PageBridge;
 
 const bridge = (window as unknown as { workbench?: WorkbenchBridge }).workbench;
 if (bridge === undefined) throw new Error("preload 桥没注入 window.workbench");
-
-async function invoke<T>(method: string, args?: unknown): Promise<T> {
-    return (await bridge!.invoke("dev", method, args)) as T;
-}
+/** 领域式客户端：方法名与入参形状全收在 `client.ts`，组件只谈业务语义 */
+const client = createDevClient(bridge as PageBridge, "dev");
 
 const store = new SnapshotStore<DevSnapshot | null>(null);
 /** 命令输出（启动日志 / build 输出共用一条会话）—— 与快照分开：刷新节奏不同、变化来源不同 */
@@ -31,7 +27,7 @@ const slots = new SlotRegistry();
 slots.declare("sidebar");
 slots.declare("detail");
 
-const ctx: UiContext = { store, session, slots, invoke };
+const ctx: UiContext = { store, session, slots, client };
 
 // ── 第一个 Slot 贡献：运行时卡（证明扩展点能用，且不需要碰 app.tsx） ──────────
 slots.register<{ ctx: UiContext; launch: LaunchStatus }>("detail", {
@@ -52,10 +48,7 @@ slots.register<{ ctx: UiContext; launch: LaunchStatus }>("detail", {
 // ── 轮询：主进程给什么就推什么；store 负责「没变就不通知」 ─────────────────
 async function tick(): Promise<void> {
     try {
-        const [snap, sess] = await Promise.all([
-            invoke<DevSnapshot>(DEV_METHODS.snapshot),
-            invoke<CommandSession | null>(DEV_METHODS.session),
-        ]);
+        const [snap, sess] = await Promise.all([client.snapshot(), client.session()]);
         store.set(snap);
         // 会话按「行数 + running」判等：内容没长就不必惊动订阅者
         session.set(sess, (a, b) =>

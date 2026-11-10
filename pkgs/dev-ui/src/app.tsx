@@ -12,7 +12,6 @@
 import { useCallback, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
     BUILD_COMMANDS,
-    DEV_METHODS,
     type BuildCommand,
     type CommandSession,
     type DevSnapshot,
@@ -20,6 +19,7 @@ import {
     type LaunchRef,
     type LaunchStatus,
 } from "@diy-agent/dev-core/shared";
+import type { DevClient } from "./client.js";
 import type { SnapshotStore } from "./store.js";
 import type { SlotRegistry } from "./slots.js";
 import { FilesPane } from "./files.js";
@@ -30,7 +30,11 @@ export interface UiContext {
     /** 命令输出（启动日志 / build 输出共用一条会话，与主进程 DevRunner 同口径） */
     readonly session: SnapshotStore<CommandSession | null>;
     readonly slots: SlotRegistry;
-    readonly invoke: <T>(method: string, args?: unknown) => Promise<T>;
+    /**
+     * 领域式 rpc 客户端（`client.ts`）：组件只说业务语义，方法名/入参形状都收在那一个文件里。
+     * 这样 core 的协议变了，编译期在这里报错，而不是运行期在某个按钮里静默失败。
+     */
+    readonly client: DevClient;
 }
 
 /** 唯一的 React ↔ store 桥（对任意 `SnapshotStore` 通用） */
@@ -386,19 +390,17 @@ type OpenMode = "finder" | "editor" | "terminal";
 function ActionBar(props: { ctx: UiContext; launch: LaunchStatus; notify: (text: string) => void }) {
     const { ctx, launch, notify } = props;
     const ref = refOf(launch);
-    const call = (method: string, args?: unknown) => (): void => {
-        void ctx.invoke<{ ok?: boolean; reason?: string }>(method, args ?? ref)
-            .then((res) => {
-                if (res?.ok === false) notify(res.reason ?? "操作失败");
-            })
-            .catch((e: unknown) => notify(e instanceof Error ? e.message : String(e)));
+    const guard = (promise: Promise<void>, failPrefix = ""): void => {
+        void promise.catch((e: unknown) => notify(`${failPrefix}${e instanceof Error ? e.message : String(e)}`));
     };
     const restart = (): void => {
-        void ctx
-            .invoke(DEV_METHODS.stop, ref)
-            .then(() => ctx.invoke(DEV_METHODS.start, ref))
-            .then(() => notify("已重启"))
-            .catch((e: unknown) => notify(`重启失败：${e instanceof Error ? e.message : String(e)}`));
+        guard(
+            ctx.client
+                .stop(ref)
+                .then(() => ctx.client.start(ref))
+                .then(() => notify("已重启")),
+            "重启失败：",
+        );
     };
     const copyPid = (): void => {
         const pid = launch.runtime?.pid;
@@ -406,8 +408,8 @@ function ActionBar(props: { ctx: UiContext; launch: LaunchStatus; notify: (text:
         void navigator.clipboard.writeText(String(pid)).then(() => notify(`PID 已复制：${String(pid)}`));
     };
     const open = (which: OpenWhich, mode: OpenMode) => () => {
-        void ctx
-            .invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, { ...ref, which, mode })
+        void ctx.client
+            .openDir({ ...ref, which, mode })
             .then((res) => notify(res.ok ? `已打开：${res.reason}` : `打开失败：${res.reason}`))
             .catch((e: unknown) => notify(`打开失败：${e instanceof Error ? e.message : String(e)}`));
     };
@@ -415,29 +417,21 @@ function ActionBar(props: { ctx: UiContext; launch: LaunchStatus; notify: (text:
         <div className="flex flex-wrap items-center gap-1">
             {launch.running ? (
                 <>
-                    <button type="button" className={BTN} onClick={call(DEV_METHODS.focus)}>
+                    <button type="button" className={BTN} onClick={() => guard(ctx.client.focus(ref), "聚焦失败：")}>
                         聚焦窗口
                     </button>
                     <button type="button" className={BTN} onClick={restart}>
                         重启
                     </button>
-                    <button
-                        type="button"
-                        className={BTN}
-                        onClick={() => {
-                            void ctx
-                                .invoke<{ ok: boolean; reason: string }>(DEV_METHODS.revealCdp, ref)
-                                .then((res) => notify(res.ok ? `已打开：${res.reason}` : `打不开 CDP：${res.reason}`));
-                        }}
-                    >
+                    <button type="button" className={BTN} onClick={() => guard(ctx.client.revealCdp(ref), "打不开 CDP：")}>
                         打开 CDP
                     </button>
-                    <button type="button" className={DANGER} onClick={call(DEV_METHODS.stop)}>
+                    <button type="button" className={DANGER} onClick={() => guard(ctx.client.stop(ref), "停止失败：")}>
                         停止
                     </button>
                 </>
             ) : (
-                <button type="button" className={BTN} disabled={launch.starting} onClick={call(DEV_METHODS.start)}>
+                <button type="button" className={BTN} disabled={launch.starting} onClick={() => guard(ctx.client.start(ref), "启动失败：")}>
                     {launch.starting ? "启动中…" : "启动"}
                 </button>
             )}
@@ -507,8 +501,8 @@ function BuildCard(props: { ctx: UiContext; launch: LaunchStatus; notify: (text:
     const [busy, setBusy] = useState<string | null>(null);
     const run = (command: BuildCommand): void => {
         setBusy(command);
-        void props.ctx
-            .invoke(DEV_METHODS.run, { ...refOf(props.launch), command })
+        void props.ctx.client
+            .run(refOf(props.launch), command)
             .then(() => props.notify(`已开始 ${command}`))
             .catch((e: unknown) => props.notify(`命令启动失败：${e instanceof Error ? e.message : String(e)}`))
             .finally(() => setBusy(null));
@@ -534,7 +528,7 @@ function LogCard(props: { ctx: UiContext }) {
         <Card
             title="命令输出"
             right={
-                <button type="button" className={BTN} onClick={() => void props.ctx.invoke(DEV_METHODS.clearSession)}>
+                <button type="button" className={BTN} onClick={() => void props.ctx.client.clearSession()}>
                     清空
                 </button>
             }
@@ -589,7 +583,7 @@ function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (te
             <div className="flex h-full min-h-0 flex-col p-2">
                 {tabs}
                 <div className="min-h-0 flex-1">
-                    <RefPane worktree={launch.worktree} invoke={ctx.invoke} />
+                    <RefPane worktree={launch.worktree} client={ctx.client} />
                 </div>
             </div>
         );
@@ -629,8 +623,8 @@ function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (te
             <EntriesCard
                 launch={launch}
                 onOpenUrl={(url) => {
-                    void ctx
-                        .invoke<{ ok: boolean; reason: string }>(DEV_METHODS.open, { url })
+                    void ctx.client
+                        .openUrl(url)
                         .then((res) => props.notify(res.ok ? `已打开：${res.reason}` : `打开失败：${res.reason}`))
                         .catch((e: unknown) => props.notify(`打开失败：${e instanceof Error ? e.message : String(e)}`));
                 }}
@@ -729,7 +723,7 @@ function WorktreeDetail(props: { ctx: UiContext; path: string; onSelect: (sel: S
             <div className="flex h-full min-h-0 flex-col p-2">
                 {tabs}
                 <div className="min-h-0 flex-1">
-                    <RefPane worktree={props.path} invoke={props.ctx.invoke} />
+                    <RefPane worktree={props.path} client={props.ctx.client} />
                 </div>
             </div>
         );

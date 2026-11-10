@@ -8,6 +8,7 @@
  * 作用域：**diy.yaml 跟 worktree 走** —— 这个页签吃的就是当前 launch 所在 worktree。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { DevClient } from "./client.js";
 
 export interface RefRepo {
     readonly key: string;
@@ -31,8 +32,6 @@ export interface RefSyncState {
     readonly summary: { readonly synced: number; readonly tagSkipped: number; readonly total: number } | null;
 }
 
-const M = { overview: "overview", add: "add", remove: "remove", sync: "sync", syncState: "syncState", open: "open" } as const;
-
 function fmtTime(iso: string | null): string {
     if (iso === null) return "从未";
     const d = new Date(iso);
@@ -41,8 +40,8 @@ function fmtTime(iso: string | null): string {
     return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function RefPane(props: { worktree: string; invoke: <T>(method: string, args?: unknown) => Promise<T> }) {
-    const { worktree, invoke } = props;
+export function RefPane(props: { worktree: string; client: DevClient }) {
+    const { worktree, client } = props;
     const [overview, setOverview] = useState<RefOverview | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [url, setUrl] = useState("");
@@ -52,13 +51,13 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
 
     const reload = useCallback(async (): Promise<void> => {
         try {
-            setOverview(await invoke<RefOverview>(M.overview, { worktree }));
+            setOverview(await client.ref.overview(worktree));
             setError(null);
         } catch (e) {
             setOverview(null);
             setError(e instanceof Error ? e.message : String(e));
         }
-    }, [invoke, worktree]);
+    }, [client, worktree]);
 
     useEffect(() => {
         void reload();
@@ -68,13 +67,13 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
     useEffect(() => {
         if (sync?.running !== true) return;
         const timer = setInterval(() => {
-            void invoke<RefSyncState>(M.syncState, { worktree }).then((next) => {
+            void client.ref.syncState(worktree).then((next) => {
                 setSync(next);
                 if (!next.running) void reload();
             });
         }, 800);
         return () => clearInterval(timer);
-    }, [sync?.running, invoke, worktree, reload]);
+    }, [sync?.running, client, worktree, reload]);
 
     useEffect(() => {
         if (logRef.current !== null) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -82,7 +81,7 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
 
     const runSync = (): void => {
         setSync({ running: true, lines: ["开始同步…"], summary: null });
-        void invoke<RefSyncState>(M.sync, { worktree }).then(setSync);
+        void client.ref.sync(worktree).then(setSync);
     };
 
     const add = async (): Promise<void> => {
@@ -90,7 +89,7 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
         if (value === "") return;
         setBusy(true);
         try {
-            await invoke(M.add, { worktree, url: value });
+            await client.ref.add(worktree, value);
             setUrl("");
             await reload();
         } catch (e) {
@@ -103,7 +102,7 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
     const remove = async (name: string): Promise<void> => {
         setBusy(true);
         try {
-            await invoke(M.remove, { worktree, name });
+            await client.ref.remove(worktree, name);
             await reload();
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -155,7 +154,7 @@ export function RefPane(props: { worktree: string; invoke: <T>(method: string, a
                                         </div>
                                     </td>
                                     <td className="w-[1%] whitespace-nowrap py-1 text-right">
-                                        <button type="button" className={cls} onClick={() => void invoke(M.open, { path: repo.dir })}>
+                                        <button type="button" className={cls} onClick={() => void client.ref.open(repo.dir)}>
                                             打开
                                         </button>
                                         <button

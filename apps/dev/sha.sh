@@ -132,8 +132,9 @@ _build_preload() {
 _build_renderer() {
   local d; d="$(_build_dir)/renderer"
   run mkdir -p "$d"
-  run npx @tailwindcss/cli -i src-ui/index.css -o "$d/index.css" --minify
-  run npx esbuild src-ui/main.tsx --bundle --platform=browser --format=iife --target=es2022 \
+  # 样式源在 UI 包里：直接给仓库内路径（apps/dev 没有自己的 node_modules，`./node_modules/...` 解析不到）
+  run npx @tailwindcss/cli -i "$(_repo_root)/pkgs/dev-ui/src/index.css" -o "$d/index.css" --minify
+  run npx esbuild renderer.ts --bundle --platform=browser --format=iife --target=es2022 \
     --jsx=automatic --define:process.env.NODE_ENV='"production"' --minify --outfile="$d/index.js"
   run cp index.html "$d/index.html"
 }
