@@ -26,6 +26,14 @@ const here = dirname(fileURLToPath(import.meta.url)); // build/<variant>/main
 
 // ⚠️ 不要用顶层 await（Electron 的 ESM 入口里会让 app ready 永不触发，见 apps/chat 的同一条注释）
 app.whenReady().then(() => {
+    // 单实例锁诊断（##518：与 diy-app / CLI 同一套判定，实现在 @diy-agent/workbench）
+    // 「关窗后常驻 / 陈旧锁 / 跨机锁」三种处境以前是沉默失败：再起一次就悄无声息地退，谁也不说为什么。
+    void (async () => {
+        const { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } = await import("@diy-agent/workbench/single-instance");
+        const lockPath = join(app.getPath("userData"), SINGLETON_LOCK);
+        const situation = classifyLock(readLock(lockPath));
+        if (situation.kind !== "free") console.warn(`[dev] ${lockAdvice(situation, lockPath)}`);
+    })();
     // Chromium 异步写 DevToolsActivePort：轮询几次再打，避免日志里出现空地址
     void (async () => {
         const { waitDevToolsPort } = await import("@diy-agent/workbench");
