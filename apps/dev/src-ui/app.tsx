@@ -57,6 +57,8 @@ const selectSessionKey = (s: CommandSession | null): string =>
 export type Selection =
     | { readonly kind: "launch"; readonly launch: LaunchStatus }
     | { readonly kind: "external"; readonly pid: number }
+    /** worktree 详情（点交叉表的分支行进入）；只存路径，每帧从快照重查 */
+    | { readonly kind: "worktree"; readonly path: string }
     | null;
 
 function refOf(launch: LaunchStatus): LaunchRef {
@@ -71,6 +73,35 @@ function groupByWorktree(launches: readonly LaunchStatus[]): Map<string, LaunchS
         else list.push(launch);
     }
     return out;
+}
+
+/**
+ * 用户偏好持久化（折叠的仓库 / 只显示运行中）。
+ *
+ * 为什么放 localStorage 而不是主进程：这是**纯界面偏好**，与实例状态无关；
+ * 放主进程要多一条 rpc，还会让「换个窗口」变成状态同步问题。
+ */
+function usePersisted<T>(key: string, initial: T, parse: (raw: string) => T, dump: (value: T) => string): [T, (next: T) => void] {
+    const [value, setValue] = useState<T>(() => {
+        try {
+            const raw = localStorage.getItem(key);
+            return raw === null ? initial : parse(raw);
+        } catch {
+            return initial;
+        }
+    });
+    const update = useCallback(
+        (next: T) => {
+            setValue(next);
+            try {
+                localStorage.setItem(key, dump(next));
+            } catch {
+                /* 存不了就算了：偏好丢了不影响正确性 */
+            }
+        },
+        [key, dump],
+    );
+    return [value, update];
 }
 
 const BTN = "rounded-md border border-outline px-2 py-[1px] text-[11px] hover:bg-surface-high disabled:opacity-40";
@@ -108,49 +139,178 @@ function LaunchChip(props: { launch: LaunchStatus; selected: boolean; onSelect: 
     );
 }
 
+/** 交叉表的一行：一个 worktree（含它所有的 launch） */
+interface TreeRow {
+    readonly worktree: string;
+    readonly path: string;
+    readonly branch: string | null;
+    readonly repo: string;
+    readonly built: boolean;
+    readonly byApp: Map<string, LaunchStatus[]>;
+}
+
+/** launches → 按仓库分组 → 行（worktree）× 列（app 名并集，按出现顺序） */
+function buildTree(launches: readonly LaunchStatus[]): Map<string, { rows: TreeRow[]; columns: string[] }> {
+    const byRepo = new Map<string, Map<string, TreeRow>>();
+    for (const launch of launches) {
+        let rows = byRepo.get(launch.repo);
+        if (rows === undefined) {
+            rows = new Map();
+            byRepo.set(launch.repo, rows);
+        }
+        let row = rows.get(launch.worktree);
+        if (row === undefined) {
+            row = {
+                worktree: launch.worktree,
+                path: launch.worktreePath,
+                branch: launch.branch,
+                repo: launch.repo,
+                built: launch.built,
+                byApp: new Map(),
+            };
+            rows.set(launch.worktree, row);
+        }
+        const list = row.byApp.get(launch.app);
+        if (list === undefined) row.byApp.set(launch.app, [launch]);
+        else list.push(launch);
+    }
+    const out = new Map<string, { rows: TreeRow[]; columns: string[] }>();
+    for (const [repo, rows] of byRepo) {
+        const columns: string[] = [];
+        const seen = new Set<string>();
+        for (const row of rows.values()) {
+            for (const app of row.byApp.keys()) {
+                if (seen.has(app)) continue;
+                seen.add(app);
+                columns.push(app);
+            }
+        }
+        out.set(repo, { rows: [...rows.values()], columns });
+    }
+    return out;
+}
+
 function Sidebar(props: { ctx: UiContext; selection: Selection; onSelect: (sel: Selection) => void }) {
     const snapshot = useSlice(props.ctx, selectSnapshot);
+    // 两个界面偏好都持久化（老界面用 localStorage 的 dev.collapsedRepos / dev.onlyRunning，沿用同名键）
+    const [collapsed, setCollapsed] = usePersisted<string[]>(
+        "dev.collapsedRepos",
+        [],
+        (raw) => (JSON.parse(raw) as unknown as string[]).filter((x): x is string => typeof x === "string"),
+        (value) => JSON.stringify(value),
+    );
+    const [onlyRunning, setOnlyRunning] = usePersisted<boolean>(
+        "dev.onlyRunning",
+        false,
+        (raw) => raw === "1",
+        (value) => (value ? "1" : "0"),
+    );
     if (snapshot === null) return <div className="p-3 text-on-surface-variant">正在读取快照…</div>;
-    const groups = groupByWorktree(snapshot.launches);
+    const tree = buildTree(snapshot.launches);
+
     return (
-        <div className="flex h-full flex-col gap-2 overflow-auto p-2">
-            <div className="text-[10px] text-on-surface-variant">
-                {snapshot.runningCount} 个 launch 在跑 · {snapshot.launches.length} 条 · {snapshot.worktreeCount} 个 worktree
-            </div>
-            {[...groups].map(([worktree, launches]) => {
-                const running = snapshot.worktreeInstances[worktree] ?? [];
+        <div className="flex h-full flex-col overflow-auto">
+            <header className="flex items-baseline gap-2 border-b border-outline px-2 py-1 text-[10px] text-on-surface-variant">
+                <span>
+                    {snapshot.runningCount} 在跑 · {snapshot.launches.length} 条 · {snapshot.worktreeCount} worktree
+                </span>
+                <button
+                    type="button"
+                    aria-pressed={onlyRunning}
+                    onClick={() => setOnlyRunning(!onlyRunning)}
+                    className={`ml-auto rounded px-1 ${onlyRunning ? "bg-primary-container text-on-primary-container" : "border border-outline"}`}
+                >
+                    只显示运行中
+                </button>
+            </header>
+            {[...tree].map(([repo, { rows, columns }]) => {
+                const isCollapsed = collapsed.includes(repo);
                 return (
-                    <section key={worktree} className="rounded-lg border border-outline bg-surface-low p-2">
-                        <header className="mb-1 flex items-baseline gap-2">
-                            <span className="truncate font-medium">{launches[0]?.worktreePath ?? worktree}</span>
-                            <span className="shrink-0 text-[10px] text-on-surface-variant">{launches[0]?.branch ?? ""}</span>
-                            {launches[0]?.built === false ? <span className="shrink-0 text-[10px] text-error">未构建</span> : null}
-                        </header>
-                        <div className="flex flex-wrap gap-1">
-                            {launches.map((launch) => (
-                                <LaunchChip
-                                    key={launch.key}
-                                    launch={launch}
-                                    selected={props.selection?.kind === "launch" && props.selection.launch.key === launch.key}
-                                    onSelect={() => props.onSelect({ kind: "launch", launch })}
-                                />
-                            ))}
-                        </div>
-                        {running.length > 0 ? (
-                            <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-on-surface-variant">
-                                {running.map((inst) => (
-                                    <span key={inst.pid} className="rounded bg-surface-high px-1 py-0.5" title={`${inst.diyHome}\npid ${inst.pid}`}>
-                                        {inst.displayName}
-                                    </span>
-                                ))}
-                            </div>
-                        ) : null}
+                    <section key={repo} className="border-b border-outline/60">
+                        <button
+                            type="button"
+                            onClick={() => setCollapsed(isCollapsed ? collapsed.filter((x) => x !== repo) : [...collapsed, repo])}
+                            className="flex w-full items-baseline gap-2 px-2 py-1 text-left text-[11px] hover:bg-surface-high"
+                            title={repo}
+                        >
+                            <span className="w-2 text-on-surface-variant">{isCollapsed ? "▸" : "▾"}</span>
+                            <span className="truncate font-medium">{repo.split("/").at(-1) ?? repo}</span>
+                            <span className="ml-auto shrink-0 text-[10px] text-on-surface-variant">
+                                {rows.length} 分支 · {columns.length} app
+                            </span>
+                        </button>
+                        {isCollapsed ? null : (
+                            <table className="w-full border-collapse text-[11px]">
+                                <thead>
+                                    <tr>
+                                        <th className="w-[1%] whitespace-nowrap px-2 py-0.5 text-left font-normal text-on-surface-variant">分支</th>
+                                        {columns.map((app) => (
+                                            <th key={app} className="px-1 py-0.5 text-left font-normal text-on-surface-variant" title={`apps/${app}`}>
+                                                {app}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((row) => {
+                                        const running = snapshot.worktreeInstances[row.worktree] ?? [];
+                                        const selected = props.selection?.kind === "worktree" && props.selection.path === row.worktree;
+                                        const empty = onlyRunning && !row.byApp.size;
+                                        if (onlyRunning && ![...row.byApp.values()].some((list) => list.some((l) => l.running || l.starting))) return null;
+                                        return (
+                                            <tr key={row.worktree} className={empty ? "opacity-50" : ""}>
+                                                <th className="whitespace-nowrap px-2 py-1 text-left font-normal">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => props.onSelect({ kind: "worktree", path: row.worktree })}
+                                                        className={`rounded px-1 ${selected ? "bg-primary-container text-on-primary-container" : "hover:bg-surface-high"}`}
+                                                        title={`${row.worktree}\n点击看这个 worktree 的详情`}
+                                                    >
+                                                        {row.branch ?? (row.path.split("/").at(-1) ?? "?")}
+                                                    </button>
+                                                    {row.built ? null : <span className="ml-1 text-[10px] text-error">未构建</span>}
+                                                    {running.length > 0 ? (
+                                                        <div className="mt-0.5 flex flex-wrap gap-1 text-[10px] text-on-surface-variant">
+                                                            {running.map((inst) => (
+                                                                <span key={inst.pid} className="rounded bg-surface-high px-1" title={`${inst.diyHome}\npid ${inst.pid}`}>
+                                                                    {inst.displayName}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : null}
+                                                </th>
+                                                {columns.map((app) => {
+                                                    const launches = row.byApp.get(app);
+                                                    if (launches === undefined) return <td key={app} className="px-1 py-1 text-on-surface-variant">·</td>;
+                                                    const shown = onlyRunning ? launches.filter((l) => l.running || l.starting) : launches;
+                                                    if (shown.length === 0) return <td key={app} className="px-1 py-1" />;
+                                                    return (
+                                                        <td key={app} className="px-1 py-1">
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {shown.map((launch) => (
+                                                                    <LaunchChip
+                                                                        key={launch.key}
+                                                                        launch={launch}
+                                                                        selected={props.selection?.kind === "launch" && props.selection.launch.key === launch.key}
+                                                                        onSelect={() => props.onSelect({ kind: "launch", launch })}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        )}
                     </section>
                 );
             })}
             {snapshot.externals.length > 0 ? (
-                <section className="rounded-lg border border-outline bg-surface-low p-2">
-                    <header className="mb-1 text-[10px] text-on-surface-variant">外部实例（不属于任何 worktree 的 launch · 只读）</header>
+                <section className="px-2 py-1">
+                    <header className="mb-1 text-[10px] text-on-surface-variant">外部实例（不属于任何 worktree · 只读）</header>
                     <div className="flex flex-col gap-0.5">
                         {snapshot.externals.map((item) => (
                             <button
@@ -158,7 +318,9 @@ function Sidebar(props: { ctx: UiContext; selection: Selection; onSelect: (sel: 
                                 type="button"
                                 onClick={() => props.onSelect({ kind: "external", pid: item.pid })}
                                 className={`flex items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-high ${
-                                    props.selection?.kind === "external" && props.selection.pid === item.pid ? "bg-primary-container text-on-primary-container" : ""
+                                    props.selection?.kind === "external" && props.selection.pid === item.pid
+                                        ? "bg-primary-container text-on-primary-container"
+                                        : ""
                                 }`}
                             >
                                 <span className="font-mono">{item.pid}</span>
@@ -522,6 +684,104 @@ function ExternalDetail(props: { item: ExternalInstance }) {
     );
 }
 
+/** worktree 详情：点交叉表的分支行进来。列出这个工作区下的 app / launch / 状态，并给文件与外部仓库两个页签 */
+function WorktreeDetail(props: { ctx: UiContext; path: string; onSelect: (sel: Selection) => void }) {
+    const snapshot = useSlice(props.ctx, selectSnapshot);
+    const [tab, setTab] = useState<"info" | "files" | "ref">("info");
+    const launches = (snapshot?.launches ?? []).filter((item) => item.worktree === props.path);
+    const sample = launches[0];
+    const instances = snapshot?.worktreeInstances[props.path] ?? [];
+    if (sample === undefined) {
+        return <div className="p-3 text-[11px] text-on-surface-variant">这个 worktree 已不在清单里（{props.path}）</div>;
+    }
+    const tabBtn = (id: "info" | "files" | "ref", label: string) => (
+        <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`border-b-2 px-3 py-1 text-[11px] ${
+                tab === id ? "border-primary text-on-surface" : "border-transparent text-on-surface-variant hover:text-on-surface"
+            }`}
+        >
+            {label}
+        </button>
+    );
+    const tabs = (
+        <div className="mb-2 flex items-center gap-1 border-b border-outline">
+            {tabBtn("info", "详情")}
+            {tabBtn("files", "文件")}
+            {tabBtn("ref", "外部仓库")}
+            <span className="ml-auto truncate text-[10px] text-on-surface-variant">{sample.repo.split("/").at(-1)}</span>
+        </div>
+    );
+    if (tab === "files") {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <FilesPane worktree={props.path} />
+                </div>
+            </div>
+        );
+    }
+    if (tab === "ref") {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <RefPane worktree={props.path} invoke={props.ctx.invoke} />
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="flex h-full flex-col gap-2 overflow-auto p-2">
+            {tabs}
+            <div className="flex items-baseline gap-2">
+                <h1 className="text-[14px] font-medium">{sample.branch ?? (sample.worktreePath.split("/").at(-1) ?? "?")}</h1>
+                <span className="text-[11px] text-on-surface-variant">{sample.built ? "已构建" : "未构建"}</span>
+            </div>
+            <Card title="概况">
+                <div className="flex flex-col gap-0.5">
+                    <KV label="路径" value={<span className="font-mono">{sample.worktree}</span>} />
+                    <KV label="仓库" value={<span className="font-mono">{sample.repo}</span>} />
+                    <KV label="分支" value={sample.branch ?? "（detached）"} />
+                </div>
+            </Card>
+            <Card title="在跑的实例" right={`${String(instances.length)} 份`}>
+                {instances.length === 0 ? (
+                    <div className="text-[11px] text-on-surface-variant">（没有）</div>
+                ) : (
+                    <div className="flex flex-col gap-0.5 text-[11px]">
+                        {instances.map((inst) => (
+                            <div key={inst.pid} className="flex items-baseline gap-2">
+                                <span className="font-mono">{inst.pid}</span>
+                                <span>{inst.displayName}</span>
+                                <span className="truncate text-[10px] text-on-surface-variant">{inst.diyHome}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </Card>
+            <Card title="launch" right={`${String(launches.length)} 条`}>
+                <div className="flex flex-col gap-1">
+                    {launches.map((launch) => (
+                        <div key={launch.key} className="flex items-baseline gap-2 text-[11px]">
+                            <button type="button" className="rounded px-1 hover:bg-surface-high" onClick={() => props.onSelect({ kind: "launch", launch })}>
+                                {launch.app}.{launch.launch}
+                            </button>
+                            <span className="truncate font-mono text-[10px] text-on-surface-variant">{launch.command}</span>
+                            <span className="ml-auto shrink-0 text-[10px]">
+                                {launch.running ? "运行中" : launch.starting ? "启动中" : "未启动"}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </Card>
+        </div>
+    );
+}
+
 export interface AppProps {
     readonly ctx: UiContext;
     readonly selection: Selection;
@@ -542,6 +802,8 @@ export function App(props: AppProps) {
             <main className="min-w-0">
                 {props.selection?.kind === "launch" ? (
                     <LaunchDetail ctx={props.ctx} launch={props.selection.launch} notify={props.notify} />
+                ) : props.selection?.kind === "worktree" ? (
+                    <WorktreeDetail ctx={props.ctx} path={props.selection.path} onSelect={props.onSelect} />
                 ) : external !== null ? (
                     <ExternalDetail item={external} />
                 ) : (
