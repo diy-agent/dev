@@ -25,11 +25,13 @@ async function invoke<T>(method: string, args?: unknown): Promise<T> {
 }
 
 const store = new SnapshotStore<DevSnapshot | null>(null);
+/** 命令输出（启动日志 / build 输出共用一条会话）—— 与快照分开：刷新节奏不同、变化来源不同 */
+const session = new SnapshotStore<CommandSession | null>(null);
 const slots = new SlotRegistry();
 slots.declare("sidebar");
 slots.declare("detail");
 
-const ctx: UiContext = { store, slots, invoke };
+const ctx: UiContext = { store, session, slots, invoke };
 
 // ── 第一个 Slot 贡献：运行时卡（证明扩展点能用，且不需要碰 app.tsx） ──────────
 slots.register<{ ctx: UiContext; launch: LaunchStatus }>("detail", {
@@ -50,7 +52,20 @@ slots.register<{ ctx: UiContext; launch: LaunchStatus }>("detail", {
 // ── 轮询：主进程给什么就推什么；store 负责「没变就不通知」 ─────────────────
 async function tick(): Promise<void> {
     try {
-        store.set(await invoke<DevSnapshot>(DEV_METHODS.snapshot));
+        const [snap, sess] = await Promise.all([
+            invoke<DevSnapshot>(DEV_METHODS.snapshot),
+            invoke<CommandSession | null>(DEV_METHODS.session),
+        ]);
+        store.set(snap);
+        // 会话按「行数 + running」判等：内容没长就不必惊动订阅者
+        session.set(sess, (a, b) =>
+            a === b ||
+            (a !== null &&
+                b !== null &&
+                a.id === b.id &&
+                a.running === b.running &&
+                a.lines.length === b.lines.length),
+        );
     } catch (error) {
         console.error("[ui] 取快照失败", error);
     }
@@ -78,11 +93,10 @@ function render(): void {
 }
 render();
 
-// 会话（启动日志）也走同一条路：原型只把最后一行显示在状态栏，验证命令通道可用
+// 状态栏：只显示会话最后一行（不参与主界面重绘）
 setInterval(() => {
-    void invoke<CommandSession | null>(DEV_METHODS.session).then((session) => {
-        if (session === null) return;
-        const bar = document.getElementById("ui-status");
-        if (bar !== null) bar.textContent = session.lines.at(-1) ?? "";
-    });
-}, 1000);
+    const bar = document.getElementById("ui-status");
+    if (bar === null) return;
+    const lines = ctx.session.read((s) => s?.lines ?? []);
+    bar.textContent = lines.at(-1) ?? "";
+}, 500);

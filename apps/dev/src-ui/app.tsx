@@ -10,26 +10,39 @@
  * ⚠️ 这是**并行原型**：老的 `renderer.ts` 仍是默认界面，等原型对齐后再切。
  */
 import { useCallback, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import type { DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
+import type { CommandSession, DevSnapshot, LaunchStatus } from "@diy-agent/dev-core/shared";
 import type { SnapshotStore } from "./store.js";
 import type { SlotRegistry } from "./slots.js";
 
 export interface UiContext {
     readonly store: SnapshotStore<DevSnapshot | null>;
+    /** 命令输出（启动日志 / build 输出共用一条会话，与主进程 DevRunner 同口径） */
+    readonly session: SnapshotStore<CommandSession | null>;
     readonly slots: SlotRegistry;
     readonly invoke: <T>(method: string, args?: unknown) => Promise<T>;
 }
 
-/** 唯一的 React ↔ store 桥：组件只选自己关心的切片，浅相等时不重渲染 */
-function useSlice<T>(ctx: UiContext, selector: (s: DevSnapshot | null) => T): T {
-    const subscribe = useCallback(
-        (onChange: () => void) => ctx.store.subscribe(selector, onChange),
-        // selector 由调用方保证稳定（模块级函数或 useMemo 包过）
-        [ctx, selector],
-    );
-    const getSnapshot = useCallback(() => ctx.store.read(selector), [ctx, selector]);
+/**
+ * 唯一的 React ↔ store 桥（对任意 `SnapshotStore` 通用）：组件只选自己关心的切片，
+ * 浅相等时不重渲染。**业务组件不写订阅** —— 这是「React 只做投影」的落点。
+ */
+function useStoreSlice<T, S>(store: SnapshotStore<T>, selector: (s: T) => S): S {
+    const subscribe = useCallback((onChange: () => void) => store.subscribe(selector, onChange), [store, selector]);
+    const getSnapshot = useCallback(() => store.read(selector), [store, selector]);
     return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
+
+function useSlice<T>(ctx: UiContext, selector: (s: DevSnapshot | null) => T): T {
+    return useStoreSlice(ctx.store, selector);
+}
+
+/** 会话只看「行数与最后一行」：内容每 1s 变一次，但没变就不该重画（浅相等在这一层生效） */
+const selectSessionKey = (s: CommandSession | null): string =>
+    s === null ? "" : `${String(s.id)}:${String(s.lines.length)}:${s.running ? "1" : "0"}`;
+/** ⚠️ 空数组必须是**同一个常量**：`?? []` 每次都新建 ⇒ useSyncExternalStore 认为快照变了
+ *  → 无限重渲染（React error #185，实测踩到过）。 */
+const EMPTY_LINES: readonly string[] = [];
+const selectSessionLines = (s: CommandSession | null): readonly string[] => s?.lines ?? EMPTY_LINES;
 
 const selectSnapshot = (s: DevSnapshot | null): DevSnapshot | null => s;
 
@@ -49,6 +62,9 @@ function LaunchChip(props: { ctx: UiContext; launch: LaunchStatus; selected: boo
     const state = launch.starting ? "启动中" : launch.running ? "运行中" : "未启动";
     const onClick = (event: ReactMouseEvent): void => {
         event.stopPropagation();
+        // 点 chip = 「选中 + 启停」：选中是为了让右侧详情（含命令输出）跟着切过来 ——
+        // 否则点了启动只看到圆点变绿，日志在右边的卡里没人知道（##518）。
+        props.onSelect();
         if (launch.starting) return;
         if (launch.running) void props.ctx.invoke("stop", { worktree: launch.worktree, app: launch.app, launch: launch.launch });
         else void props.ctx.invoke("start", { worktree: launch.worktree, app: launch.app, launch: launch.launch });
@@ -114,6 +130,46 @@ function Sidebar(props: { ctx: UiContext; selectedKey: string | null; onSelect: 
     );
 }
 
+/** 动作按钮：启停 / 聚焦 / 打开目录。**不做悬停才出现的按钮**（##518：会抖） */
+function ActionBar(props: { ctx: UiContext; launch: LaunchStatus }) {
+    const { ctx, launch } = props;
+    const ref = { worktree: launch.worktree, app: launch.app, launch: launch.launch };
+    const act = (method: string, args?: unknown) => () => void ctx.invoke(method, args ?? ref);
+    const cls = "rounded-md border border-outline px-2 py-0.5 text-[11px] hover:bg-surface-high";
+    return (
+        <div className="flex flex-wrap gap-1">
+            {launch.running ? (
+                <button type="button" className={cls} onClick={act("stop")}>
+                    停止
+                </button>
+            ) : (
+                <button type="button" className={cls} disabled={launch.starting} onClick={act("start")}>
+                    启动
+                </button>
+            )}
+            <button type="button" className={cls} disabled={!launch.running} onClick={act("focus")}>
+                聚焦
+            </button>
+            <button type="button" className={cls} onClick={act("open", { ...ref, which: "app", mode: "editor" })}>
+                打开目录
+            </button>
+        </div>
+    );
+}
+
+/** 命令输出：与 build 等命令共用同一条会话（启动日志由 DevRunner.watchLog 灌进来） */
+function LogPane(props: { ctx: UiContext }) {
+    // 两段式订阅：行数不变就不重画；变了只取尾部 300 行
+    useStoreSlice(props.ctx.session, selectSessionKey);
+    const lines = useStoreSlice(props.ctx.session, selectSessionLines);
+    if (lines.length === 0) return <div className="text-[11px] text-on-surface-variant">（没有输出）</div>;
+    return (
+        <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-2 font-mono text-[10px] leading-[1.45]">
+            {lines.slice(-300).join("\n")}
+        </pre>
+    );
+}
+
 function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
     const { launch } = props;
     if (launch === null) return <div className="p-3 text-on-surface-variant">选一个 launch 看详情</div>;
@@ -130,6 +186,7 @@ function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
             <h1 className="text-[14px] font-medium">
                 {launch.app}.{launch.launch}
             </h1>
+            <ActionBar ctx={props.ctx} launch={launch} />
             <div className="grid grid-cols-[72px_1fr] gap-x-3 gap-y-1 text-[11px]">
                 {rows.map(([k, v]) => (
                     <Fragment2 key={k} label={k} value={v} />
@@ -145,6 +202,8 @@ function Detail(props: { ctx: UiContext; launch: LaunchStatus | null }) {
             {props.ctx.slots.contributions<{ ctx: UiContext; launch: LaunchStatus }>("detail").map((c) => (
                 <div key={c.id}>{c.render({ ctx: props.ctx, launch }) as ReactNode}</div>
             ))}
+            <h2 className="mt-1 text-[11px] font-medium text-on-surface-variant">命令输出</h2>
+            <LogPane ctx={props.ctx} />
         </div>
     );
 }
