@@ -44,7 +44,9 @@ export async function trafficCall(input: TrafficCallArgs): Promise<unknown> {
     if (!ALLOWED.has(input.method)) {
         throw new Error(`不允许代理的方法：${input.method}（白名单：${[...ALLOWED].join(" / ")}）`);
     }
-    return clientFor(input.port).invoke(`${SERVICE}.${input.method}`, input.args ?? {});
+    // ⚠️ 协议形状：`invoke(method, params)` 的 params 是 `{ input: <实参> }`（见 CliApp 的
+    // `tx.invoke(rpcName, { input })`）。直接传裸实参会一律得到 `Invalid input`（实测踩过）。
+    return clientFor(input.port).invoke(`${SERVICE}.${input.method}`, { input: input.args ?? {} });
 }
 
 /** 断开缓存的会话（实例退出 / 用户切目标时调） */
