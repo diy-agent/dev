@@ -46,7 +46,17 @@ export async function trafficCall(input: TrafficCallArgs): Promise<unknown> {
     }
     // ⚠️ 协议形状：`invoke(method, params)` 的 params 是 `{ input: <实参> }`（见 CliApp 的
     // `tx.invoke(rpcName, { input })`）。直接传裸实参会一律得到 `Invalid input`（实测踩过）。
-    return clientFor(input.port).invoke(`${SERVICE}.${input.method}`, { input: input.args ?? {} });
+    const params = { input: input.args ?? {} };
+    try {
+        return await clientFor(input.port).invoke(`${SERVICE}.${input.method}`, params);
+    } catch (error) {
+        // 目标实例重启过 ⇒ 缓存会话已死（`The session has been destroyed`）。
+        // 丢掉这条连接重试一次：这是「实例换了一代」的常见情况，不该让用户看见错误。
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/destroyed|ECONNREFUSED|closed/i.test(message)) throw error;
+        trafficDispose(input.port);
+        return clientFor(input.port).invoke(`${SERVICE}.${input.method}`, params);
+    }
 }
 
 /** 断开缓存的会话（实例退出 / 用户切目标时调） */

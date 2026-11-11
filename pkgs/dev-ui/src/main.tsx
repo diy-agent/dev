@@ -15,7 +15,6 @@ import { SlotRegistry } from "./slots.js";
 import { App, useStoreSlice, type UiContext, type Selection } from "./app.js";
 import { StatusBar, TitleBar, useNotices, type PageInfo } from "./chrome.js";
 import { FilesViewPage } from "./worktrees.js";
-import { TrafficPage } from "./devtools.js";
 
 interface WorkbenchBridge extends PageBridge {
     listPages(): Promise<PageInfo[]>;
@@ -93,7 +92,6 @@ function Shell(props: { bridge: WorkbenchBridge }) {
     const pages: readonly PageInfo[] = [
         { id: "app", title: "应用" },
         { id: "files", title: "文件" },
-        { id: "traffic", title: "请求" },
     ];
     const [active, setActive] = useState("app");
     // 稳定选择器（模块级常量）：内联箭头函数每次渲染都是新引用 ⇒ 订阅反复重建
@@ -110,9 +108,7 @@ function Shell(props: { bridge: WorkbenchBridge }) {
                 onClearNotices={notices.clear}
             />
             <div className="min-h-0 flex-1">
-                {active === "traffic" ? (
-                    <TrafficPage ctx={ctx} />
-                ) : active === "files" ? (
+                {active === "files" ? (
                     <FilesViewPage ctx={ctx} onOpenWorktree={(path) => {
                         selection = { kind: "worktree", path };
                         setActive("app");

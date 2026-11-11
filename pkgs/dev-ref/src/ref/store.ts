@@ -49,7 +49,7 @@ export function isShaVersion(version: string): boolean {
 
 /**
  * 不可变版本判定：tag 或 SHA → detached 检出，sync 不 pull。
- * 非 semver tag（如 nightly）正则认不出，以 clone 到的本地 refs/tags/ 为准（见 git.ts 消歧），
+ * 非 semver tag（如 nightly）正则认不出，由 updateMirror 的 detached HEAD 安全网兜底，
  * 此处只做纯字符串初判。
  */
 export function isPinnedVersion(version: string): boolean {

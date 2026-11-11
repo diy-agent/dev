@@ -1,7 +1,9 @@
 // src/ref/git.ts — git 子进程封装（clone / checkout / pull）
 //
 // 外部命令防御：requireGit() 在调用前检查 git 存在，缺失给安装提示而非裸报错。
-// 镜像目录作为「只读源码快照」，完整 clone 后显式检出目标 ref，避免浅历史不可达。
+// 镜像目录作为「只读源码快照」，**一律浅克隆（--depth 1）**：大仓库全历史经常下不下来，
+// 而镜像只用于读源码，不需要历史。tag / 分支用 `--branch` 一次取到位；SHA 因为浅克隆按 ref
+// 取（任意 commit 不在 want 里）走 init + `fetch --depth 1 <sha>`，远端拒绝时退回全量 clone。
 //
 // 日志策略（193 重写）：
 //   - 长命令（clone / fetch / pull）走 exec.runStreaming + ProgressRenderer 实时渲染
@@ -12,18 +14,18 @@
 //     （5caf645 加过 clone 180s 被 8b2ae9e 故意删除——会误杀大仓库），卡住由 Ctrl+C 中断；
 //   - 统一注入 GIT_TERMINAL_PROMPT=0（见 exec.ts）。
 //
-// clone 后 ref 检出策略：
-//   - 无版本 / main → 保持默认分支 HEAD（track origin/默认分支，后续可 pull）
-//   - SHA / tag（含非 semver 如 nightly，以本地 refs/tags/ 消歧）→ detached 检出，后续不 pull
-//   - 显式分支名（develop/feat.x 等，斜杠分支整体作 ref 名）→ checkout -B <v> origin/<v>（本地 track，后续可 pull）
+// clone 时 ref 检出策略（--depth 1 隐含 --single-branch，只拉目标 ref 的 1 层历史）：
+//   - 无版本 / main → 默认分支 HEAD（track origin/默认分支，后续 pull 增量快进）
+//   - tag（含非 semver 如 nightly）/ SHA → detached 检出，后续不 pull
+//   - 显式分支名（develop/feat.x 等，斜杠分支整体作 ref 名）→ `--branch <v>` 建本地 tracking 分支（后续可 pull）
 //   - /tree/<分支>/<子目录> 天然歧义（分支 feat/foo 根 vs 分支 feat 下 foo 目录），一律按 ref 名整体解释，
 //     失败时提示改用 @<分支> 精确形式
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { runBuffered, runStreaming, type ExecResult } from "../git/exec";
 import { getDefaultRenderer, type ProgressRenderer } from "./render";
-import { isPinnedVersion, isShaVersion } from "./store";
+import { isShaVersion } from "./store";
 
 export interface GitRunResult {
     ok: boolean;
@@ -102,15 +104,15 @@ export function verifyRemoteUrl(url: string): void {
     }
 }
 
-/** 本地是否存在该 tag（clone 拉全量 tags；loose ref 与 packed-refs 都查，纯 fs 不调 git 无噪音）。 */
-function hasLocalTag(dir: string, tag: string): boolean {
-    if (tag.includes("..")) return false; // 路径穿越守卫：走 fetch 路径安全失败
-    if (existsSync(`${dir}/.git/refs/tags/${tag}`)) return true;
+/** 浅克隆深度：只取目标 ref 的最新快照，不拉全历史（大仓库全量 clone 经常下不下来）。 */
+const SHALLOW_DEPTH = "1";
+
+/** 删除（可能是半成品的）镜像目录；失败不掩盖原始错误。 */
+function rmDir(dir: string): void {
     try {
-        const packed = readFileSync(`${dir}/.git/packed-refs`, "utf-8");
-        return packed.split("\n").some((l) => l.endsWith(` refs/tags/${tag}`));
+        rmSync(dir, { recursive: true, force: true });
     } catch {
-        return false;
+        /* ignore */
     }
 }
 
@@ -129,7 +131,7 @@ export interface MirrorOpts {
 }
 
 /**
- * clone 到 dir 并按 version 检出 ref。
+ * clone 到 dir 并按 version 检出 ref（**浅克隆 --depth 1**）。
  * 目录已含 git 仓库则跳过（交由 updateMirror 增量处理）。
  * clone 不设硬超时（190 第四节），进度实时渲染 + 心跳提示。
  */
@@ -140,66 +142,70 @@ export async function cloneMirror(opts: MirrorOpts): Promise<void> {
 
     mkdirSync(dirname(opts.dir), { recursive: true });
     const prog = opts.prog ?? getDefaultRenderer();
+    const v = (opts.version ?? "").trim();
 
-    const cl = await runStream(["clone", "--progress", "--", url, opts.dir], { prog });
+    // SHA：浅克隆按 ref 取，任意 commit 不在 want 里 → 单独走 init + fetch --depth 1 <sha>
+    if (isShaVersion(v)) {
+        await cloneAtSha({ dir: opts.dir, url, sha: v, prog });
+        return;
+    }
+
+    // 无版本 / main → 默认分支 HEAD；tag / 分支 → --branch 直接取（tag 检出 detached，
+    // 分支建本地 tracking），clone 一步到位，不再 clone 后 checkout。
+    const args = ["clone", "--depth", SHALLOW_DEPTH, "--progress"];
+    if (v.length > 0 && v !== "main") args.push("--branch", v, "--single-branch");
+    args.push("--", url, opts.dir);
+
+    const cl = await runStream(args, { prog });
     if (!cl.ok) {
-        try {
-            rmSync(opts.dir, { recursive: true, force: true });
-        } catch {
-            /* ignore */
-        }
+        rmDir(opts.dir);
+        const why = readable(cl.stderr) || readable(cl.stdout) || "git clone 失败";
+        const hint =
+            v.length > 0 && v !== "main"
+                ? `\n  确认仓库存在 '${v}'；若从 /tree/ 复制且地址含子目录如 …/tree/<分支>/<子目录>，请改用 @<分支> 精确形式`
+                : "";
+        throw new Error(`clone 失败: ${why}${hint}`);
+    }
+}
+
+/**
+ * 按 commit SHA 取单层快照：init + `fetch --depth 1 <sha>` + detached 检出。
+ * 部分远端不允许按 sha fetch（allowReachableSHA1InWant=false）→ 退回全量 clone（历史必需，别无他法）。
+ */
+async function cloneAtSha(opts: {
+    dir: string;
+    url: string;
+    sha: string;
+    prog: ProgressRenderer;
+}): Promise<void> {
+    const { dir, url, sha, prog } = opts;
+    mkdirSync(dir, { recursive: true });
+    run(["init", "-q", dir]);
+    run(["-C", dir, "remote", "add", "origin", url]);
+
+    // 单 ref fetch：60s 硬超时（超时分级，与既有 fetch 一致；clone 才不设超时）
+    const f = await runStream(["-C", dir, "fetch", "--depth", SHALLOW_DEPTH, "--progress", "origin", sha], {
+        prog,
+        timeoutMs: 60_000,
+    });
+    if (f.ok) {
+        const co = run(["-C", dir, "checkout", "-q", "FETCH_HEAD"]);
+        if (!co.ok) throw new Error(`checkout '${sha}' 失败: ${co.stderr || ""}`);
+        return;
+    }
+
+    // 回退：全量 clone（半成品目录先清掉）
+    prog.info(`按 commit 浅取失败，回退全量 clone（${sha}）`);
+    rmDir(dir);
+    mkdirSync(dirname(dir), { recursive: true });
+    const cl = await runStream(["clone", "--progress", "--", url, dir], { prog });
+    if (!cl.ok) {
+        rmDir(dir);
         const why = readable(cl.stderr) || readable(cl.stdout) || "git clone 失败";
         throw new Error(`clone 失败: ${why}`);
     }
-
-    const v = (opts.version ?? "").trim();
-    if (v.length === 0 || v === "main") return; // 保持默认分支（track，可 pull）
-
-    // ref 消歧：clone 已拉全量 tags+heads。顺序：SHA → tag（含非 semver，以本地 refs 为准）→ 分支。
-    if (isShaVersion(v)) {
-        // commit：full clone 已含对象，直接 detached 检出
-        const co = run(["-C", opts.dir, "checkout", v]);
-        if (!co.ok) throw new Error(`checkout '${v}' 失败（仓库无该 commit）: ${co.stderr || ""}`);
-        return;
-    }
-    if (isPinnedVersion(v) || hasLocalTag(opts.dir, v)) {
-        // tag：本地已有直接 detached；缺失再 fetch 单 tag（兜底，如 tag 在 clone 后新建）。
-        // 兜底 fetch 属短网络命令：给 60s 硬超时（超时分级，clone 才是不设超时的那个）
-        if (!hasLocalTag(opts.dir, v)) {
-            const f = await runStream(["-C", opts.dir, "fetch", "--progress", "origin", "tag", v], {
-                prog,
-                timeoutMs: 60_000,
-            });
-            if (!f.ok) {
-                throw new Error(
-                    f.timedOut
-                        ? `拉取 tag '${v}' 失败（fetch 超时 60s）`
-                        : `拉取 tag '${v}' 失败，请确认仓库存在该 tag`,
-                );
-            }
-        }
-        const co = run(["-C", opts.dir, "checkout", v]);
-        if (!co.ok) throw new Error(`checkout '${v}' 失败: ${co.stderr || ""}`);
-        return;
-    }
-    // 分支：fetch 并建本地 tracking 分支（origin/v 已在 clone 时拉取全部 heads）
-    const originRef = `origin/${v}`;
-    if (!existsSync(`${opts.dir}/.git/refs/remotes/${originRef}`)) {
-        const f = await runStream(["-C", opts.dir, "fetch", "--progress", "origin", v], {
-            prog,
-            timeoutMs: 60_000,
-        });
-        if (!f.ok) {
-            throw new Error(
-                (f.timedOut
-                    ? `拉取分支 '${v}' 失败（fetch 超时 60s）`
-                    : `拉取分支 '${v}' 失败，请确认仓库存在该分支`) +
-                    `（若从 /tree/ 复制且地址含子目录如 …/tree/<分支>/<子目录>，请改用 @<分支> 精确形式）`,
-            );
-        }
-    }
-    const co = run(["-C", opts.dir, "checkout", "-B", v, originRef]);
-    if (!co.ok) throw new Error(`checkout '${v}' 失败: ${co.stderr || ""}`);
+    const co = run(["-C", dir, "checkout", "-q", sha]);
+    if (!co.ok) throw new Error(`checkout '${sha}' 失败（仓库无该 commit）: ${co.stderr || ""}`);
 }
 
 export interface UpdateOutcome {

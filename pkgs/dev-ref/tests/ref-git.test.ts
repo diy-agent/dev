@@ -84,6 +84,25 @@ describe("cloneMirror", () => {
         expect(readFileSync(join(dir, "a.txt"), "utf-8")).toBe("2");
     });
 
+    it("浅克隆：只拉 1 层历史（大仓库省流量）", async () => {
+        // src 的 master 再多造一个提交，才看得出「只拉 1 层」（单提交仓本来就无浅历史可省）
+        writeFileSync(join(src, "c.txt"), "x", "utf-8");
+        g(["add", "."], src);
+        g(["commit", "-m", "c-extra"], src);
+        const dir = join(root, "shallow");
+        // 本地路径 clone 会忽略 --depth（git 的 local clone 优化），file:// 才会真走浅克隆
+        await cloneMirror({ dir, url: `file://${src}`, version: null });
+        expect(g(["rev-parse", "--is-shallow-repository"], dir)).toBe("true");
+        expect(g(["rev-list", "--count", "HEAD"], dir)).toBe("1");
+    });
+
+    it("tag 也浅取：detached at tag 且只需 1 层历史", async () => {
+        const dir = join(root, "shallow-tag");
+        await cloneMirror({ dir, url: src, version: "v1.0.0" });
+        expect(g(["rev-parse", "HEAD"], dir)).toBe(g(["rev-parse", "v1.0.0"], src));
+        expect(g(["rev-list", "--count", "HEAD"], dir)).toBe("1");
+    });
+
     it("目录已含 git 仓库 → 跳过（幂等）", async () => {
         const dir = join(root, "main");
         await cloneMirror({ dir, url: src, version: null });

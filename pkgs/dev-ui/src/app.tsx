@@ -24,6 +24,7 @@ import type { SnapshotStore } from "./store.js";
 import type { SlotRegistry } from "./slots.js";
 import { FilesPane } from "./files.js";
 import { RefPane } from "./ref.js";
+import { TrafficPanel } from "./devtools.js";
 
 export interface UiContext {
     readonly store: SnapshotStore<DevSnapshot | null>;
@@ -546,9 +547,11 @@ function LogCard(props: { ctx: UiContext }) {
 
 function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (text: string) => void }) {
     const { launch, ctx } = props;
-    const [tab, setTab] = useState<"info" | "files" | "ref">("info");
+    const [tab, setTab] = useState<"info" | "files" | "ref" | "traffic">("info");
     const runtime = launch.runtime;
-    const tabBtn = (id: "info" | "files" | "ref", label: string) => (
+    /** 可观测 = 这个实例此刻有 rpc 端口（没有端口就没有流量面可看） */
+    const observablePort = typeof runtime?.port === "number" && runtime.port > 0 ? runtime.port : null;
+    const tabBtn = (id: "info" | "files" | "ref" | "traffic", label: string) => (
         <button
             key={id}
             type="button"
@@ -565,6 +568,7 @@ function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (te
             {tabBtn("info", "详情")}
             {tabBtn("files", "文件")}
             {tabBtn("ref", "外部仓库")}
+            {observablePort === null ? null : tabBtn("traffic", "请求")}
             <span className="ml-auto truncate text-[10px] text-on-surface-variant">{launch.worktree}</span>
         </div>
     );
@@ -584,6 +588,16 @@ function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (te
                 {tabs}
                 <div className="min-h-0 flex-1">
                     <RefPane worktree={launch.worktree} client={ctx.client} />
+                </div>
+            </div>
+        );
+    }
+    if (tab === "traffic" && observablePort !== null) {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <TrafficPanel ctx={ctx} port={observablePort} />
                 </div>
             </div>
         );
@@ -653,32 +667,6 @@ function LaunchDetail(props: { ctx: UiContext; launch: LaunchStatus; notify: (te
     );
 }
 
-function ExternalDetail(props: { item: ExternalInstance }) {
-    const { item } = props;
-    return (
-        <div className="flex h-full flex-col gap-2 overflow-auto p-2">
-            <div className="flex items-baseline gap-2">
-                <h1 className="text-[14px] font-medium">{item.app ?? "未知 app"}</h1>
-                {item.production ? <span className="text-[11px] text-error">真生产（只读，不提供停止）</span> : <span className="text-[11px] text-on-surface-variant">外部实例</span>}
-            </div>
-            <Card title="概况">
-                <div className="flex flex-col gap-0.5">
-                    <KV label="PID" value={String(item.pid)} />
-                    <KV label="launch" value={item.launch ?? "-"} />
-                    <KV label="数据根" value={<span className="font-mono">{item.diyHome}</span>} />
-                    <KV label="worktree" value={<span className="font-mono">{item.worktree ?? "-"}</span>} />
-                    <KV label="端口" value={item.port === null ? "-" : String(item.port)} />
-                    <KV label="启动" value={formatStartedAt(item.startedAt)} />
-                </div>
-            </Card>
-            <div className="text-[10px] text-on-surface-variant">
-                它不属于这个 dev 管的任何 worktree（手工起的 / 生产 / 别的 checkout）—— dev 只观测，不动它。
-            </div>
-        </div>
-    );
-}
-
-/** worktree 详情：点交叉表的分支行进来。列出这个工作区下的 app / launch / 状态，并给文件与外部仓库两个页签 */
 function WorktreeDetail(props: { ctx: UiContext; path: string; onSelect: (sel: Selection) => void }) {
     const snapshot = useSlice(props.ctx, selectSnapshot);
     const [tab, setTab] = useState<"info" | "files" | "ref">("info");
@@ -776,6 +764,65 @@ function WorktreeDetail(props: { ctx: UiContext; path: string; onSelect: (sel: S
     );
 }
 
+function ExternalDetail(props: { ctx: UiContext; item: ExternalInstance }) {
+    const { item } = props;
+    const [tab, setTab] = useState<"info" | "traffic">("info");
+    // 外部实例同样能观测：有 rpc 端口就多一个「请求」页签（用户口径：可观测项挂在实例上，不另造入口）
+    const observablePort = typeof item.port === "number" && item.port > 0 ? item.port : null;
+    const tabs = (
+        <div className="mb-2 flex items-center gap-1 border-b border-outline">
+            {(["info", "traffic"] as const).map((id) =>
+                id === "traffic" && observablePort === null ? null : (
+                    <button
+                        key={id}
+                        type="button"
+                        onClick={() => setTab(id)}
+                        className={`border-b-2 px-3 py-1 text-[11px] ${
+                            tab === id ? "border-primary text-on-surface" : "border-transparent text-on-surface-variant hover:text-on-surface"
+                        }`}
+                    >
+                        {id === "info" ? "概况" : "请求"}
+                    </button>
+                ),
+            )}
+        </div>
+    );
+
+    if (tab === "traffic" && observablePort !== null) {
+        return (
+            <div className="flex h-full min-h-0 flex-col p-2">
+                {tabs}
+                <div className="min-h-0 flex-1">
+                    <TrafficPanel ctx={props.ctx} port={observablePort} />
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex h-full flex-col gap-2 overflow-auto p-2">
+            {tabs}
+            <div className="flex items-baseline gap-2">
+                <h1 className="text-[14px] font-medium">{item.app ?? "未知 app"}</h1>
+                {item.production ? <span className="text-[11px] text-error">真生产（只读，不提供停止）</span> : <span className="text-[11px] text-on-surface-variant">外部实例</span>}
+            </div>
+            <Card title="概况">
+                <div className="flex flex-col gap-0.5">
+                    <KV label="PID" value={String(item.pid)} />
+                    <KV label="launch" value={item.launch ?? "-"} />
+                    <KV label="数据根" value={<span className="font-mono">{item.diyHome}</span>} />
+                    <KV label="worktree" value={<span className="font-mono">{item.worktree ?? "-"}</span>} />
+                    <KV label="端口" value={item.port === null ? "-" : String(item.port)} />
+                    <KV label="启动" value={formatStartedAt(item.startedAt)} />
+                </div>
+            </Card>
+            <div className="text-[10px] text-on-surface-variant">
+                它不属于这个 dev 管的任何 worktree（手工起的 / 生产 / 别的 checkout）—— dev 只观测，不动它。
+            </div>
+        </div>
+    );
+}
+
 export interface AppProps {
     readonly ctx: UiContext;
     readonly selection: Selection;
@@ -847,7 +894,7 @@ export function App(props: AppProps) {
                 ) : props.selection?.kind === "worktree" ? (
                     <WorktreeDetail ctx={props.ctx} path={props.selection.path} onSelect={props.onSelect} />
                 ) : external !== null ? (
-                    <ExternalDetail item={external} />
+                    <ExternalDetail ctx={props.ctx} item={external} />
                 ) : (
                     <div className="p-3 text-[11px] text-on-surface-variant">左边选一条 launch 或一个外部实例</div>
                 )}

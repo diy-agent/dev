@@ -1,10 +1,9 @@
-version: 2
-generated: "2026-06-04T15:01:34.267299Z"
-
-refs:
-  python:cyclopts: ~/.diy/ref/github.com/BrianPugh/cyclopts/v4.16.1
-  python:pyright: ~/.diy/ref/github.com/RobertCraigie/pyright-python/v1.1.409
-  python:rich: ~/.diy/ref/github.com/Textualize/rich/15.0.0
-  python:ruff: ~/.diy/ref/github.com/astral-sh/ruff/0.15.15
-  source:github/docs: ~/.diy/ref/github.com/github/docs/main
-  source:github/gh-aw: ~/.diy/ref/github.com/github/gh-aw/main
+version: 1
+generated: 2026-11-10T21:08:54.707+0800
+source:
+  github.com/pydantic/pydantic-ai:
+    key: github.com/pydantic/pydantic-ai
+    url: git@github.com:pydantic/pydantic-ai.git
+    version: null
+    dir: ref/github.com/pydantic/pydantic-ai/main
+    lastSync: 2026-11-10T21:08:54.707+0800
